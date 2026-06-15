@@ -13,7 +13,7 @@
 
 ## スクリーンショット
 
-<img src="screenshots/catalog.png" width="300"> <img src="screenshots/thread.png" width="300">
+.　　<a href="screenshots/catalog.png"><img src="screenshots/catalog.png" width="300"></a>　<a href="screenshots/thread.png"><img src="screenshots/thread.png" width="300"></a>
 
 ---
 
