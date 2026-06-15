@@ -2,7 +2,7 @@
 
 ふたば☆ちゃんねる（2chan.net）専用ブラウザ — PySide6 / QtWebEngine 製のデスクトップアプリケーションです。
 
-![version](https://img.shields.io/badge/version-0.9.00-blue)
+![version](https://img.shields.io/badge/version-0.9.xx-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-green)
 ![platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)

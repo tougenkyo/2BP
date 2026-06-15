@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.11"
+APP_VER = "0.9.13"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5161,33 +5161,64 @@ def _make_scroll_bottom_js(scroll_bottom_count: int = 5, scroll_top_count: int =
         event.acceptProposedAction()
 
     def cleanup(self):
-        """タブが閉じられる時のWebEngineリソース解放"""
+        """タブが閉じられる時のWebEngineリソース解放。
+        QWebEngineProfile は、それを使う QWebEnginePage が完全に破棄された後でないと
+        「Release of profile requested but WebEnginePage still not deleted」警告＋
+        ネイティブクラッシュ(0xC0000005)を起こす。固定タイマーではタブ高速開閉時に
+        page削除が間に合わず競合するため、page の destroyed シグナルに連動して
+        profile を削除し、順序を確実に保証する。また widget 破棄カスケード
+        （self→profile→page）との二重削除を避けるため親子関係を切っておく。"""
         # 一時HTMLファイルを削除
         if getattr(self, '_tmp_html_path', ''):
             _cleanup_tmp(self._tmp_html_path)
             self._tmp_html_path = ''
-        # WebEngineView をデフォルトページに差し替えて旧profile/pageを切り離す
+
+        _page   = getattr(self, '_page', None)
+        _prof   = getattr(self, '_profile', None)
+        _chan   = getattr(self, '_channel', None)
+        _bridge = getattr(self, '_bridge', None)
+        self._page = self._profile = self._channel = self._bridge = None
+
+        # WebEngineView を空ページに差し替えて旧pageを完全に切り離す
         try:
-            blank = QWebEnginePage(self)
-            self._view.setPage(blank)
+            if getattr(self, '_view', None) is not None:
+                blank = QWebEnginePage(self)
+                self._view.setPage(blank)
         except Exception:
             pass
-        # _page/_channel/_bridge を先に削除
-        for attr in ('_page', '_channel', '_bridge'):
-            obj = getattr(self, attr, None)
+
+        # 親子関係を断ち切り、削除経路を一本化する（widget破棄カスケードとの二重削除回避）
+        try:
+            if _prof is not None: _prof.setParent(None)
+            if _page is not None: _page.setParent(None)
+        except Exception:
+            pass
+
+        # channel / bridge を先に削除
+        for obj in (_chan, _bridge):
             if obj is not None:
                 try:
                     obj.deleteLater()
                 except Exception:
                     pass
-                setattr(self, attr, None)
-        # _profile は _page の deleteLater 完了後でないと
-        # "WebEnginePage still not deleted" 警告が出るため遅延削除
-        _prof = getattr(self, '_profile', None)
-        if _prof is not None:
-            self._profile = None
-            QTimer.singleShot(500, lambda p=_prof: p.deleteLater()
-                              if p is not None else None)
+
+        # page を削除し、page が完全に破棄された後に profile を削除する。
+        # destroyed シグナルで順序を保証（profileはそれまでlambdaのクロージャで生存）。
+        if _page is not None:
+            if _prof is not None:
+                try:
+                    _page.destroyed.connect(lambda *a, p=_prof: p.deleteLater())
+                except Exception:
+                    QTimer.singleShot(1000, lambda p=_prof: p.deleteLater())
+            try:
+                _page.deleteLater()
+            except Exception:
+                pass
+        elif _prof is not None:
+            try:
+                _prof.deleteLater()
+            except Exception:
+                pass
 
 
 # ── ページ内検索バー（ThreadView・CatalogView 共用） ──────────────────────
@@ -6721,7 +6752,12 @@ class AutoRefreshManager(QObject):
                     pass
                 # ─────────────────────────────────────────────────────────────
 
-                if view and not view.isHidden():
+                # 非表示（バックグラウンド）タブにも発火する。_update_view 側で
+                # isVisible() を見て、非表示なら DOM 追記せず _thread を更新して
+                # _pending_redraw を立てるため、アクティブ化時に新着込みで再描画される。
+                # （以前は not view.isHidden() でゲートしており、非表示の引用/画像
+                #  モードタブに新着が反映されない不具合があった）
+                if view is not None:
                     self._view_update.emit(view, th, entry.scroll_to_new,
                                            getattr(entry, "bouyomi", False))
                 self.updated.emit(idx)
