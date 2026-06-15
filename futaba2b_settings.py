@@ -252,6 +252,8 @@ class AppSettings:
         self.thread_history: list[dict]   = []
         # ブックマーク（メニューバー「ブックマーク」）
         self.bookmarks: list[dict]        = [dict(b) for b in _DEFAULT_BOOKMARKS]
+        # ログを出力する（黒いコンソールを表示する）。Falseで起動時にコンソールを隠す
+        self.show_console: bool           = False
         # ★ 追加: 板リスト (BoardInfo オブジェクトのフラットなリスト)
         self.boards: list[BoardInfo]      = []
         # カスタム板グループ: [{"name":"二次元裏","boards":[{"name":"img","url":"..."}]}]
@@ -579,6 +581,7 @@ class AppSettings:
             self.user_css_file       = raw.get("user_css_file", "theme/user.css")
             self.thread_history      = raw.get("thread_history", [])
             self.bookmarks           = raw.get("bookmarks", [dict(b) for b in _DEFAULT_BOOKMARKS])
+            self.show_console        = bool(raw.get("show_console", False))
             self.custom_board_groups = raw.get("custom_board_groups", [])
             self.tab_state           = raw.get("tab_state", {})
             self.thread_read_counts  = raw.get("thread_read_counts", {})
@@ -839,6 +842,7 @@ class AppSettings:
                         "user_css_file":        self.user_css_file,
                         "thread_history":       self.thread_history,
                         "bookmarks":            self.bookmarks,
+                        "show_console":         self.show_console,
                         "custom_board_groups":  self.custom_board_groups,
                         "tab_state":            self.tab_state,
                         "thread_read_counts":   _thread_read,

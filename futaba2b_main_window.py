@@ -4288,6 +4288,27 @@ class MainWindow(QMainWindow):
 def main():
     from futaba2b_app_qt import APP_VER
     print(f"2BP v{APP_VER}  起動", flush=True)
+
+    # ── ログ出力（黒いコンソール）の表示/非表示 ──────────────────────────
+    # 設定 show_console が False（既定）なら、起動時に Windows のコンソール
+    # ウィンドウを隠す。設定は futaba2b_settings.json から先読みする。
+    try:
+        import json as _jc
+        from pathlib import Path as _Pc
+        _show_console = False
+        _scf = _Pc(__file__).parent / "futaba2b_settings.json"
+        if _scf.exists():
+            _scd = _jc.loads(_scf.read_text(encoding="utf-8"))
+            _show_console = bool(_scd.get("show_console", False))
+        if not _show_console and sys.platform.startswith("win"):
+            import ctypes
+            _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if _hwnd:
+                ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+    # ─────────────────────────────────────────────────────────────────────
+
     # FFmpeg の詳細ログを抑制（swscaler警告・hwaccel通知等を非表示）
     import os as _os
     _os.environ.setdefault("AV_LOG_FORCE_NOCOLOR", "1")

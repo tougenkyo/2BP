@@ -3637,6 +3637,16 @@ class AppSettingsDialog(QDialog):
         _sem_hint.setStyleSheet("color: gray; font-size: 11px;")
         prf.addRow("", _sem_hint)
 
+        # ログ（コンソール）設定
+        g_log = QGroupBox("ログ"); f_ap.addWidget(g_log); lgf = QVBoxLayout(g_log)
+        self._show_console = QCheckBox("ログを出力する（黒いコンソールウィンドウを表示する）")
+        lgf.addWidget(self._show_console)
+        _log_hint = QLabel("チェックを外すと、起動時に黒いコンソールウィンドウを非表示にします。\n"
+                           "設定の反映には再起動が必要です。")
+        _log_hint.setStyleSheet("color: gray; font-size: 11px;")
+        _log_hint.setWordWrap(True)
+        lgf.addWidget(_log_hint)
+
         f_ap.addStretch()
         _w_ap = _scroll(w_ap)   # 棒読みちゃんタブの後で addTab する
 
@@ -4074,6 +4084,7 @@ class AppSettingsDialog(QDialog):
         self._scroll_bottom_count.setValue(getattr(s, "scroll_bottom_count", 30))
         self._scroll_top_count.setValue(getattr(s, "scroll_top_count", 0))
         self._parse_sem_kb.setValue(getattr(s, "parse_sem_kb", 50))
+        self._show_console.setChecked(getattr(s, "show_console", False))
         self._tab_max_width.setValue(getattr(s, "tab_max_width", 0))
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
         self._recent_closed_max.setValue(getattr(s, "recent_closed_max", 30))
@@ -4208,6 +4219,7 @@ class AppSettingsDialog(QDialog):
         s.scroll_bottom_count     = self._scroll_bottom_count.value()
         s.scroll_top_count        = self._scroll_top_count.value()
         s.parse_sem_kb            = self._parse_sem_kb.value()
+        s.show_console            = self._show_console.isChecked()
         s.tab_max_width           = self._tab_max_width.value()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.recent_closed_max       = self._recent_closed_max.value()
