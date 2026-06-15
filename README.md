@@ -85,7 +85,7 @@ GitHub のページ右上にある緑色の「**Code**」ボタン →「**Downl
 > Git を使える方は、以下のコマンドでも取得できます。
 >
 > ```bash
-> git clone https://github.com/<あなたのユーザー名>/futaba2b.git
+> git clone https://github.com/tougenkyo/2BP.git
 > ```
 
 ### 3. 必要なライブラリをインストールする（`setup_2bp.bat`）
