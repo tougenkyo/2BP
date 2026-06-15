@@ -1,0 +1,89 @@
+{
+  "_comment": "2BP ダークテーマ — 色を変えるだけでUIが変わります",
+
+  "ui": {
+    "window_bg":          "#1e1e1e",
+    "panel_bg":           "#252525",
+    "panel_bg2":          "#2a2a2a",
+    "panel_header_bg":    "#333333",
+    "panel_header_fg":    "#dddddd",
+    "panel_border":       "#444444",
+
+    "text_primary":       "#e8e8e8",
+    "text_secondary":     "#aaaaaa",
+    "text_muted":         "#777777",
+    "text_danger":        "#f88888",
+
+    "btn_bg":             "#3a3a3a",
+    "btn_fg":             "#cccccc",
+    "btn_border":         "#555555",
+    "btn_hover_bg":       "#4a4a4a",
+    "btn_checked_bg":     "#5588cc",
+    "btn_checked_fg":     "#ffffff",
+
+    "toolbar_bg":         "#2d2d2d",
+    "toolbar_border":     "#444444",
+
+    "statusbar_bg":       "#2d2d2d",
+    "statusbar_fg":       "#cccccc",
+    "statusbar_border":   "#555555",
+
+    "tab_bg":             "#2d2d2d",
+    "tab_fg":             "#cccccc",
+    "tab_selected_bg":    "#3a3a3a",
+    "tab_selected_fg":    "#ffffff",
+    "tab_border":         "#555555",
+
+    "scroll_bg":          "#2a2a2a",
+    "scroll_handle":      "#555555",
+
+    "separator_color":    "#555555",
+    "progress_chunk":     "#5588cc",
+    "progress_bg":        "#444444",
+
+    "input_bg":           "#333333",
+    "input_fg":           "#e8e8e8",
+    "input_border":       "#555555",
+    "input_focus_border": "#5588cc",
+
+    "popup_bg":           "#2d2d2d",
+    "popup_border":       "#555555",
+
+    "checkbox_border": "#555555",
+
+    "new_res_unread":     "#4488ff",
+    "new_res_tab_update": "#ff4444",
+    "tab_bg_live":        "rgba(0,180,220,80)"
+  },
+
+  "thread": {
+    "body_bg":            "#FFFFEE",
+    "body_fg":            "#7B0004",
+    "op_bg":              "#FFFFEE",
+    "reply_bg":           "#F0E0D6",
+    "new_res_border":     "#cc1105",
+    "self_res_border":    "#1a6fd4",
+    "new_res_divider_fg": "#cc1105",
+    "new_res_divider_bg": "#fff0f0",
+    "link_color":         "#0000EE",
+    "link_hover":         "#DD0000",
+    "quote_color":        "#789922",
+    "name_color":         "#117743",
+    "subject_color":      "#cc1105",
+    "date_color":         "#800000",
+    "no_color":           "#800000",
+    "no_hover":           "#DD0000",
+    "sod_color":          "#800000",
+    "footer_color":       "#888888",
+    "footer_border":      "#dddddd",
+    "thumb_border":       "#aaaaaa",
+    "thumb_hover_border": "#800000",
+    "expiry_color":       "#cc0000",
+    "expiry_bg":          "#fff8f8",
+    "del_reason_color":   "#cc1105",
+    "del_content_color":  "#800000",
+    "comment_color":      "#7B0004",
+    "id_popup_bg":        "#FFFFEE",
+    "id_popup_border":    "#800000"
+  }
+}

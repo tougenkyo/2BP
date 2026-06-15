@@ -1,0 +1,496 @@
+/* ============================================================
+   2B スレッドビュー スタイルシート
+   Theme用 user.css
+   ============================================================ */
+
+/* ─ 基本 ─ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    background: #FFFFEE;
+  font-family: "MS PGothic", "ＭＳ Ｐゴシック", sans-serif;
+    color: #7B0004;
+    padding: 4px;
+}
+
+/* ============================================================
+   OP レス
+   ============================================================ */
+.res.op {
+    background: #FFFFEE;
+    padding: 6px 8px 4px 8px;
+    margin-bottom: 4px;
+}
+.res.op .thumb {
+    float: left;
+    margin-right: 14px;
+    margin-bottom: 6px;
+}
+.op-text {
+    overflow: hidden;
+    width: fit-content;
+    min-width: 200px;
+}
+
+/* ============================================================
+   返信レス
+   ============================================================ */
+.res.reply {
+    overflow: hidden;
+    background: #F0E0D6;
+    width: fit-content;
+    min-width: 260px;
+    max-width: 100%;
+    padding: 3px 10px 3px 6px;
+    margin: 1px 0 3px 0;
+}
+.res.reply.new-res { border-left: 3px solid #cc1105; }
+.res.reply .content { padding-left: 15px; }
+.thread-end { clear: both; height: 4px; }
+
+/* ============================================================
+   ヘッダー行
+   ============================================================ */
+.header {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0 2px;
+    margin-bottom: -3px;
+}
+
+/* レス番号 */
+.rsc     { color: #800000; font-size: 11pt; margin-left: 3px; margin-right: 0px; min-width: 18px; text-align: left; }
+
+/* 引用インジケータ (▼) */
+.quote-ind { color: #800000; font-size: 11pt; cursor: pointer; margin-right: 0px; flex-shrink: 0; }
+.quote-ind:hover { color: #DD0000; font-size: 11pt; }
+
+/* サブジェクト 無念 */
+.csb     { color: #cc1105; font-weight: bold; margin: 0 0px; }
+
+/* "Name" テキスト */
+.csb-nm  { color: #800000; margin: 0 2px; }
+
+/* 名前 */
+.nm      { color: #117743; font-weight: bold; margin: 0 5px; }
+.trip    { color: #117743; }
+
+/* 日時 */
+.dt      { color: #800000; margin: 0 5px; }
+
+/* ID */
+.post-id { color: #EE0000; cursor: pointer; margin: 0 3px; }
+.post-id:hover { text-decoration: underline; color: #DD0000; }
+
+/* No. */
+.no      { color: #800000; text-decoration: underline; cursor: pointer; margin: 0 5px; }
+.no:hover { color: #DD0000; }
+
+/* del */
+.del     { color: #800000; text-decoration: underline; cursor: pointer; margin: 0 3px; }
+.del:hover { color: #DD0000; }
+
+/* そうだね */
+.sod     { color: #800000; background: transparent; border: none;
+           font-size: 100%; cursor: pointer; padding: 0 8px; margin: 0 8px;
+           font-family: inherit; white-space: nowrap; }
+.sod:hover { text-decoration: underline; }
+
+/* 有効期限 */
+.expiry  { color: #cc0000; font-size: small; margin-left: 4px; }
+.expiry-banner {
+    color: #cc0000; font-weight: bold; text-align: center;
+    padding: 6px 12px; margin: 8px 4px 2px;
+    border: 1px solid #cc0000; border-radius: 3px;
+    background: #fff8f8; font-size: 9pt;
+}
+
+/* ============================================================
+   ファイル情報
+   ============================================================ */
+/* OP用 */
+.file-info { font-size: 11pt; margin-bottom: 4px; }
+.file-info a { color: #0000EE;  }
+.file-info a:hover { text-decoration: underline; color: #DD0000; }
+a.fi-inline { font-size: 11pt; color: #0000EE; text-decoration: underline; margin: 0 6px; }
+a.fi-inline:hover { text-decoration: underline; color: #DD0000; }
+
+/* 返信レス用（ヘッダー下段） */
+.fi-sub  { font-size: 11pt; margin: 0px 0px 0px 15px; }
+.fi-sub a { color: #0000EE; text-decoration: underline; }
+.fi-sub a:hover { text-decoration: underline; color: #DD0000; }
+
+/* ============================================================
+   コンテンツ・サムネイル
+   ============================================================ */
+.content {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 2px 0 3px 0;
+}
+.thumb img {
+    cursor: pointer;
+    display: block;
+    border: 0px solid #aaa;
+    max-width: 100%;
+    height: auto;
+}
+.thumb img:hover { border-color: #800000; }
+
+/* 動画サムネイル */
+.thumb video {
+    display: block;
+    border: 1px solid #aaa;
+    max-width: 300px;
+    max-height: 200px;
+    background: #000;
+}
+.thumb video:hover { border-color: #800000; }
+.video-thumb { position: relative; display: inline-block; cursor: pointer; }
+.play-btn {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 28px; color: white;
+    text-shadow: 0 0 6px rgba(0,0,0,0.85);
+    pointer-events: none; line-height: 1.1;
+}
+.video-thumb:hover img { border-color: #800000; }
+.video-thumb:hover .play-btn { color: #F0E0D6; }
+
+/* ============================================================
+   コメント
+   ============================================================ */
+.comment {
+    font-size: medium;
+    margin: 10px 0px 0px 10px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.1;
+    color: #7B0004;
+}
+.comment .qt   { color: #789922; cursor: pointer; }
+.comment .qt a { color: #789922; text-decoration: none; }
+.comment .qt a:hover { color: #789922; text-decoration: none; }
+.comment .del  { color: #FF0000; }
+.comment a     { color: #0000EE; }
+.comment a:hover { color: #DD0000; text-decoration: underline; }
+.del-reason    { color: #cc1105; font-size: 8pt; font-style: italic; }
+
+/* 削除レス全体 (show-deleted時) */
+body.show-deleted .res.reply.deleted {
+    background: #e8d8d0;       /* 背景色 */
+    opacity: 0.7;               /* 半透明 */
+    border-left: 3px solid #cc1105;  /* 左ボーダー */
+}
+
+/* 削除理由テキスト */
+.del-reason {
+    color: #cc1105;
+    font-size: 8pt;
+    font-style: italic;
+}
+
+
+/* YouTube サムネイル */
+.yt-thumb {
+    max-width: 320px; max-height: 180px; display: block;
+    margin: 4px 0; cursor: pointer; border: 1px solid #aaa;
+}
+.yt-thumb:hover { border-color: #cc1105; }
+
+/* アップローダーリンク */
+.ul-link { color: #0000cc; text-decoration: underline; font-weight: bold; }
+.ul-link:hover { color: #cc1105; }
+
+/* ============================================================
+   フッター
+   ============================================================ */
+.footer {
+    text-align: right; font-size: 9pt; color: #888;
+    margin: 0px 0px 5px 10px;
+}
+.footer a       { color: #888; text-decoration: underline; cursor: pointer; }
+.footer a:hover { color: #DD0000; }
+
+
+.footer a.ng    { color: #888; }
+.footer a.ng:hover { color: #DD0000; }
+
+/* ============================================================
+   ID ホバーポップアップ
+   ============================================================ */
+.id-popup {
+    display: none;
+    position: fixed;
+    background: #FFFFEE;
+    border: 1px solid #800000;
+    padding: 4px 8px;
+    max-width: 420px;
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 9999;
+    box-shadow: 2px 2px 6px rgba(0,0,0,0.4);
+    font-size: 8pt;
+}
+.id-popup-hdr {
+    font-weight: bold; color: #800000;
+    border-bottom: 1px solid #c8a890; margin-bottom: 3px; padding-bottom: 2px;
+}
+.id-popup-item {
+    color: #7B0004; padding: 2px 0;
+    border-bottom: 1px dashed #ddd;
+    white-space: pre-wrap; word-break: break-all;
+}
+.id-popup-item:last-child { border-bottom: none; }
+
+/* ============================================================
+   レス抽出パネル
+   ============================================================ */
+.extract-panel {
+    display: none;
+    position: fixed;
+    top: 10px; right: 10px;
+    width: 520px;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: #FFFFEE;
+    border: 2px solid #800000;
+    z-index: 8888;
+    box-shadow: 4px 4px 10px rgba(0,0,0,0.5);
+}
+.extract-header {
+    background: #E04000;
+    color: white;
+    padding: 4px 8px;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky; top: 0;
+}
+.extract-header button {
+    background: transparent; border: 1px solid white;
+    color: white; cursor: pointer; padding: 0 6px; font-size: 12pt;
+}
+
+/* ============================================================
+   NG・逆NG
+   ============================================================ */
+/* 非表示 */
+.res.ng-hidden { display: none !important; }
+
+/* 折りたたみ */
+.res.ng-collapsed .content,
+.res.ng-collapsed .footer,
+.res.ng-collapsed .file-info { display: none; }
+.res.ng-collapsed .header::after { content: " [NG]"; color: #aaa; font-size: 8pt; }
+.res.ng-collapsed .header { cursor: pointer; opacity: 0.5; }
+
+/* NG画像（半透明 + クリックで展開） */
+.res.ng-image .thumb img {
+    opacity: 0.05; filter: blur(4px);
+    cursor: pointer; transition: opacity 0.2s, filter 0.2s;
+}
+.res.ng-image .thumb img:hover { opacity: 0.3; }
+.res.ng-image.ng-image-revealed .thumb img { opacity: 1 !important; filter: none !important; }
+
+/* 逆NGハイライト */
+.res.reverse-ng { border-left: 3px solid #9B59B6; }
+.res.reverse-ng .header { background: rgba(155, 89, 182, 0.08); }
+
+/* 表示モード（一覧/画像/引用） */
+[data-mode="image"] .res:not(.has-img) { display: none !important; }
+[data-mode="image"] .res.op            { display: block !important; }
+[data-mode="quote"] .res:not(.has-qt)  { display: none !important; }
+[data-mode="quote"] .res.op            { display: block !important; }
+
+/* 投稿エラーポップアップ */
+.post-error-popup {
+    background: #EFDFD6;          /* 通常時の背景色 */
+    border-color: #7B0004;        /* 通常時の枠線色 */
+    color: #7B0004;               /* 文字色 */
+    blink-background: #FFAAAA;    /* 点滅時の背景色 */
+    blink-border-color: #7B0004;  /* 点滅時の枠線色 */
+}
+
+
+
+/* ============================================================
+ * カタログ表示（CATALOG_CSS）
+ * ============================================================ */
+
+#grid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 3px;
+    width: 100%;
+}
+.entry {
+    display: inline-flex; flex-direction: column;
+    border: 1px solid #800000; overflow: hidden;
+    background: #FFF; cursor: pointer;
+    width: var(--cell-w, 100px); vertical-align: top;
+    flex-shrink: 0;
+    
+}
+.entry:hover { border-color: #DD0000; box-shadow: 1px 1px 3px #aaa; }
+.entry-img {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    overflow: hidden; min-height: 30px; background: #eeeee0;
+}
+.entry img {
+    display: block;
+    max-width: calc(var(--cell-w, 84px) - 4px);
+    max-height: calc(var(--cell-w, 84px) - 4px);
+}
+/* 文字のみスレ（サムネなし） */
+.entry.text-only .entry-img::after {
+    content: "文";
+    font-size: 16pt; color: #bbb; font-weight: bold;
+}
+
+.email-badge { color: #0000EE; font-size: 11pt; margin: 0 2px; font-weight: bold;}
+
+.entry-title {
+    font-size: 9pt; color: #7B0004; padding: 1px 3px;
+    white-space: nowrap; overflow: hidden;
+}
+.entry-foot {
+    display: flex; justify-content: space-between;
+    font-size: 9pt; color: #7B0004; font-weight: normal;
+    padding: 0 3px 2px; line-height:  1.1;
+}
+.res-new { color: #cc1105; font-weight: bold; }
+.entry.red-thread { border: 2px solid #cc1105; }
+
+/* 検索セクション: flex と grid 両対応 */
+.sec-hdr {
+    flex-basis: 100%; width: 100%;
+    grid-column: 1 / -1;
+    text-align: center;
+    color: #00008B; font-size: 9pt; font-weight: bold;
+    padding: 3px 6px; background: #F0F0FF;
+    border-bottom: 2px solid #0000CC;
+    margin-bottom: 2px;
+}
+.sec-div {
+    flex-basis: 100%; width: 100%;
+    grid-column: 1 / -1;
+    border-top: 2px solid #0000CC;
+    margin: 4px 0;
+}
+/* ─ 逆NGエントリハイライト ─ */
+.entry.reverse-ng {
+    border: 1px solid #800000;
+}
+.entry.reverse-ng .entry-title { color: #800000; font-weight: normal; }
+/* ─ 仮赤字（残り10%以下）─ */
+.entry.quasi-red-thread {
+    border: 2px solid #cc1105;
+}
+.entry.quasi-red-thread .entry-title { color: #cc1105; }
+.entry.quasi-red-thread .entry-foot  { color: #7B0004; }
+/* ─ 既読スレ（1度でも閲覧済み）─ */
+.entry.already-read { background: #FFCCCC; }
+.page-footer {
+    font-size: 8pt; color: #888; padding: 4px 8px;
+    width: 100%; margin-top: 4px; text-align: right;
+}
+
+/* ポップアップ外枠 */
+._rp {
+    background: #FFFFEE !important;
+    border-radius: 3px !important;
+    box-sizing: border-box;
+    padding: 3px !important;           /* 調整してください */
+    min-width: 680px !important;
+}
+
+/* ▼ポップアップ内、複数レス間の区切り線 */
+._rp hr {
+    border-top: 10px #FFFFEE !important;
+    margin: 2px 0 !important;   /* 線の上下に余白を付ける場合 */
+}
+
+._rp .header,
+.id-popup .header {
+    flex-wrap: nowrap !important;
+    white-space: nowrap;
+}
+._rp .header > * { flex-shrink: 0; }
+
+
+
+/* ============================================================
+ * 引用モード デフォルトCSS
+ * ============================================================ */
+
+/* スレッド間の区切り線（複数スレを表示している場合の境界） */
+.qt-sep {
+    border-top: 1px solid #aaa;
+    margin: 6px 0;
+}
+
+/* 各行全体（連番・サムネ・No.リンク・本文をまとめた1行） */
+.qt-row {
+    padding: 2px 4px;
+    line-height: 1.0;
+    font-size: 9pt;
+    white-space: nowrap;   /* 本文を折り返さず1行に収める */
+    overflow: hidden;      /* 行幅を超えた分は隠す（…で省略されるのはJS側でtext短縮済み） */
+    background: #F0E0D6;
+    width: 60%;
+}
+
+/* 一番上位（被引用元・親レス）の行 */
+.qt-root {
+    font-weight: bold;
+}
+
+/* 左端の連番（例: "005"）。返信モードのレス番号と同じ連番 */
+.qt-idx {
+    color: #888;
+    font-size: 8pt;
+    min-width: 20px;       /* 連番の桁数が変わっても位置が揃うように固定幅 */
+    display: inline-block;
+}
+
+.qt-child{
+    transform: translateX(-10px) !important;
+}
+
+/* "No.XXXXXXX" リンク */
+.qt-no {
+    color: #0000EE;
+    text-decoration: none;
+    margin: 0 4px;
+}
+.qt-no:hover {
+    text-decoration: underline;
+    color: #cc1105;
+}
+
+/* 新着レスに付く "[新着]" タグ */
+.qt-new {
+    color: #cc1105;
+    font-size: 8pt;
+}
+
+/* ツリーの枝記号（子レスの行頭に付く "└─" 等） */
+.qt-branch {
+    color: #888;
+}
+
+/* サムネイル画像（画像付きレスの場合） */
+.qt-thumb {
+    max-height: 60px;
+    max-width: 80px;
+    object-fit: contain;
+    vertical-align: middle;
+    margin-left: 4px;
+    border: 1px solid #aaa;
+    cursor: pointer;
+}
+

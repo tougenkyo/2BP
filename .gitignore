@@ -1,0 +1,24 @@
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# ── 2BP ユーザーデータ（個人設定・キャッシュ・ログ）──────
+futaba2b_settings.json
+futaba2b_boards.json
+futaba2b_board_*.json
+futaba2b_cache.json
+futaba2b_cookies.json
+logs/
+*.log
+Log*.txt
+
+# ── IDE / OS ─────────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
