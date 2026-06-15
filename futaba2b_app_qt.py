@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.01"
+APP_VER = "0.9.04"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8142,7 +8142,11 @@ class ImageTabView(QWidget):
         self._fit_mode = (_prev_zoom == "画面に合わせる")
         base_css = (
             "html,body{margin:0;padding:0;width:100%;height:100%;background:#222;}"
-            "body{display:flex;justify-content:center;align-items:center;"
+            # justify-content/align-items に safe を付与: 画像がビューポートより
+            # 大きい場合、通常の center だと左/上にはみ出した部分がスクロール不可
+            # （scrollLeft が負にならない）になり左側が永久に見切れる。safe は
+            # はみ出し時に start へフォールバックするため左端までスクロールできる。
+            "body{display:flex;justify-content:safe center;align-items:safe center;"
             "overflow:auto;box-sizing:border-box;}"
             "img,video{display:block;cursor:zoom-in;visibility:hidden;user-select:none;-webkit-user-drag:none;}"
             "#img.actual{max-width:none!important;max-height:none!important;"

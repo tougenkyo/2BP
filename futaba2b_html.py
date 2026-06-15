@@ -1562,9 +1562,10 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
                id_warn_count: int = 0) -> str:
     no = res.no
     # ── 手動NG（永続非表示）判定 ───────────────────────────────────────────
-    if hidden_nos and no in hidden_nos and not is_op:
-        # DOMに残すが display:none で非表示（JS再適用不要）
-        return f'<div class="res reply ng-hidden" id="r{no}" style="display:none"></div>\n'
+    # 内容は通常どおり描画しつつ display:none で隠す。空divにすると、この
+    # レスを引用しているレスの引用ポップアップ（クローン元）が空になり
+    # 「何も表示されない」状態になるため、中身は保持する。
+    _manual_hidden = bool(hidden_nos and no in hidden_nos and not is_op)
 
     # ── NG判定 ──────────────────────────────────────────────────────────────
     ng_class = ""
@@ -1729,7 +1730,10 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
             _th = getattr(res, "thumb_h", 0) or 0
             # サムネ寸法を明示（futaba原本と同様）。no_thumb保存ログで
             # サムネ=本画像のとき等倍表示になるのを防ぐ
-            _dim = f' width="{_tw}" height="{_th}"' if (_tw > 0 and _th > 0) else ''
+            # aspect-ratio も明示することで、画像読み込み後に本来の縦横比が
+            # height:auto に優先適用されて表示が崩れる（潰れた画像が縦長になる等）のを防ぐ
+            _dim = (f' width="{_tw}" height="{_th}" style="aspect-ratio:{_tw}/{_th}"'
+                    if (_tw > 0 and _th > 0) else '')
             img_html = (
                 f'<div class="thumb">'
                 f'<img src="{tu}"{_dim} loading="lazy" data-full="{eu}" '
@@ -1843,7 +1847,13 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
         if res.image_url: has_cls += " has-img"
         if res.comment_html and (">>" in res.comment_html or "qt" in res.comment_html): has_cls += " has-qt"
         img_attr = f' data-img="{res.image_name}"' if res.image_name else ""
-        style_attr = f' style="{ng_style}"' if ng_style else ""
+        # 手動NG（永続非表示）レスは display:none で隠す（中身は引用ポップアップ用に保持）
+        _styles = []
+        if ng_style: _styles.append(ng_style)
+        if _manual_hidden: _styles.append("display:none")
+        style_attr = f' style="{";".join(_styles)}"' if _styles else ""
+        if _manual_hidden and "ng-hidden" not in ng_class:
+            ng_class += " ng-hidden"
         ct_html = f'<div class="content">{img_html}<div class="comment">{com}</div></div>'
         return f'<div class="res {bg_class}{has_cls}{ng_class}" id="r{no}"{img_attr}{style_attr}>{hdr_html}{fi_sub}{ct_html}{ft_html}</div>\n'
 
