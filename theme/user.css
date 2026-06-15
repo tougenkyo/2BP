@@ -405,7 +405,6 @@ body.show-deleted .res.reply.deleted {
     border-radius: 3px !important;
     box-sizing: border-box;
     padding: 3px !important;           /* 調整してください */
-    min-width: 680px !important;
 }
 
 /* ▼ポップアップ内、複数レス間の区切り線 */

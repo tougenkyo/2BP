@@ -403,7 +403,6 @@ class MainWindow(QMainWindow):
         sm.addAction(QAction("お気に入りに追加(&A)", self, triggered=self._add_to_favorites))
 
         hm = mb.addMenu("ヘルプ(&H)")
-        hm.addAction(QAction("バージョン情報(&A)…", self, triggered=self._show_about))
         hm.addAction(QAction("アップデートを確認(&U)…", self, triggered=self._check_for_update))
         hm.addAction(QAction("2Bサポート他(&S)", self,
             triggered=lambda: _open_url("http://www2.ezbbs.net/13/futabe/")))
@@ -425,6 +424,8 @@ class MainWindow(QMainWindow):
         ):
             hm.addAction(QAction(_label, self,
                 triggered=lambda checked=False, u=_url: _open_url(u)))
+        hm.addSeparator()
+        hm.addAction(QAction("バージョン情報(&A)…", self, triggered=self._show_about))
 
         # Ctrl+F は WindowShortcut で一元管理（メニューに表示しない）
         self._sc_find = QShortcut(QKeySequence(_sc("find_in_view") or QKeySequence("Ctrl+F")), self, self._find_in_view)
@@ -3811,59 +3812,108 @@ class MainWindow(QMainWindow):
             self._st_log.setText("")
 
     def _start_update(self, remote_ver: str):
-        """GitHubリポジトリのzipをダウンロードし、update.bat用のfiles.zipとして配置する。"""
-        base = Path(__file__).resolve().parent
-        if not (base / "update.bat").exists():
-            QMessageBox.warning(self, "アップデート",
-                "update.bat が見つかりません。\n2BPフォルダに update.bat を配置してから再度お試しください。")
-            return
-
+        """GitHubリポジトリのzipをダウンロードする（適用はPython側で行う・update.bat不要）。"""
         self._st_log.setText("アップデートをダウンロード中...")
 
         def _job():
             try:
-                import requests, zipfile, io
+                import requests
                 r = requests.get(_UPDATE_ZIP_URL, headers={"User-Agent": UA}, timeout=60)
                 r.raise_for_status()
-                src = zipfile.ZipFile(io.BytesIO(r.content))
-                names = src.namelist()
-                if not names:
-                    raise ValueError("ダウンロードしたZIPが空です")
-                # GitHubのzipはリポジトリ名-ブランチ名/ のフォルダを含むため除去する
-                prefix = names[0].split("/")[0] + "/"
-                dest = base / "files.zip"
-                with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as dst:
-                    for info in src.infolist():
-                        if info.is_dir() or not info.filename.startswith(prefix):
-                            continue
-                        rel = info.filename[len(prefix):]
-                        if not rel:
-                            continue
-                        dst.writestr(rel, src.read(info.filename))
-                self._main_thread_call.emit(lambda: self._on_update_downloaded(True, None))
+                content = r.content
+                if not content:
+                    raise ValueError("ダウンロードしたデータが空です")
+                self._main_thread_call.emit(lambda c=content: self._on_update_downloaded(c, None))
             except Exception as e:
-                self._main_thread_call.emit(lambda e=e: self._on_update_downloaded(False, e))
+                self._main_thread_call.emit(lambda e=e: self._on_update_downloaded(None, e))
 
         threading.Thread(target=_job, daemon=True).start()
 
-    def _on_update_downloaded(self, success: bool, error):
-        if not success:
+    def _on_update_downloaded(self, content, error):
+        if error is not None or not content:
             self._st_log.setText("アップデートのダウンロードに失敗しました")
             QMessageBox.warning(self, "アップデート",
-                f"アップデートのダウンロードに失敗しました。\n\n{error}")
+                f"アップデートのダウンロードに失敗しました。\n\n{error or 'データが空です'}")
             return
-        self._apply_update()
+        self._apply_update(content)
 
-    def _apply_update(self):
-        """update.bat を起動して2BPを終了する。update.bat側でfiles.zipの展開・上書き・再起動を行う。"""
+    def _apply_update(self, content: bytes):
+        """ダウンロードしたzipをPythonで直接展開・上書きし、再起動する（update.bat不要）。
+        ① 現行 futaba2b_* を old/{日時}.zip にバックアップ
+        ② リポジトリの全ファイルを base 直下に展開・上書き
+        ③ 旧プロセスの終了を待って新プロセスを起動する一時ランチャを起動し、自分は終了"""
+        import zipfile, io, datetime, sys, subprocess, tempfile, os as _os
         base = Path(__file__).resolve().parent
         try:
-            import subprocess as _sp
-            _sp.Popen(["update.bat"], cwd=str(base),
-                      creationflags=_sp.CREATE_NEW_CONSOLE)
+            src = zipfile.ZipFile(io.BytesIO(content))
+            names = src.namelist()
+            if not names:
+                raise ValueError("ダウンロードしたZIPが空です")
+            # GitHubのzipは「リポジトリ名-ブランチ名/」のフォルダを含むため除去する
+            prefix = names[0].split("/")[0] + "/"
+
+            # ① バックアップ: 現行 futaba2b_* を old/{日時}.zip へ
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            old_dir = base / "old"
+            old_dir.mkdir(exist_ok=True)
+            bak = old_dir / f"{ts}.zip"
+            with zipfile.ZipFile(bak, "w", zipfile.ZIP_DEFLATED) as bz:
+                for f in base.glob("futaba2b_*"):
+                    if f.is_file():
+                        bz.write(f, f.name)
+
+            # ② 展開・上書き（プレフィックス除去・サブフォルダ作成）
+            for info in src.infolist():
+                if info.is_dir() or not info.filename.startswith(prefix):
+                    continue
+                rel = info.filename[len(prefix):]
+                if not rel:
+                    continue
+                target = base / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with open(target, "wb") as wf:
+                    wf.write(src.read(info.filename))
         except Exception as e:
-            QMessageBox.warning(self, "アップデート", f"update.bat の起動に失敗しました。\n{e}")
+            self._st_log.setText("アップデートの適用に失敗しました")
+            QMessageBox.warning(self, "アップデート",
+                f"アップデートの適用に失敗しました。\n更新は行われていません。\n\n{e}")
             return
+
+        # ③ 再起動: 旧プロセス(自分)の終了を待ってから新プロセスを起動する
+        #    一時ランチャを生成して起動する（単一起動ロックの衝突を避けるため）
+        qt_path = str(base / "futaba2b_qt.py")
+        launcher_src = (
+            "import sys, time, subprocess\n"
+            "pid = int(sys.argv[1]); app = sys.argv[2]; cwd = sys.argv[3]\n"
+            "try:\n"
+            "    import psutil\n"
+            "    alive = lambda p: psutil.pid_exists(p)\n"
+            "except Exception:\n"
+            "    alive = lambda p: False\n"
+            "for _ in range(150):\n"          # 最大15秒、旧プロセス終了を待つ
+            "    if not alive(pid):\n"
+            "        break\n"
+            "    time.sleep(0.1)\n"
+            "time.sleep(0.5)\n"               # ロックファイル解放の猶予
+            "subprocess.Popen([sys.executable, app], cwd=cwd)\n"
+        )
+        try:
+            launcher_path = Path(tempfile.gettempdir()) / f"2bp_update_launcher_{_os.getpid()}.py"
+            launcher_path.write_text(launcher_src, encoding="utf-8")
+            kwargs = {}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = (
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0) |
+                    getattr(subprocess, "DETACHED_PROCESS", 0))
+            subprocess.Popen(
+                [sys.executable, str(launcher_path), str(_os.getpid()), qt_path, str(base)],
+                cwd=str(base), **kwargs)
+        except Exception as e:
+            QMessageBox.warning(self, "アップデート",
+                f"更新は完了しましたが再起動の起動に失敗しました。\n"
+                f"手動で2BPを起動し直してください。\n\n{e}")
+            return
+        self._st_log.setText("アップデートを適用しました。再起動します...")
         # closeEvent経由でタブ状態・設定を保存してから終了する
         self.close()
 

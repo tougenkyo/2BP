@@ -1569,7 +1569,8 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
 
     # ── NG判定 ──────────────────────────────────────────────────────────────
     ng_class = ""
-    ng_style = ""   # 逆NG用インラインスタイル
+    ng_style = ""       # 逆NG用インラインスタイル
+    _ng_reason = ""     # NGで非表示にされた理由（引用ポップアップ用）。空なら通常描画。
     if ng_filter is not None and not is_op and not res.is_deleted:
         _hide_name  = getattr(ng_settings, "ng_thread_hide_name",  True)
         _hide_image = getattr(ng_settings, "ng_thread_hide_image", True)
@@ -1577,10 +1578,18 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
         # 名前/トリップ/書き込みNG
         if _hide_name and ng_filter.is_ng(res):
             ng_class = " ng-hidden"
+            _ng_reason = "NGワード・名前により非表示"
         # 画像NG（hide_modeによって透明 or レス全体非表示）
         elif _hide_image and res.image_url and ng_filter.is_ng_image(res):
             _hm = ng_filter.get_ng_image_hide_mode(res)
-            ng_class = " ng-hidden" if _hm == "res" else " ng-image"
+            if _hm == "res":
+                ng_class = " ng-hidden"
+                _ng_reason = "NG画像により非表示"
+            else:
+                ng_class = " ng-image"
+    # 手動NG（永続非表示）も理由を記録（フィルタ理由が無いときのみ）
+    if _manual_hidden and not _ng_reason:
+        _ng_reason = "NG設定により非表示"
 
 
     # 削除レスは "reply deleted" クラス、新着は "new-res" クラス、自分のレスは "self-res"
@@ -1847,13 +1856,23 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
         if res.image_url: has_cls += " has-img"
         if res.comment_html and (">>" in res.comment_html or "qt" in res.comment_html): has_cls += " has-qt"
         img_attr = f' data-img="{res.image_name}"' if res.image_name else ""
-        # 手動NG（永続非表示）レスは display:none で隠す（中身は引用ポップアップ用に保持）
+        # NG非表示レス（手動NG/NGワード/NG画像）は display:none で隠す。
+        # スレッドでは見えないが、このレスを引用しているレスの引用ポップアップ
+        # （クローン元）として中身が必要。本文は出さず「削除理由（NG理由）」のみ
+        # を表示する。
         _styles = []
         if ng_style: _styles.append(ng_style)
-        if _manual_hidden: _styles.append("display:none")
+        if (_manual_hidden or _ng_reason):
+            _styles.append("display:none")
         style_attr = f' style="{";".join(_styles)}"' if _styles else ""
-        if _manual_hidden and "ng-hidden" not in ng_class:
+        if (_manual_hidden or _ng_reason) and "ng-hidden" not in ng_class:
             ng_class += " ng-hidden"
+        if _ng_reason:
+            # 理由のみ表示（本文・画像・フッターは出さない）
+            ct_html = (f'<div class="content">'
+                       f'<span class="del-reason">{_e(_ng_reason)}</span></div>')
+            return (f'<div class="res {bg_class}{has_cls}{ng_class}" id="r{no}"'
+                    f'{img_attr}{style_attr}>{hdr_html}{ct_html}</div>\n')
         ct_html = f'<div class="content">{img_html}<div class="comment">{com}</div></div>'
         return f'<div class="res {bg_class}{has_cls}{ng_class}" id="r{no}"{img_attr}{style_attr}>{hdr_html}{fi_sub}{ct_html}{ft_html}</div>\n'
 

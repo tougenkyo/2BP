@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.05"
+APP_VER = "0.9.11"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1959,6 +1959,13 @@ class BoardPane(QWidget):
             elif getattr(w, '_last_html', ""):
                 _url_r = (w._thread.url if w._thread else None) or 'https://www.2chan.net/'
                 w._load_html_via_tempfile(w._last_html, QUrl(_url_r))
+        # アクティブ化時に「末尾まで表示済みなら未読(青背景)を解除」を再評価する。
+        # 背景でロードされ innerHeight=0 のまま初回判定が効かなかった画像モード等で、
+        # 表示後に末尾が見えていれば青背景をデフォルトに戻す（少し遅延でレイアウト確定後）。
+        if isinstance(w, ThreadView):
+            _wv = w._view
+            QTimer.singleShot(180, lambda v=_wv: v.page().runJavaScript(
+                "try{window._checkUnreadAtBottom&&window._checkUnreadAtBottom();}catch(e){}"))
         self._search_edit.blockSignals(True) if hasattr(self, '_search_edit') else None
         w._search_edit.blockSignals(True)
         w._search_edit.setText(saved)
@@ -3722,6 +3729,7 @@ class ThreadView(QWidget):
              'pointer-events:auto;border-radius:2px';
     var T = {}, P = [];
     function inP(e) { return e && !!e.closest && !!e.closest('._rp'); }
+    function _inSel(e) { return e && !!e.closest && !!e.closest('#_selmenu'); }
     function rmAll() {
         while (P.length) { var x = P.pop(); if (x && x.parentNode) x.parentNode.removeChild(x); }
     }
@@ -3748,10 +3756,16 @@ class ThreadView(QWidget):
             }
             var d = document.createElement('div');
             /* .res .reply / .res .op などクラスを継承させて THREAD_CSS を適用 */
-            d.className = el.className;
+            /* ただし deleted / ng-hidden は display:none を持つため、ポップアップ内
+               では除去する（削除レス・NG非表示レスを引用したとき、ポップアップが
+               空になり「何も表示されない」状態になるのを防ぐ）。削除理由・NG理由は
+               innerHTML 内の .del-reason 等にあるのでそのまま表示される。 */
+            d.className = el.className.replace(/\b(?:ng-hidden|deleted)\b/g, '')
+                                      .replace(/\s+/g, ' ').trim();
             d.style.cssText = 'margin:0 0 0 16px!important;float:none!important;' +
                               'width:auto!important;min-width:0!important;' +
-                              'max-width:100%!important;overflow:visible!important;';
+                              'max-width:100%!important;overflow:visible!important;' +
+                              'display:block!important;';
             d.innerHTML = el.innerHTML;
             /* data-hooked を除去して hookC/hookQuoteInd が再適用されるようにする */
             d.querySelectorAll('[data-hooked]').forEach(function(n) { n.removeAttribute('data-hooked'); });
@@ -3803,10 +3817,23 @@ class ThreadView(QWidget):
         hookC(p);
         hookQuoteInd(p);
         p.addEventListener('mouseover', function() { clearTimeout(T.h); });
-        p.addEventListener('mouseout',  function(e) { if (!inP(e.relatedTarget)) schedH(); });
-        /* クリックでこのポップアップ(depth以上)を閉じる。リンク・ボタンは除外 */
+        p.addEventListener('mouseout',  function(e) { if (!inP(e.relatedTarget) && !_inSel(e.relatedTarget)) schedH(); });
+        /* ドラッグ（テキスト選択）判定: mousedown位置を記録し、click時に移動量で判別 */
+        p.addEventListener('mousedown', function(e) {
+            p._downX = e.clientX; p._downY = e.clientY;
+        });
+        /* クリックでこのポップアップ(depth以上)を閉じる。リンク・ボタンは除外。
+           ただしドラッグ（移動>4px）やテキスト選択中は閉じない。 */
         p.addEventListener('click', function(e) {
             if (e.target.closest('a[href], button, span.quote-ind, [data-popup-no]')) return;
+            /* ドラッグ判定: mousedown位置からの移動量が大きければ選択操作とみなし閉じない */
+            if (typeof p._downX === 'number') {
+                var dx = e.clientX - p._downX, dy = e.clientY - p._downY;
+                if (dx*dx + dy*dy > 16) return;   /* 4px超 = ドラッグ */
+            }
+            /* テキスト選択中（範囲が空でない）なら閉じない */
+            var sel = window.getSelection && window.getSelection();
+            if (sel && !sel.isCollapsed && sel.toString().length > 0) return;
             var myDepth = parseInt((p.dataset||{}).depth||'0');
             clearTimeout(T.h);
             while (P.length > 0 && parseInt((P[P.length-1].dataset||{}).depth||'0') >= myDepth) {
@@ -4010,6 +4037,13 @@ class ThreadView(QWidget):
                 });
                 m.appendChild(btn);
             });
+            /* 選択メニューにカーソルがある間は引用ポップアップを閉じない
+               （ドラッグ選択→メニューへ移動でポップアップが消えるのを防ぐ）。
+               メニューから離れたら通常どおり閉じ判定する。 */
+            m.addEventListener('mouseover', function() { clearTimeout(T.h); });
+            m.addEventListener('mouseout', function(e) {
+                if (!inP(e.relatedTarget) && !_inSel(e.relatedTarget)) schedH();
+            });
             document.body.appendChild(m);
             return m;
         }
@@ -4086,28 +4120,37 @@ class ThreadView(QWidget):
     /* ── スクロール時にnew-res有無をPythonへ通知 ── */
     /*    ページ末尾を表示したら更新せずとも新着(赤帯/タブ青)を解除する     */
     /*    （返信・画像・引用モード共通: 画像/引用は _respool 内の .res.new-res も対象）*/
+    function _checkUnreadAtBottom() {
+        var fromBottom = document.documentElement.scrollHeight
+                         - window.scrollY - window.innerHeight;
+        if (fromBottom <= 80) {
+            document.querySelectorAll('.res.new-res').forEach(function(el) {
+                el.classList.remove('new-res');
+            });
+            document.querySelectorAll('.qt-new').forEach(function(el) {
+                if (el.parentNode) el.parentNode.removeChild(el);
+            });
+            document.querySelectorAll('.new-res-divider').forEach(function(el) {
+                if (el.parentNode) el.parentNode.removeChild(el);
+            });
+        }
+        var has = document.querySelectorAll('.res.new-res').length > 0;
+        if (typeof bridge !== 'undefined' && bridge.notifyUnread) {
+            bridge.notifyUnread(has);
+        }
+    }
     window.addEventListener('scroll', function() {
         clearTimeout(window._unreadScrollTimer);
-        window._unreadScrollTimer = setTimeout(function() {
-            var fromBottom = document.documentElement.scrollHeight
-                             - window.scrollY - window.innerHeight;
-            if (fromBottom <= 80) {
-                document.querySelectorAll('.res.new-res').forEach(function(el) {
-                    el.classList.remove('new-res');
-                });
-                document.querySelectorAll('.qt-new').forEach(function(el) {
-                    if (el.parentNode) el.parentNode.removeChild(el);
-                });
-                document.querySelectorAll('.new-res-divider').forEach(function(el) {
-                    if (el.parentNode) el.parentNode.removeChild(el);
-                });
-            }
-            var has = document.querySelectorAll('.res.new-res').length > 0;
-            if (typeof bridge !== 'undefined' && bridge.notifyUnread) {
-                bridge.notifyUnread(has);
-            }
-        }, 200);
+        window._unreadScrollTimer = setTimeout(_checkUnreadAtBottom, 200);
     });
+    /* タブアクティブ化時にPython側から呼べるよう公開（バックグラウンドで
+       innerHeight=0のままロードされた画像モード等で、表示後に末尾が見えていれば
+       青背景を解除するため）。 */
+    window._checkUnreadAtBottom = _checkUnreadAtBottom;
+    /* 初回チェック: スクロールしなくても既にページ末尾が見えている場合
+       （画像モードのグリッドが短い等）に青背景/赤帯を解除する。
+       レイアウト確定後に走らせるため少し遅延させる。 */
+    setTimeout(_checkUnreadAtBottom, 300);
 
 })();"""
         self._view.page().runJavaScript(js)
