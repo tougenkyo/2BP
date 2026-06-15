@@ -23,3 +23,7 @@ Log*.txt
 Thumbs.db
 .DS_Store
 data/log/bbsmenu_cache.html
+/old
+2Bmemo.txt
+/data
+*.bat
