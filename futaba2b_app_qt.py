@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.13"
+APP_VER = "0.9.14"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2752,7 +2752,7 @@ class ThreadView(QWidget):
         self._lbl_countdown = QLabel("")
         self._lbl_countdown.setFixedHeight(24)
         self._lbl_countdown.setToolTip("次の自動更新まであと何秒/分")
-        self._lbl_countdown.setStyleSheet("font-size:8pt; color:#ffffff; padding:0 4px;")
+        self._lbl_countdown.setStyleSheet(f"font-size:8pt; color:{_TM.ui('countdown_fg','#ffffff')}; padding:0 4px;")
         tb.addWidget(self._lbl_countdown)
         # スクロールチェックボックス
         self._chk_ar_scroll = QCheckBox("スクロール")
@@ -5482,7 +5482,7 @@ class CatalogView(QWidget):
         self._lbl_countdown = QLabel("")
         self._lbl_countdown.setFixedHeight(24)
         self._lbl_countdown.setToolTip("次の自動更新まであと何秒/分")
-        self._lbl_countdown.setStyleSheet("font-size:8pt; color:#ffffff; padding:0 4px;")
+        self._lbl_countdown.setStyleSheet(f"font-size:8pt; color:{_TM.ui('countdown_fg','#ffffff')}; padding:0 4px;")
         tb.addWidget(self._lbl_countdown)
         self._sort_grp = QButtonGroup(self); self._sort_grp.setExclusive(True)
         for i, lbl in enumerate(["通常", "新順", "古順", "多順", "少順", "履歴"]):

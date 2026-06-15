@@ -1741,8 +1741,12 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
             # サムネ=本画像のとき等倍表示になるのを防ぐ
             # aspect-ratio も明示することで、画像読み込み後に本来の縦横比が
             # height:auto に優先適用されて表示が崩れる（潰れた画像が縦長になる等）のを防ぐ
+            # 寸法不明（JSON差分API由来の新着レス・旧バージョン保存ログ等で
+            # thumb_w/h が無い）の場合は max-width/height で上限を設け、
+            # 本画像が等倍（フルサイズ）表示されるのを防ぐ。
             _dim = (f' width="{_tw}" height="{_th}" style="aspect-ratio:{_tw}/{_th}"'
-                    if (_tw > 0 and _th > 0) else '')
+                    if (_tw > 0 and _th > 0)
+                    else ' style="max-width:250px;max-height:250px;width:auto;height:auto"')
             img_html = (
                 f'<div class="thumb">'
                 f'<img src="{tu}"{_dim} loading="lazy" data-full="{eu}" '
