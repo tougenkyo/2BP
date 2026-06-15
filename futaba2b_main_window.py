@@ -44,7 +44,7 @@ from futaba2b_app_qt import (
 )
 from futaba2b_dialogs import (
     ThreadHistoryPane, PostDialog, NgSettingsDialog, AppSettingsDialog,
-    BoardSettingsDialog,
+    BoardSettingsDialog, BookmarkEditDialog,
 )
 
 def _pin_safe_set(inner, view, new_text: str):
@@ -389,6 +389,10 @@ class MainWindow(QMainWindow):
                              triggered=self._open_log_file,
                              shortcut=_sc("open_log")))
 
+        # ── ブックマーク（設定メニューの左） ──
+        self._bookmark_menu = mb.addMenu("ブックマーク(&K)")
+        self._build_bookmark_menu()
+
         sm = mb.addMenu("設定(&S)")
         sm.addAction(QAction("2BPの設定(&F)…", self, triggered=self._open_settings))
         sm.addAction(QAction("板の設定(&B)…", self, triggered=self._open_board_settings))
@@ -404,31 +408,46 @@ class MainWindow(QMainWindow):
 
         hm = mb.addMenu("ヘルプ(&H)")
         hm.addAction(QAction("アップデートを確認(&U)…", self, triggered=self._check_for_update))
-        hm.addAction(QAction("2Bサポート他(&S)", self,
-            triggered=lambda: _open_url("http://www2.ezbbs.net/13/futabe/")))
-        hm.addSeparator()
-        for _label, _url in (
-            ("ふたば鯖☆偽監視所", "https://appsweets.net/serverstat/"),
-            ("ふたポ",            "https://futapo.futakuro.com/"),
-            ("FTBucket",          "https://www.ftbucket.info/scrapshot/ftb/"),
-            ("つまんね。",         "https://tsumanne.net/"),
-            ("librejp",           "https://sportschan.org/librejp/catalog.html"),
-            ("めぶき☆ちゃんねる",  "https://mebuki.moe/"),
-        ):
-            hm.addAction(QAction(_label, self,
-                triggered=lambda checked=False, u=_url: _open_url(u)))
-        hm.addSeparator()
-        for _label, _url in (
-            ("あぷ小＠ふたば", "https://dec.2chan.net/up2/"),
-            ("あぷ＠ふたば",   "https://dec.2chan.net/up/up.htm"),
-        ):
-            hm.addAction(QAction(_label, self,
-                triggered=lambda checked=False, u=_url: _open_url(u)))
+        hm.addAction(QAction("GitHub 2BPを開く", self,
+            triggered=lambda: _open_url("https://github.com/tougenkyo/2BP")))
         hm.addSeparator()
         hm.addAction(QAction("バージョン情報(&A)…", self, triggered=self._show_about))
 
         # Ctrl+F は WindowShortcut で一元管理（メニューに表示しない）
         self._sc_find = QShortcut(QKeySequence(_sc("find_in_view") or QKeySequence("Ctrl+F")), self, self._find_in_view)
+
+    # ── ブックマーク ─────────────────────────────────────────────────────────
+    def _build_bookmark_menu(self):
+        """ブックマークメニューを設定内容から再構築する。
+        最上部に「ブックマークを編集」、区切り線の後に各ブックマークを並べる。"""
+        m = getattr(self, "_bookmark_menu", None)
+        if m is None:
+            return
+        m.clear()
+        m.addAction(QAction("ブックマークを編集(&E)…", self,
+                            triggered=self._open_bookmark_edit))
+        m.addSeparator()
+        for bm in (getattr(self._settings, "bookmarks", None) or []):
+            if bm.get("sep"):
+                m.addSeparator()
+                continue
+            title = bm.get("title", "") or bm.get("url", "")
+            url   = bm.get("url", "")
+            if not url:
+                continue
+            m.addAction(QAction(title, self,
+                triggered=lambda checked=False, u=url: _open_url(u)))
+
+    def _open_bookmark_edit(self):
+        """ブックマーク編集ウィンドウを開き、OKなら保存してメニューを再構築する。"""
+        dlg = BookmarkEditDialog(getattr(self._settings, "bookmarks", []) or [], self)
+        if dlg.exec():
+            self._settings.bookmarks = dlg.bookmarks()
+            try:
+                self._settings.save()
+            except Exception:
+                pass
+            self._build_bookmark_menu()
 
     # ── bbsmenu ─────────────────────────────────────────────────────────────
 

@@ -55,7 +55,8 @@
     "new_res_tab_update": "#ff4444",
     "tab_bg_live":        "rgba(0,180,220,80)",
     
-    "countdown_fg":       "#5a1030"
+    "countdown_fg":       "#5a1030",
+    "menu_separator": "#888"
   },
 
   "thread": {

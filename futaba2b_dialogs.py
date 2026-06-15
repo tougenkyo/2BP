@@ -5017,3 +5017,156 @@ class BoardSettingsDialog(QDialog):
             if nb.tabText(i) == tab_name:
                 nb.setCurrentIndex(i)
                 break
+
+
+class BookmarkEditDialog(QDialog):
+    """ブックマーク編集ウィンドウ。
+    ・タイトル/URL を2列のテーブルで管理（ダブルクリックで直接編集）
+    ・追加 / ───を追加する / 削除 / ↑ / ↓ ボタンで編集・並べ替え
+    ・OK で結果を返す（呼び出し側が AppSettings.bookmarks に保存する）
+    """
+    _SEP_LABEL = "──────────"
+
+    def __init__(self, bookmarks: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("ブックマークの編集")
+        self.resize(620, 480)
+
+        v = QVBoxLayout(self)
+
+        self._table = QTableWidget(0, 2, self)
+        self._table.setHorizontalHeaderLabels(["タイトル", "URL"])
+        _hh = self._table.horizontalHeader()
+        _hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        _hh.setStretchLastSection(True)
+        self._table.setColumnWidth(0, 220)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        # ダブルクリック / Enter で直接編集できるようにする
+        self._table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.EditKeyPressed
+            | QTableWidget.EditTrigger.AnyKeyPressed)
+        v.addWidget(self._table, 1)
+
+        # 操作ボタン
+        row = QHBoxLayout()
+        b_add  = QPushButton("追加")
+        b_sep  = QPushButton("───を追加する")
+        b_del  = QPushButton("削除")
+        b_up   = QPushButton("↑")
+        b_down = QPushButton("↓")
+        b_up.setFixedWidth(36)
+        b_down.setFixedWidth(36)
+        for b in (b_add, b_sep, b_del):
+            row.addWidget(b)
+        row.addStretch(1)
+        row.addWidget(b_up)
+        row.addWidget(b_down)
+        v.addLayout(row)
+
+        b_add.clicked.connect(
+            lambda: self._add_row({"title": "新しいブックマーク", "url": "https://"},
+                                  select=True, edit=True))
+        b_sep.clicked.connect(lambda: self._add_row({"sep": True}, select=True))
+        b_del.clicked.connect(self._del_row)
+        b_up.clicked.connect(lambda: self._move(-1))
+        b_down.clicked.connect(lambda: self._move(1))
+
+        # OK / キャンセル
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+        for bm in (bookmarks or []):
+            self._add_row(bm)
+
+    # ── 行操作 ────────────────────────────────────────────────
+    def _add_row(self, bm: dict, *, select: bool = False, edit: bool = False):
+        is_sep = bool(bm.get("sep"))
+        r = self._table.rowCount()
+        self._table.insertRow(r)
+        if is_sep:
+            it0 = QTableWidgetItem(self._SEP_LABEL)
+            it0.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            it0.setFlags(it0.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            it0.setData(Qt.ItemDataRole.UserRole, "sep")
+            it1 = QTableWidgetItem("")
+            it1.setFlags(it1.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            it1.setData(Qt.ItemDataRole.UserRole, "sep")
+        else:
+            it0 = QTableWidgetItem(str(bm.get("title", "")))
+            it0.setData(Qt.ItemDataRole.UserRole, "link")
+            it1 = QTableWidgetItem(str(bm.get("url", "")))
+            it1.setData(Qt.ItemDataRole.UserRole, "link")
+        self._table.setItem(r, 0, it0)
+        self._table.setItem(r, 1, it1)
+        if select:
+            self._table.setCurrentCell(r, 0)
+        if edit:
+            self._table.editItem(it0)
+
+    def _row_dict(self, r: int) -> dict:
+        it0 = self._table.item(r, 0)
+        kind = it0.data(Qt.ItemDataRole.UserRole) if it0 else "link"
+        if kind == "sep":
+            return {"sep": True}
+        it1 = self._table.item(r, 1)
+        return {"title": (it0.text() if it0 else "").strip(),
+                "url":   (it1.text() if it1 else "").strip()}
+
+    def _set_row(self, r: int, bm: dict):
+        is_sep = bool(bm.get("sep"))
+        it0 = self._table.item(r, 0)
+        it1 = self._table.item(r, 1)
+        if is_sep:
+            it0.setText(self._SEP_LABEL)
+            it0.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            it0.setFlags(it0.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            it0.setData(Qt.ItemDataRole.UserRole, "sep")
+            it1.setText("")
+            it1.setFlags(it1.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            it1.setData(Qt.ItemDataRole.UserRole, "sep")
+        else:
+            it0.setText(str(bm.get("title", "")))
+            it0.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            it0.setFlags(it0.flags() | Qt.ItemFlag.ItemIsEditable)
+            it0.setData(Qt.ItemDataRole.UserRole, "link")
+            it1.setText(str(bm.get("url", "")))
+            it1.setFlags(it1.flags() | Qt.ItemFlag.ItemIsEditable)
+            it1.setData(Qt.ItemDataRole.UserRole, "link")
+
+    def _del_row(self):
+        r = self._table.currentRow()
+        if r < 0:
+            return
+        self._table.removeRow(r)
+
+    def _move(self, d: int):
+        r = self._table.currentRow()
+        if r < 0:
+            return
+        nr = r + d
+        if not (0 <= nr < self._table.rowCount()):
+            return
+        a = self._row_dict(r)
+        b = self._row_dict(nr)
+        self._set_row(r, b)
+        self._set_row(nr, a)
+        self._table.setCurrentCell(nr, 0)
+
+    # ── 結果取得 ──────────────────────────────────────────────
+    def bookmarks(self) -> list:
+        out = []
+        for r in range(self._table.rowCount()):
+            bm = self._row_dict(r)
+            if bm.get("sep"):
+                out.append({"sep": True})
+            else:
+                if not bm.get("title") and not bm.get("url"):
+                    continue   # 空行は捨てる
+                out.append({"title": bm.get("title", ""), "url": bm.get("url", "")})
+        return out

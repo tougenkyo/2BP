@@ -227,12 +227,31 @@ _DEFAULT_UPLOADERS = [
     {"name":"あぷ小＠ふたば","pattern":r"fu\d+\.\w+", "url":"http://dec.2chan.net/up2/src/$MATCH",  "popup":True, "new_tab":False},
 ]
 
+# デフォルトのブックマーク（メニューバー「ブックマーク」に表示）。
+# {"sep": True} は区切り線、それ以外は {"title":..., "url":...} のリンク。
+_DEFAULT_BOOKMARKS = [
+    {"title": "2Bサポート他",       "url": "http://www2.ezbbs.net/13/futabe/"},
+    {"title": "ふたば鯖☆偽監視所",  "url": "https://appsweets.net/serverstat/"},
+    {"sep": True},
+    {"title": "あふぶ小@ふたば",     "url": "https://dec.2chan.net/up2/"},
+    {"title": "あぶ@ふたば",         "url": "https://dec.2chan.net/up/up.htm"},
+    {"sep": True},
+    {"title": "ふたポ",             "url": "https://futapo.futakuro.com/"},
+    {"title": "出ちゃいましたねぇ",  "url": "https://futaba-id.site/"},
+    {"title": "FTBucket",          "url": "https://www.ftbucket.info/scrapshot/ftb/"},
+    {"title": "つまんね。",          "url": "https://tsumanne.net/"},
+    {"title": "リブレjp",           "url": "https://sportschan.org/librejp/catalog.html"},
+    {"title": "めぶき☆ちゃんねる",   "url": "https://mebuki.moe/"},
+]
+
 class AppSettings:
     def __init__(self) -> None:
         self._app: dict                   = {}
         self.favorites: list[dict]        = []
         self.ng_words: list[dict]         = []
         self.thread_history: list[dict]   = []
+        # ブックマーク（メニューバー「ブックマーク」）
+        self.bookmarks: list[dict]        = [dict(b) for b in _DEFAULT_BOOKMARKS]
         # ★ 追加: 板リスト (BoardInfo オブジェクトのフラットなリスト)
         self.boards: list[BoardInfo]      = []
         # カスタム板グループ: [{"name":"二次元裏","boards":[{"name":"img","url":"..."}]}]
@@ -559,6 +578,7 @@ class AppSettings:
             self.uploader_links      = raw.get("uploader_links", list(_DEFAULT_UPLOADERS))
             self.user_css_file       = raw.get("user_css_file", "theme/user.css")
             self.thread_history      = raw.get("thread_history", [])
+            self.bookmarks           = raw.get("bookmarks", [dict(b) for b in _DEFAULT_BOOKMARKS])
             self.custom_board_groups = raw.get("custom_board_groups", [])
             self.tab_state           = raw.get("tab_state", {})
             self.thread_read_counts  = raw.get("thread_read_counts", {})
@@ -818,6 +838,7 @@ class AppSettings:
                         "uploader_links":       self.uploader_links,
                         "user_css_file":        self.user_css_file,
                         "thread_history":       self.thread_history,
+                        "bookmarks":            self.bookmarks,
                         "custom_board_groups":  self.custom_board_groups,
                         "tab_state":            self.tab_state,
                         "thread_read_counts":   _thread_read,

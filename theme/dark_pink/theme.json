@@ -40,7 +40,8 @@
     "new_res_tab_update": "#ff4444",
     "tab_bg_live":        "rgba(0,180,220,80)",
     
-    "countdown_fg":       "#FFFFEE"
+    "countdown_fg":       "#FFFFEE",
+    "menu_separator": "#888"
   },
   "thread": {
     "body_bg":            "#2a1520",

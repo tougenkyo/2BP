@@ -317,6 +317,11 @@ QMenu::item:selected {{
     background-color: {c("progress_chunk", "#5588cc")};
     color: #fff;
 }}
+QMenu::separator {{
+    height: 1px;
+    background: {c("menu_separator", "#666")};
+    margin: 4px 8px;
+}}
 QSplitter::handle {{
     background-color: {c("panel_border", "#444")};
 }}
