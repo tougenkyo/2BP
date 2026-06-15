@@ -34,10 +34,10 @@ body {
     width: fit-content;
     min-width: 260px;
     max-width: 100%;
-    padding: 3px 10px 3px 23px;
+    padding: 3px 10px 3px 2px;
     margin: 1px 0 3px 0;
 }
-.res.reply.new-res { border-left: 30px solid #cc1105; }
+.res.reply.new-res { border-left: 3px solid #cc1105; }
 .res.reply .content { padding-left: 15px; }
 .thread-end { clear: both; height: 4px; }
 
