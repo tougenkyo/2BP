@@ -13,7 +13,8 @@
 
 ## スクリーンショット
 
-   ![カタログ表示](screenshots/catalog.png)　![スレッド表示](screenshots/thread.png)
+<img src="screenshots/catalog.png" width="300"> <img src="screenshots/thread.png" width="300">
+
 ---
 
 ## 目次
