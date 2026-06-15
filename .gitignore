@@ -22,3 +22,4 @@ Log*.txt
 .idea/
 Thumbs.db
 .DS_Store
+data/log/bbsmenu_cache.html

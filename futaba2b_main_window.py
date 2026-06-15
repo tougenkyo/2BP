@@ -58,6 +58,13 @@ def _pin_safe_set(inner, view, new_text: str):
         inner.setTabText(idx, new_text)
 
 
+# ── アップデート機能 ──────────────────────────────────────────────────────
+_UPDATE_REPO          = "tougenkyo/2BP"
+_UPDATE_BRANCH        = "main"
+_UPDATE_VERSION_URL   = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/{_UPDATE_BRANCH}/futaba2b_app_qt.py"
+_UPDATE_ZIP_URL       = f"https://codeload.github.com/{_UPDATE_REPO}/zip/refs/heads/{_UPDATE_BRANCH}"
+
+
 class MainWindow(QMainWindow):
     _bbsmenu_signal   = Signal(list)   # スレッド→UIの安全な橋渡し
     _tab_icon_signal  = Signal(object, object, bytes)  # (inner, view, data) タブアイコン設定
@@ -397,6 +404,7 @@ class MainWindow(QMainWindow):
 
         hm = mb.addMenu("ヘルプ(&H)")
         hm.addAction(QAction("バージョン情報(&A)…", self, triggered=self._show_about))
+        hm.addAction(QAction("アップデートを確認(&U)…", self, triggered=self._check_for_update))
         hm.addAction(QAction("2Bサポート他(&S)", self,
             triggered=lambda: _open_url("http://www2.ezbbs.net/13/futabe/")))
         hm.addSeparator()
@@ -3740,6 +3748,124 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "バージョン情報",
             f"2BP ─ ふたばちゃんねる専用ブラウザ\nバージョン {APP_VER}\n\n"
             "PySide6 + QtWebEngine 版\n旧 tkinter 版から全機能を移行")
+
+    # ── アップデート ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _ver_tuple(ver: str):
+        try:
+            return tuple(int(x) for x in ver.strip().split("."))
+        except Exception:
+            return (0,)
+
+    def _check_for_update(self):
+        """GitHub上のfutaba2b_app_qt.pyからAPP_VERを取得し、現在のバージョンと比較する。"""
+        self._st_log.setText("アップデートを確認中...")
+
+        def _job():
+            try:
+                import requests
+                r = requests.get(_UPDATE_VERSION_URL, headers={"User-Agent": UA}, timeout=10)
+                r.raise_for_status()
+                m = re.search(r'APP_VER\s*=\s*"([0-9.]+)"', r.text)
+                if not m:
+                    raise ValueError("バージョン情報の取得に失敗しました（形式不正）")
+                remote_ver = m.group(1)
+                self._main_thread_call.emit(
+                    lambda v=remote_ver: self._on_update_check_result(v, None))
+            except Exception as e:
+                self._main_thread_call.emit(
+                    lambda e=e: self._on_update_check_result(None, e))
+
+        threading.Thread(target=_job, daemon=True).start()
+
+    def _on_update_check_result(self, remote_ver, error):
+        if error is not None:
+            self._st_log.setText("アップデートの確認に失敗しました")
+            QMessageBox.warning(self, "アップデート確認",
+                "アップデートの確認に失敗しました。\n"
+                "ネットワーク接続を確認してください。\n\n"
+                f"{error}")
+            return
+
+        local_ver = APP_VER
+        if self._ver_tuple(remote_ver) <= self._ver_tuple(local_ver):
+            self._st_log.setText("お使いのバージョンは最新です")
+            QMessageBox.information(self, "アップデート確認",
+                f"お使いのバージョンは最新です。\n\n現在のバージョン: v{local_ver}")
+            return
+
+        self._st_log.setText(f"新しいバージョン v{remote_ver} が利用可能です")
+        ret = QMessageBox.question(self, "アップデート",
+            "新しいバージョンが公開されています。\n\n"
+            f"現在のバージョン: v{local_ver}\n"
+            f"最新バージョン　: v{remote_ver}\n\n"
+            "ダウンロードして適用します。\n"
+            "適用後、2BPは自動的に再起動します。\n\n"
+            "バージョンアップしますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if ret == QMessageBox.StandardButton.Yes:
+            self._start_update(remote_ver)
+        else:
+            self._st_log.setText("")
+
+    def _start_update(self, remote_ver: str):
+        """GitHubリポジトリのzipをダウンロードし、update.bat用のfiles.zipとして配置する。"""
+        base = Path(__file__).resolve().parent
+        if not (base / "update.bat").exists():
+            QMessageBox.warning(self, "アップデート",
+                "update.bat が見つかりません。\n2BPフォルダに update.bat を配置してから再度お試しください。")
+            return
+
+        self._st_log.setText("アップデートをダウンロード中...")
+
+        def _job():
+            try:
+                import requests, zipfile, io
+                r = requests.get(_UPDATE_ZIP_URL, headers={"User-Agent": UA}, timeout=60)
+                r.raise_for_status()
+                src = zipfile.ZipFile(io.BytesIO(r.content))
+                names = src.namelist()
+                if not names:
+                    raise ValueError("ダウンロードしたZIPが空です")
+                # GitHubのzipはリポジトリ名-ブランチ名/ のフォルダを含むため除去する
+                prefix = names[0].split("/")[0] + "/"
+                dest = base / "files.zip"
+                with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as dst:
+                    for info in src.infolist():
+                        if info.is_dir() or not info.filename.startswith(prefix):
+                            continue
+                        rel = info.filename[len(prefix):]
+                        if not rel:
+                            continue
+                        dst.writestr(rel, src.read(info.filename))
+                self._main_thread_call.emit(lambda: self._on_update_downloaded(True, None))
+            except Exception as e:
+                self._main_thread_call.emit(lambda e=e: self._on_update_downloaded(False, e))
+
+        threading.Thread(target=_job, daemon=True).start()
+
+    def _on_update_downloaded(self, success: bool, error):
+        if not success:
+            self._st_log.setText("アップデートのダウンロードに失敗しました")
+            QMessageBox.warning(self, "アップデート",
+                f"アップデートのダウンロードに失敗しました。\n\n{error}")
+            return
+        self._apply_update()
+
+    def _apply_update(self):
+        """update.bat を起動して2BPを終了する。update.bat側でfiles.zipの展開・上書き・再起動を行う。"""
+        base = Path(__file__).resolve().parent
+        try:
+            import subprocess as _sp
+            _sp.Popen(["update.bat"], cwd=str(base),
+                      creationflags=_sp.CREATE_NEW_CONSOLE)
+        except Exception as e:
+            QMessageBox.warning(self, "アップデート", f"update.bat の起動に失敗しました。\n{e}")
+            return
+        # closeEvent経由でタブ状態・設定を保存してから終了する
+        self.close()
 
     # ── タブ状態 保存・復元 ────────────────────────────────────────────────────
 
