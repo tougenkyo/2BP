@@ -85,7 +85,7 @@ from PySide6.QtWebEngineCore    import (
 )
 from PySide6.QtWebChannel import QWebChannel
 
-from futaba2b_models   import BoardInfo, BoardCategory, AutoRefreshEntry
+from futaba2b_models   import BoardInfo, BoardCategory, AutoRefreshEntry, CatalogEntry
 from futaba2b_network  import FutabaFetcher
 from futaba2b_settings import AppSettings, NgFilter
 from futaba2b_html     import thread_to_html, catalog_to_html, render_res, THREAD_CSS, WEBCHANNEL_JS
@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.33"
+APP_VER = "0.9.37"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5465,6 +5465,7 @@ class CatalogView(QWidget):
     auto_refresh_requested = Signal()  # 自動更新ダイアログを開く要求
     _board_info_ready = Signal()   # board情報バックグラウンド取得完了
     _email_data_ready = Signal(object)  # board topから取得したemail情報 {no: email}
+    _catalog_json_ready = Signal(object)  # mode=json取得結果 {"map":{no:{email,id}}, "nos":set} or None
     _catalog_del_result = Signal(bool, str)  # 削除依頼(del)の結果（ok, msg）
     _entries_ready = Signal(list)   # スレッド→UI の安全な橋渡し
     _hover_img_ready  = Signal(bytes, object)  # (img_data, cursor_pos) BGスレッド→UIスレッド
@@ -5479,6 +5480,8 @@ class CatalogView(QWidget):
         self._hovering: bool = False  # マウスがカタログエントリ上にあるか
         self._pending_catset: callable | None = None  # fetch完了後に1回だけ実行するcatset
         self._email_cache: dict = {}            # {no: email} board_top取得済みemail（二重レンダリング防止）
+        self._catalog_json_cache: dict = {}     # {no: {"email","id"}} mode=json取得済み
+        self._catalog_json_nos: set = set()     # mode=json に存在したスレNo集合（隔離判定用）
         # 検索ボックスのビュー状態保存をデバウンス（キーストローク毎の全量設定保存を防止）
         self._view_state_save_timer = QTimer(self)
         self._view_state_save_timer.setSingleShot(True)
@@ -5570,6 +5573,7 @@ class CatalogView(QWidget):
         self._bridge.thread_bg_open_requested.connect(self.thread_open_bg.emit)
         self._board_info_ready.connect(self._emit_catalog_status)
         self._email_data_ready.connect(self._merge_email_data)
+        self._catalog_json_ready.connect(self._merge_catalog_json)
         self._bridge.url_open_requested.connect(_open_url)
         self._bridge.copy_to_clipboard_requested.connect(self._copy_to_clipboard)
         self._bridge.add_thread_ng_requested.connect(self._on_add_thread_ng)
@@ -5805,6 +5809,8 @@ class CatalogView(QWidget):
     def load(self, board: BoardInfo, sort: int = -1):
         if not self._board or self._board.url != board.url:
             self._email_cache.clear()   # 板が変わったらemailキャッシュは無効
+            self._catalog_json_cache.clear()
+            self._catalog_json_nos = set()
         self._board = board
         self._restore_view_state()   # UI を復元 (シグナルブロック済み)
         # ビュー状態が未保存の板は、板別設定のカタログソートを初期値として適用
@@ -5839,24 +5845,40 @@ class CatalogView(QWidget):
                 _em = self._email_cache.get(_e_ent.no, "")
                 if _em and not _e_ent.email:
                     _e_ent.email = _em
-        # エントリ数 = 現在の保存スレッド数
+        # mode=json取得済み情報を先行適用（前回json基準）: email/id補完 + 隔離スレ合成
+        if self._catalog_json_cache:
+            for _e_ent in entries:
+                _ji = self._catalog_json_cache.get(_e_ent.no)
+                if _ji:
+                    if _ji.get("email"):
+                        _e_ent.email = _ji["email"]
+                    _e_ent.op_id = _ji.get("id", "")
+            # 隔離スレ = json にあって cat に無い（隔離されるとカタログから消えてjsonに残る）
+            if (self._catalog_json_nos
+                    and getattr(self._settings, 'catalog_quarantine_bottom', True)):
+                _cat_nos = {e.no for e in entries}
+                for _qno in sorted(self._catalog_json_nos - _cat_nos):
+                    entries.append(self._make_quarantine_entry(
+                        _qno, self._catalog_json_cache.get(_qno, {})))
+        # エントリ数 = 現在の保存スレッド数（隔離スレは実カタログ件数に含めない）
+        _real_entries = [e for e in entries if not getattr(e, 'is_quarantine', False)]
         if self._board:
-            self._board.current_saved = len(entries)
+            self._board.current_saved = len(_real_entries)
 
         # ── remaining 計算（仮赤字・隔離判定の共通基盤）────────────────
-        if self._board and entries:
+        if self._board and _real_entries:
             board_url  = self._board.base_url
             max_saved  = self._board.max_saved or 0
             global_max = self._settings.global_max_no_by_board.get(board_url, 0)
             # エントリの最大スレNo を記録（異常値が入っていれば強制リセット）
-            cur_max = max((e.no for e in entries), default=0)
+            cur_max = max((e.no for e in _real_entries), default=0)
             _RESET_THRESHOLD = 1_000_000
             if cur_max > global_max or (global_max > cur_max and (global_max - cur_max) > _RESET_THRESHOLD):
                 if global_max > cur_max and (global_max - cur_max) > _RESET_THRESHOLD:
                     print(f"[SAVED] global_max異常値リセット: {global_max} → {cur_max} (差={global_max-cur_max})")
                 self._settings.global_max_no_by_board[board_url] = cur_max
                 global_max = cur_max
-            for e in entries:
+            for e in _real_entries:
                 if max_saved > 0 and global_max > 0:
                     remaining = e.no + max_saved - global_max
                     # 仮赤字判定: 設定ONかつ残り10%以下（is_redでないもの）
@@ -5898,7 +5920,8 @@ class CatalogView(QWidget):
 
 
     def _fetch_board_info_bg(self, board: BoardInfo):
-        """futaba.htm からboard情報+email情報を取得するバックグラウンド処理"""
+        """futaba.htm からboard情報+email情報を取得するバックグラウンド処理。
+        バッジ/隔離が有効なら mode=json も取得して email/id/存在Noを得る。"""
         try:
             top_entries = self._fetcher.fetch_board_top(board)
             if top_entries:
@@ -5907,8 +5930,88 @@ class CatalogView(QWidget):
                     self._email_data_ready.emit(email_map)
         except Exception as e:
             print(f'[CatalogView] board info fetch error: {e}')
-        finally:
-            self._board_info_ready.emit()
+        # mode=json（バッジ②④・隔離①のいずれかが有効なときのみ取得）
+        try:
+            _need_json = (getattr(self._settings, 'catalog_show_mail_badge', True)
+                          or getattr(self._settings, 'catalog_quarantine_bottom', True))
+            if _need_json:
+                jinfo = self._fetcher.fetch_catalog_json(board)
+                self._catalog_json_ready.emit(jinfo)
+        except Exception as e:
+            print(f'[CatalogView] catalog json fetch error: {e}')
+        self._board_info_ready.emit()
+
+    def _make_quarantine_entry(self, no: int, ji: dict) -> CatalogEntry:
+        """json専用スレ（隔離スレ）から合成カタログエントリを作る。
+        ※ json にレス数は無いため res_count=0（カタログ未掲載のため不明）。"""
+        import re as _re, html as _hh
+        com = (ji.get("com", "") or "")
+        sub = (ji.get("sub", "") or "").strip()
+        # com の HTML を素テキスト化（<br>→空白、タグ除去、実体参照復元）
+        t = _re.sub(r'<br\s*/?>', ' ', com, flags=_re.I)
+        t = _re.sub(r'<[^>]+>', '', t)
+        t = _hh.unescape(t).strip()
+        if sub and sub not in ("無念",):
+            title = (sub + " " + t).strip()
+        else:
+            title = t
+        board = self._board
+        return CatalogEntry(
+            no         = no,
+            thumb_url  = (ji.get("thumb", "") or ""),
+            res_count  = 0,
+            thread_url = (board.base_url + f"res/{no}.htm") if board else f"res/{no}.htm",
+            title      = title,
+            email      = ji.get("email", ""),
+            op_id      = ji.get("id", ""),
+            is_quarantine = True,
+            board      = board,
+        )
+
+    def _merge_catalog_json(self, jinfo):
+        """mode=json取得結果をカタログエントリにマージ。
+        jinfo: {"map":{no:{email,id,com,sub,thumb}}, "nos":set} または None（取得失敗）。
+        None のときは隔離判定・id補完を行わない。
+        隔離スレ = json にあって cat に無い（隔離されるとカタログから消えてjsonに残る）。"""
+        if not jinfo or not self._all_entries:
+            return
+        jmap = jinfo.get("map") or {}
+        jnos = jinfo.get("nos") or set()
+        # キャッシュ更新（次回 _on_entries_ready で先行適用）
+        self._catalog_json_cache = jmap
+        self._catalog_json_nos = jnos
+        changed = False
+        # 1) 実カタログ(非隔離)エントリに email/id を補完
+        for e in self._all_entries:
+            if getattr(e, 'is_quarantine', False):
+                continue
+            ji = jmap.get(e.no)
+            if ji:
+                _em = ji.get("email", "")
+                _id = ji.get("id", "")
+                if _em and e.email != _em:
+                    e.email = _em; changed = True
+                if e.op_id != _id:
+                    e.op_id = _id; changed = True
+        # 2) 隔離スレ（json∖cat）を合成して最下部用に同期
+        if getattr(self._settings, 'catalog_quarantine_bottom', True):
+            real = [e for e in self._all_entries if not getattr(e, 'is_quarantine', False)]
+            cat_nos = {e.no for e in real}
+            quar_nos = jnos - cat_nos
+            prev_quar_nos = {e.no for e in self._all_entries if getattr(e, 'is_quarantine', False)}
+            if quar_nos != prev_quar_nos:
+                new_quar = [self._make_quarantine_entry(no, jmap.get(no, {}))
+                            for no in sorted(quar_nos)]
+                self._all_entries = real + new_quar
+                changed = True
+        else:
+            # 機能OFF: 既存の合成隔離エントリを除去
+            real = [e for e in self._all_entries if not getattr(e, 'is_quarantine', False)]
+            if len(real) != len(self._all_entries):
+                self._all_entries = real
+                changed = True
+        if changed:
+            self._re_render()
 
     def _merge_email_data(self, email_map: dict):
         """board topから取得したemail情報をカタログエントリにマージして再描画"""
@@ -5968,6 +6071,10 @@ class CatalogView(QWidget):
         """検索 + ローカルソート + レス数フィルタ + NGフィルタを適用してレンダリング"""
         import time as _time
         entries = list(self._all_entries)
+        # 隔離スレ（json∖cat の合成エントリ）はフィルタ/ソート対象外にして退避。
+        # 過疎非表示(res=0)やローカルソートで消えたり並び替わるのを防ぎ、最後に最下部へ。
+        _quar_entries = [e for e in entries if getattr(e, 'is_quarantine', False)]
+        entries = [e for e in entries if not getattr(e, 'is_quarantine', False)]
         # 1. 過疎スレ非表示（板設定優先、なければAppSettings）
         _few_hide = False
         _few_lim  = 5
@@ -6024,6 +6131,13 @@ class CatalogView(QWidget):
                 search_sections = (matched, unmatched)
             except re.error:
                 pass  # 正規表現エラー時は全表示
+        # 隔離スレを末尾に合流（catalog_to_html の quarantine_section で最下部に分離表示）
+        if _quar_entries:
+            if search_sections:
+                _m, _u = search_sections
+                search_sections = (_m, list(_u) + _quar_entries)
+            else:
+                entries = entries + _quar_entries
         self._render(entries, search_sections=search_sections, ng_filter=ng_filter)
 
         # ── 逆NGアクション実行 ────────────────────────────────────────────
@@ -6325,7 +6439,9 @@ class CatalogView(QWidget):
                             footer_html=_footer,
                             hover_zoom=getattr(self._settings, "catalog_hover_zoom", False),
                             hover_comment=getattr(self._settings, "catalog_hover_comment", False),
-                            show_email=False)  # カタログのメール内容バッジは常に非表示
+                            show_email=False,  # カタログのメール内容バッジ（フッタ）は常に非表示
+                            show_badge=getattr(self._settings, "catalog_show_mail_badge", True),
+                            quarantine_section=getattr(self._settings, "catalog_quarantine_bottom", True))
         self._load_html_via_tempfile(_cat_html, QUrl("https://www.2chan.net/"))
 
         # catalog_read_counts: 未登録スレのみ現在のレス数を基準値として登録する

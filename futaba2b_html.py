@@ -421,7 +421,17 @@ body {
 .entry-img {
     flex: 1; display: flex; align-items: center; justify-content: center;
     overflow: hidden; min-height: 30px; background: #eeeee0;
+    position: relative;
 }
+/* メール欄/IDバッジ（サムネ右上の小アイコン） */
+.cat-badge {
+    position: absolute; top: 1px; right: 1px;
+    font-size: 7pt; font-weight: bold; line-height: 1;
+    color: #fff; padding: 1px 2px; border-radius: 2px;
+    pointer-events: none; z-index: 2;
+}
+.cat-badge-g { background: #2E7D32; }   /* 緑: ID表示/IP表示/・3・/他 */
+.cat-badge-r { background: #cc1105; }   /* 赤: 非ID表示でID実在 */
 .entry img {
     display: block;
     max-width: calc(var(--cell-w, 84px) - 4px);
@@ -459,6 +469,11 @@ body {
     grid-column: 1 / -1;
     border-top: 2px solid #0000CC;
     margin: 4px 0;
+}
+/* 隔離スレ セクション見出し（mode=json に無いスレ） */
+.sec-hdr.quar-hdr {
+    color: #8a4b00; background: #FFF3E0;
+    border-bottom: 2px solid #E08000;
 }
 /* ─ 逆NGエントリハイライト ─ */
 .entry.reverse-ng {
@@ -2132,7 +2147,9 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                      footer_html: str = "",
                      hover_zoom: bool = False,
                      hover_comment: bool = False,
-                     show_email: bool = False) -> str:
+                     show_email: bool = False,
+                     show_badge: bool = False,
+                     quarantine_section: bool = False) -> str:
     """
     search_sections: None | (matched_list, unmatched_list)
     指定された場合、matched を上にセクション表示する
@@ -2175,6 +2192,8 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         prev_cnt = (read_counts or {}).get(e.thread_url, 0)
         delta    = max(0, res_cnt - prev_cnt) if prev_cnt else 0
         delta_s  = f'<span class="res-new">+{delta}</span>' if delta > 0 else ""
+        # 隔離スレはjsonにレス数が無いため件数を非表示
+        _rc_disp = '' if getattr(e, 'is_quarantine', False) else res_cnt
 
 
         # エントリのクラス決定
@@ -2220,6 +2239,26 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         else:
             _email_badge = ''
 
+        # サムネ右上バッジ（show_badge=True のとき。緑=メール欄種別/赤=非ID表示でID実在）
+        # 優先: ID表示(緑ID) > ID実在のみ(赤ID) > IP表示(緑IP) > ・3・(緑･3･) > 他(緑他)
+        _thumb_badge = ''
+        if show_badge:
+            _embl  = _em.lower()
+            _hasid = bool((getattr(e, 'op_id', '') or '').strip())
+            _bt = ''; _bc = ''
+            if _embl == 'id表示':
+                _bt, _bc = 'ID', 'cat-badge-g'
+            elif _hasid:
+                _bt, _bc = 'ID', 'cat-badge-r'
+            elif _embl == 'ip表示':
+                _bt, _bc = 'IP', 'cat-badge-g'
+            elif _em == '・3・':
+                _bt, _bc = '･3･', 'cat-badge-g'
+            elif _em:
+                _bt, _bc = '他', 'cat-badge-g'
+            if _bt:
+                _thumb_badge = f'<span class="cat-badge {_bc}" title="{_e(_em) or "ID"}">{_bt}</span>'
+
         # hover用データ属性とイベント
         _hover_attrs = ""
         if hover_zoom or hover_comment:
@@ -2236,9 +2275,9 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             f'onclick="handleCatClick(\'{url}\',event)" '
             f'onmousedown="handleCatMouseDown(\'{url}\',event)"'
             f'{_hover_attrs}>' +
-            f'<div class="entry-img">{img_elem}</div>' +
+            f'<div class="entry-img">{img_elem}{_thumb_badge}</div>' +
             f'<div class="entry-title"{_title_style}>{_e(title)}</div>' +
-            f'<div class="entry-foot"><span>{res_cnt}</span><span>{delta_s}</span>'
+            f'<div class="entry-foot"><span>{_rc_disp}</span><span>{delta_s}</span>'
             f'{_email_badge}</div>' +
             f'</div>'
         )
@@ -2249,10 +2288,30 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             return elist
         return [e for e in elist if not _is_ng_entry(e)]
 
+    def _quar_section(quar):
+        """隔離スレを最下部セクションとして描画"""
+        if not quar:
+            return ""
+        return (
+            f'<div class="sec-div"></div>'
+            f'<div class="sec-hdr quar-hdr">↓ 隔離スレ ({len(quar)}件)</div>'
+            + "".join(_make_entry(e) for e in quar)
+        )
+
+    def _pull_quar(elist):
+        """quarantine_section=True のとき隔離スレを分離（(normal, quar) を返す）"""
+        if not quarantine_section:
+            return elist, []
+        normal = [e for e in elist if not getattr(e, 'is_quarantine', False)]
+        quar   = [e for e in elist if getattr(e, 'is_quarantine', False)]
+        return normal, quar
+
     if search_sections:
         matched, unmatched = search_sections
         matched   = _filter_entries(matched)
         unmatched = _filter_entries(unmatched)
+        matched,   mq = _pull_quar(matched)
+        unmatched, uq = _pull_quar(unmatched)
         parts = []
         if matched:
             parts.append(
@@ -2262,10 +2321,12 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             parts.extend(_make_entry(e) for e in matched)
         parts.append('<div class="sec-div"></div>')
         parts.extend(_make_entry(e) for e in unmatched)
+        parts.append(_quar_section(mq + uq))
         inner = "".join(parts)
     else:
         filtered = _filter_entries(entries)
-        inner = "".join(_make_entry(e) for e in filtered)
+        filtered, quar = _pull_quar(filtered)
+        inner = "".join(_make_entry(e) for e in filtered) + _quar_section(quar)
 
     if cols > 0:
         grid_style = (

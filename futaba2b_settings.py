@@ -346,6 +346,8 @@ class AppSettings:
         self.scroll_top_count: int = 0   # 先頭スクロール何回で更新するか（0=無効）
         self.catalog_hover_zoom:    bool = False  # カタログオンマウスで画像拡大
         self.catalog_hover_comment: bool = False  # カタログオンマウスでスレ本文表示
+        self.catalog_show_mail_badge:  bool = True  # サムネ右上にメール欄/IDバッジ表示
+        self.catalog_quarantine_bottom: bool = True  # 隔離スレ(json非存在)を最下部表示
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
         self.recent_closed_max: int = 30     # 最近閉じたスレの保持件数
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
@@ -707,6 +709,8 @@ class AppSettings:
             self.scroll_top_count = int(raw.get("scroll_top_count", 0))
             self.catalog_hover_zoom    = bool(raw.get("catalog_hover_zoom",    False))
             self.catalog_hover_comment = bool(raw.get("catalog_hover_comment", False))
+            self.catalog_show_mail_badge  = bool(raw.get("catalog_show_mail_badge",  True))
+            self.catalog_quarantine_bottom = bool(raw.get("catalog_quarantine_bottom", True))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
             self.recent_images_max = min(100, max(1, int(raw.get("recent_images_max", 30))))
@@ -871,6 +875,8 @@ class AppSettings:
                         "scroll_top_count": self.scroll_top_count,
                         "catalog_hover_zoom":    self.catalog_hover_zoom,
                         "catalog_hover_comment": self.catalog_hover_comment,
+                        "catalog_show_mail_badge":  self.catalog_show_mail_badge,
+                        "catalog_quarantine_bottom": self.catalog_quarantine_bottom,
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
                         "recent_images_max": self.recent_images_max,

@@ -3527,13 +3527,17 @@ class AppSettingsDialog(QDialog):
         # ══════════════════════════════════════════════════════════════════
         w0 = QWidget(); f0 = QVBoxLayout(w0)
 
-        # カタログ オンマウス
-        g_cat_hover = QGroupBox("カタログ オンマウス"); f0.addWidget(g_cat_hover)
+        # カタログ
+        g_cat_hover = QGroupBox("カタログ"); f0.addWidget(g_cat_hover)
         cat_hover_lay = QVBoxLayout(g_cat_hover)
-        self._cat_hover_zoom    = QCheckBox("サムネイル画像を拡大表示する")
-        self._cat_hover_comment = QCheckBox("スレ本文（先頭120文字）を表示する")
+        self._cat_hover_zoom    = QCheckBox("オンマウスでサムネイル画像を拡大表示する")
+        self._cat_hover_comment = QCheckBox("オンマウスでスレ本文（先頭120文字）を表示する")
+        self._cat_mail_badge    = QCheckBox("メール欄/IDをサムネ右上にバッジ表示する")
+        self._cat_quarantine    = QCheckBox("隔離スレを最下部に表示する")
         cat_hover_lay.addWidget(self._cat_hover_zoom)
         cat_hover_lay.addWidget(self._cat_hover_comment)
+        cat_hover_lay.addWidget(self._cat_mail_badge)
+        cat_hover_lay.addWidget(self._cat_quarantine)
 
         # スレ落ち時のタブ自動クローズ
         g_close = QGroupBox("スレ落ち時のタブ自動クローズ"); f0.addWidget(g_close); clf2 = QVBoxLayout(g_close)
@@ -4180,6 +4184,8 @@ class AppSettingsDialog(QDialog):
         self._image_display_mode.setCurrentIndex(getattr(s, 'image_display_mode', 0))
         self._cat_hover_zoom.setChecked(getattr(s, "catalog_hover_zoom", False))
         self._cat_hover_comment.setChecked(getattr(s, "catalog_hover_comment", False))
+        self._cat_mail_badge.setChecked(getattr(s, "catalog_show_mail_badge", True))
+        self._cat_quarantine.setChecked(getattr(s, "catalog_quarantine_bottom", True))
 
         # 外観
         _theme_idx = self._theme_combo.findText(_TM.name())
@@ -4312,6 +4318,8 @@ class AppSettingsDialog(QDialog):
         s.image_display_mode      = self._image_display_mode.currentIndex()
         s.catalog_hover_zoom      = self._cat_hover_zoom.isChecked()
         s.catalog_hover_comment   = self._cat_hover_comment.isChecked()
+        s.catalog_show_mail_badge  = self._cat_mail_badge.isChecked()
+        s.catalog_quarantine_bottom = self._cat_quarantine.isChecked()
         s.catalog_show_email      = False  # メール欄バッジは常にOFF
 
         # 外観

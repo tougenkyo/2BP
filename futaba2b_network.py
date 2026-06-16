@@ -897,6 +897,59 @@ class FutabaFetcher:
                                  max(e.no for e in entries), f'board_top/{board.name}')
         return entries
 
+    def fetch_catalog_json(self, board: BoardInfo) -> Optional[dict]:
+        """板単位 mode=json を取得し、各OPスレの email / id と存在Noを返す。
+
+        GET /futaba.php?mode=json （res= を付けない板単位呼び出し）。
+        ふたばのJSON API は UTF-8（HTMLページの Shift_JIS とは異なる）。
+
+        戻り値 dict:
+          "map" : {no(int): {"email","id","com","sub","thumb"}}  各OPスレの情報
+          "nos" : set[int]                                       json に存在するスレNo集合
+        失敗時は None（呼び出し側で隔離判定・バッジ補完をスキップさせる）。
+        ※ json 内の "rsc" は板単位では連番インデックスでありレス数ではない点に注意。
+        ※ 隔離スレ（カタログから消えて json に残る）合成用に com/sub/thumb も返す。
+        """
+        import random as _rand, json as _json
+        url = board.base_url + f"futaba.php?mode=json&{_rand.random()}"
+        try:
+            hdr = {
+                "Referer": board.url,
+                "Accept": "application/json, */*",
+                "Cache-Control": "no-cache", "Pragma": "no-cache",
+            }
+            r = self.session.get(url, headers=hdr, timeout=self.timeout)
+            if not r.ok:
+                print(f"[CatalogJSON] fetch失敗: {r.status_code} {r.reason}")
+                return None
+            data = _json.loads(r.content.decode("utf-8", errors="replace"))
+        except Exception as e:
+            print(f"[CatalogJSON] error: {e}")
+            return None
+        res = data.get("res")
+        if not isinstance(res, dict):
+            return None
+        info_map: dict = {}
+        nos: set = set()
+        for k, v in res.items():
+            try:
+                no = int(k)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(v, dict):
+                continue
+            nos.add(no)
+            _thumb = (v.get("thumb", "") or "").strip()
+            info_map[no] = {
+                "email": (v.get("email", "") or "").strip(),
+                "id":    (v.get("id", "") or "").strip(),
+                "com":   v.get("com", "") or "",
+                "sub":   v.get("sub", "") or "",
+                # 隔離スレ合成用に絶対URL化（json は "/b/thumb/..." 形式）
+                "thumb": urllib.parse.urljoin(board.base_url, _thumb) if _thumb else "",
+            }
+        return {"map": info_map, "nos": nos}
+
     # ── スレッド ──
 
     def fetch_raw_thread_html(self, board: BoardInfo, no: int) -> Optional[str]:

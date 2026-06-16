@@ -103,8 +103,10 @@ class CatalogEntry:
     thread_url: str
     title: str = ""
     email: str = ""              # OPのメール欄（id表示/ip表示 など）
+    op_id: str = ""              # OPのID文字列（mode=json の id フィールド。空=ID無し）
     is_red: bool = False         # 赤字スレ判定（サーバー側）
     is_quasi_red: bool = False   # 仮赤字（残り10%以下）
+    is_quarantine: bool = False  # 隔離スレ（mode=cat にあって mode=json に無い）
     board: Optional[BoardInfo] = None
 
 
