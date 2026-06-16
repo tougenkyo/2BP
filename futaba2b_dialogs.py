@@ -609,7 +609,7 @@ class _SampleImageWindow(QDialog):
         self._dragging = False
         self._drag_moved = False
         self._drag_pos = None
-        self.setWindowTitle("サンプル")
+        self.setWindowTitle("プレビュー")
         self.setWindowFlags(Qt.WindowType.Window)
         self.setSizeGripEnabled(True)
 
@@ -646,17 +646,30 @@ class _SampleImageWindow(QDialog):
         self._orig_pix = pix
         self._fit_mode = True
         self._apply_fit()
+        QTimer.singleShot(0, self._apply_fit)
 
     # ── 表示モード ────────────────────────────────────────────────────────
     def _apply_fit(self):
-        """ウインドウに収まるようスケーリング表示"""
+        """ウインドウに収まるよう縮小表示（拡大はしない）。
+        元画像がビューポートより小さければ等倍のまま、大きければ
+        アスペクト比を保って縮小する。常にビューポート内に全体が収まる
+        ため上下左右が欠けない。"""
         if not self._orig_pix or self._orig_pix.isNull():
             return
         vp = self._scroll.viewport().size()
-        scaled = self._orig_pix.scaled(
-            max(1, vp.width()), max(1, vp.height()),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
+        avail_w = max(1, vp.width())
+        avail_h = max(1, vp.height())
+        ow = max(1, self._orig_pix.width())
+        oh = max(1, self._orig_pix.height())
+        # ビューポートに収まる倍率と 1.0（=等倍）の小さい方 → 拡大しない
+        scale = min(avail_w / ow, avail_h / oh, 1.0)
+        if scale >= 1.0:
+            scaled = self._orig_pix                 # 等倍（拡大なし）
+        else:
+            scaled = self._orig_pix.scaled(
+                max(1, int(ow * scale)), max(1, int(oh * scale)),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
         self._lbl.setPixmap(scaled)
         self._lbl.resize(scaled.size())
         self._scroll.setWidgetResizable(False)
@@ -731,7 +744,17 @@ class _SampleImageWindow(QDialog):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._fit_mode:
+            # 即時フィット（ドラッグ追従用）に加え、レイアウト確定後に再フィット。
+            # リサイズ直後は viewport().size() が旧サイズのままのことがあり、
+            # 縮小時に画像が新ビューポートをはみ出して上下が欠けるのを防ぐ。
             self._apply_fit()
+            QTimer.singleShot(0, self._apply_fit)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 表示直後はレイアウトが確定してから全体フィットさせる
+        if self._fit_mode:
+            QTimer.singleShot(0, self._apply_fit)
 
     def _save_geometry(self):
         self._settings.post_sample_view_size = [self.width(), self.height()]
@@ -892,8 +915,13 @@ class PostDialog(QDialog):
         img_lay.setContentsMargins(0, 2, 0, 2)
         img_lay.addWidget(QLabel("添付File"))
         self._img_edit = QLineEdit()
-        self._img_edit.setPlaceholderText("画像ファイル (任意)")
-        self._img_edit.setReadOnly(True); img_lay.addWidget(self._img_edit, 1)
+        self._img_edit.setPlaceholderText("画像ファイルのパス (任意・直接入力可)")
+        self._img_edit.setToolTip(
+            "ファイルのパスを直接入力できます。\n"
+            "Enter またはフォーカスを外すと、存在するファイルをプレビューに表示します。")
+        # 直接入力対応: 入力確定（Enter / フォーカスアウト）でパスを反映
+        self._img_edit.editingFinished.connect(self._on_img_edit_finished)
+        img_lay.addWidget(self._img_edit, 1)
         browse_btn = QPushButton("参照…"); browse_btn.setFixedWidth(60)
         browse_btn.clicked.connect(self._browse_image); img_lay.addWidget(browse_btn)
         self._paste_btn = QPushButton("📋貼付"); self._paste_btn.setFixedWidth(60)
@@ -1584,6 +1612,30 @@ document.addEventListener('keydown',function(e){{
         self._preview_lbl.setStyleSheet(
             "background:#1a2a1a;color:#8f8;border:1px solid #555;"
             "border-radius:4px;font-size:9pt;padding:8px;")
+
+    def _on_img_edit_finished(self):
+        """添付File欄に直接入力されたパスを反映する。
+        実在するファイルなら _set_file_path で添付＋プレビュー表示。
+        空なら添付解除。存在しない／クリップボード表示文字列は無視。"""
+        import os as _os
+        text = self._img_edit.text().strip()
+        # クリップボード貼付け由来の表示文字列（[クリップボード] ...）はパスではない
+        if text.startswith("[クリップボード]"):
+            return
+        # 入力なし → 添付があれば解除
+        if not text:
+            if self._img_path:
+                self._clear_image()
+            return
+        # エクスプローラ等からのコピーで前後に付く引用符を除去
+        if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+            text = text[1:-1].strip()
+        # すでに同じパスが反映済みなら何もしない（editingFinished二重発火対策）
+        if text == self._img_path:
+            return
+        if _os.path.isfile(text):
+            self._set_file_path(text)
+        # 存在しないパスはプレビューを変えず放置（投稿時に別途チェックされる）
 
     # ── ドラッグ&ドロップ ───────────────────────────────────────────────────
     _DD_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'webm', 'mp4'}
