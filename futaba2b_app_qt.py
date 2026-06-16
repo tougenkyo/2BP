@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.18"
+APP_VER = "0.9.19"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -4117,24 +4117,19 @@ class ThreadView(QWidget):
 
     console.log('[popup] v2 initialized');
 
-    /* ── スクロール時にnew-res有無をPythonへ通知 ── */
-    /*    ページ末尾を表示したら更新せずとも新着(赤帯/タブ青)を解除する     */
-    /*    （返信・画像・引用モード共通: 画像/引用は _respool 内の .res.new-res も対象）*/
+    /* ── スクロール時: タブ青背景の制御（新着の帯は末尾では消さない） ── */
+    /*    末尾を表示したら「既読（_unreadSeen）」とみなしタブ青背景をデフォルトに   */
+    /*    戻す。新着の帯（.new-res / .new-res-divider / .qt-new）はここでは消さず、  */
+    /*    更新時（appendNewReplies 側）に既読化する。                              */
+    /*    _unreadSeen は新着到着時に false へリセットされる（青背景を再表示可能に）。 */
     function _checkUnreadAtBottom() {
         var fromBottom = document.documentElement.scrollHeight
                          - window.scrollY - window.innerHeight;
         if (fromBottom <= 80) {
-            document.querySelectorAll('.res.new-res').forEach(function(el) {
-                el.classList.remove('new-res');
-            });
-            document.querySelectorAll('.qt-new').forEach(function(el) {
-                if (el.parentNode) el.parentNode.removeChild(el);
-            });
-            document.querySelectorAll('.new-res-divider').forEach(function(el) {
-                if (el.parentNode) el.parentNode.removeChild(el);
-            });
+            window._unreadSeen = true;   /* 末尾を表示＝既読扱い（帯は消さない） */
         }
-        var has = document.querySelectorAll('.res.new-res').length > 0;
+        var has = (!window._unreadSeen)
+                  && (document.querySelectorAll('.res.new-res').length > 0);
         if (typeof bridge !== 'undefined' && bridge.notifyUnread) {
             bridge.notifyUnread(has);
         }
@@ -4148,7 +4143,7 @@ class ThreadView(QWidget):
        青背景を解除するため）。 */
     window._checkUnreadAtBottom = _checkUnreadAtBottom;
     /* 初回チェック: スクロールしなくても既にページ末尾が見えている場合
-       （画像モードのグリッドが短い等）に青背景/赤帯を解除する。
+       （画像モードのグリッドが短い等）に青背景を解除する。
        レイアウト確定後に走らせるため少し遅延させる。 */
     setTimeout(_checkUnreadAtBottom, 300);
 

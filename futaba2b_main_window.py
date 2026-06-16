@@ -818,6 +818,11 @@ class MainWindow(QMainWindow):
         if new_count > 0:
             # 新着あり → 即座に水色背景をセット（バックグラウンドタブでもDOMに依存しない）
             self._on_unread_state(inner, view, True)
+            # 新着到着 → JS側の「末尾を見た（既読）」フラグを解除（全モード共通）
+            try:
+                view._view.page().runJavaScript("window._unreadSeen=false;")
+            except Exception:
+                pass
         else:
             # 新着なし → JSに問い合わせて赤帯の有無で判定（100ms後にDOM確定）
             QTimer.singleShot(100, lambda: self._check_unread_bg(inner, view))
@@ -928,7 +933,8 @@ class MainWindow(QMainWindow):
         def _cb(count, _inner=inner, _view=view):
             self._on_unread_state(_inner, _view, bool(count))
         page.runJavaScript(
-            "document.querySelectorAll('.res.new-res').length;", _cb)
+            "(!window._unreadSeen && "
+            "document.querySelectorAll('.res.new-res').length>0)?1:0;", _cb)
 
     def _open_ar_dialog(self, view=None):
         """自動更新ダイアログを開く（スレッド・カタログ両対応）"""

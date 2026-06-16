@@ -1072,6 +1072,8 @@ function appendNewReplies(htmlArray) {
         _updateNewResDivider();
         return;
     }
+    // 新着が届いた → 「末尾を見た（既読）」フラグを解除し、タブ青背景を再表示可能にする
+    window._unreadSeen = false;
     // .thread-end の直前に挿入（なければ body 末尾）
     var anchor = document.querySelector('.thread-end');
     var frag = document.createDocumentFragment();
