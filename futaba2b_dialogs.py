@@ -866,6 +866,7 @@ class PostDialog(QDialog):
 
         # コメントページ
         self._comment = _CommentEdit(self)
+        self._comment.setStyleSheet("font-size: 16px;")
         self._comment.setPlaceholderText("コメントを入力…")
         if quote_text:
             self._comment.setPlainText(quote_text)
