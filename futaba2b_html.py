@@ -807,8 +807,9 @@ function toggleDeleted() {
     }
 }
 /* ─ ▼ 被引用インジケータ: 引用されたレスの通し番号左に挿入 ─ */
-document.addEventListener('DOMContentLoaded', function() {
-    /* 引用マップ構築: quotedBy[no] = [引用者No のリスト] */
+/* 引用マップ構築を関数化（画像モードのギャラリーセルからも再利用するため）。
+   quotedBy[no] = [引用者No のリスト] を返す。 */
+function _computeQuotedBy() {
     var quotedBy = {};
     document.querySelectorAll('.res').forEach(function(el) {
         var m = (el.id || '').match(/^r(\\d+)$/);
@@ -886,6 +887,10 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     });
+    return quotedBy;
+}
+document.addEventListener('DOMContentLoaded', function() {
+    var quotedBy = _computeQuotedBy();
     /* 全レスの .header 先頭に ▼(被引用あり) / …(被引用なし) を追加 (inject_popup_js でフックを後付け) */
     document.querySelectorAll('.res').forEach(function(el) {
         var m = (el.id || '').match(/^r(\\d+)$/);

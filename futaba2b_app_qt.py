@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.30"
+APP_VER = "0.9.31"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3990,6 +3990,46 @@ class ThreadView(QWidget):
         });
     });
 
+    /* ── 画像モード: ギャラリーセル(.gi)に ▼被引用インジケータを付与 ── */
+    (function() {
+        var cells = document.querySelectorAll('.gi[data-popup-no]');
+        if (!cells.length) return;                 /* 画像モード以外は何もしない */
+        if (typeof _computeQuotedBy !== 'function') return;
+        var quotedBy = _computeQuotedBy();          /* respool 内の .res から再計算 */
+        cells.forEach(function(cell) {
+            if (cell.querySelector('.gi-qi')) return;   /* 二重付与防止 */
+            var no = parseInt(cell.getAttribute('data-popup-no'));
+            var qs = quotedBy[no];
+            if (!qs || !qs.length) return;          /* 被引用なしは付けない */
+            var btn = document.createElement('span');
+            btn.className = 'gi-qi';
+            btn.textContent = '▼';
+            btn.setAttribute('data-quoters', qs.join(','));
+            cell.appendChild(btn);
+            var nos = qs.slice();
+            function _showQ(e) {
+                clearTimeout(T.h); clearTimeout(T.qi);
+                showNos(nos, e.clientX, e.clientY, e.currentTarget);
+            }
+            btn.addEventListener('mouseover', function(e) {
+                clearTimeout(T.h); clearTimeout(T.qi);
+                var cx = e.clientX, cy = e.clientY, tgt = e.currentTarget;
+                T.qi = setTimeout(function() { showNos(nos, cx, cy, tgt); }, 300);
+                e.stopPropagation();
+            });
+            btn.addEventListener('mouseout', function(e) {
+                clearTimeout(T.qi);
+                if (!inP(e.relatedTarget)) schedH();
+            });
+            /* クリックは画像オープン(.gi onclick)に伝播させず、被引用ポップアップを表示 */
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation(); e.preventDefault();
+                clearTimeout(T.qi);
+                _showQ(e);
+            });
+        });
+    })();
+
     /* ── グローバル公開: inline onmouseenter="showPopup()" / hidePopup() 向け ── */
     window.showPopup = function(no, x, y, fromEl) { showNo(no, x, y, fromEl || null); };
     window.hidePopup = function() { schedH(); };
@@ -4518,13 +4558,13 @@ class ThreadView(QWidget):
             if b>=1024: return f'{b//1024}KB'
             return f'{b}B' if b else '?'
         items=[]
-        hidden_res=[]   # ポップアップ用に隠しておくレスHTML
+        # ポップアップ用に全レスを隠しプールへ（▼被引用の引用元が画像なしレスでも
+        # ポップアップ表示・引用マップ計算ができるよう全件入れる）
+        hidden_res=[render_res(r, r.is_op, []) for r in self._thread.res_list]
         for seq,r in img_res:
             ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
             info=ext+' / '+_fmt(r.file_size_bytes)
             idx=seq-1
-            # 隠しレス div（render_res で生成、img_list は不要なので空）
-            hidden_res.append(render_res(r, r.is_op, []))
             # 左上の番号: スレ内通し番号（OP=0 → "OP"、返信は res_idx）
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             items.append(
@@ -4537,7 +4577,7 @@ class ThreadView(QWidget):
                 '</div>'
             )
         _cols = max(1, int(getattr(self._settings, "image_mode_cols", 6)))
-        _img_add = ".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;grid-template-columns:repeat(" + str(_cols) + ",80px);gap:4px}.gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;width:80px;box-sizing:border-box}.gi:hover{background:#F0E0D6}.gn{text-align:left;font-size:7pt;line-height:1.3}.gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}.gt img{max-width:100%;max-height:72px;object-fit:contain}.gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
+        _img_add = ".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;grid-template-columns:repeat(" + str(_cols) + ",80px);gap:4px}.gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}.gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}.gn{text-align:left;font-size:7pt;line-height:1.3}.gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}.gt img{max-width:100%;max-height:72px;object-fit:contain}.gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
         # 画像モード固有関数のみ追加定義（_b/openImgBg/sodane/openUrl等はWEBCHANNEL_JSで共通定義）
         _img_js = "function openGalleryImg(i){_b('openGalleryImg',[i]);}"
         # 隠しレスプール（popup_js が getElementById('rNNNN') で参照する）
@@ -4577,12 +4617,12 @@ class ThreadView(QWidget):
             if b>=1024: return f'{b//1024}KB'
             return f'{b}B' if b else '?'
         items=[]
-        hidden_res=[]
+        # ポップアップ用に全レスを隠しプールへ（▼被引用対応のため全件）
+        hidden_res=[render_res(r, r.is_op, []) for r in self._thread.res_list]
         for seq,r in img_res:
             ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
             info=ext+' / '+_fmt(r.file_size_bytes)
             idx=seq-1
-            hidden_res.append(render_res(r, r.is_op, []))
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             items.append(
                 '<div class="gi" data-popup-no="'+str(r.no)+'"'
