@@ -479,7 +479,7 @@ class FutabaFetcher:
         ]
         for path in candidates:
             if path.exists():
-                for enc in ("utf-8", "shift_jis"):
+                for enc in ("utf-8", "cp932"):
                     try:
                         return path.read_text(encoding=enc, errors="replace")
                     except Exception:
@@ -671,13 +671,11 @@ class FutabaFetcher:
                     headers=headers, timeout=60,
                 )
 
-            resp.encoding = "shift_jis"
-
             # ── レスポンス解析 ──
             # responsemode=ajax を送った場合はサーバーが JSON を返す:
             #   成功: {"status":"ok","jumpto":NNN,"thisno":NNN,...}
             #   失敗: {"status":"error","message":"..."} 等
-            body = resp.text.strip()
+            body = resp.content.decode("cp932", errors="replace").strip()
 
             if body.startswith("{"):
                 # JSON レスポンス
@@ -763,9 +761,8 @@ class FutabaFetcher:
             })
             r = self.session.get(url, headers=headers, timeout=self.timeout)
             r.raise_for_status()
-            r.encoding = "shift_jis"
             _t1 = _time.perf_counter()
-            text = r.text
+            text = r.content.decode("cp932", errors="replace")
             return text
         except requests.RequestException as e:
             print(f"[Fetch] エラー [{url}]: {e}")
@@ -918,8 +915,7 @@ class FutabaFetcher:
             })
             r = self.session.get(url, headers=hdr, timeout=self.timeout)
             if r.ok:
-                r.encoding = "shift_jis"
-                html = r.text
+                html = r.content.decode("cp932", errors="replace")
                 self._save_thread_cache(url, html)
                 self._clear_diff_sidecar(url)
                 print(f'[NET] fetch_raw_thread_html  ok  len={len(html)}  url={url}')
@@ -964,8 +960,10 @@ class FutabaFetcher:
                     title=f"No.{no} - {board.name}",
                     url=url, error=f"{r.status_code} {r.reason}",
                 )
-            r.encoding = "shift_jis"
-            html = r.text
+            # ふたばは charset=Shift_JIS を返すが、requestsの自動判定だと
+            # Python厳密shift_jis扱いになり ①②(NEC拡張)が �@�A に化ける。
+            # CP932で明示デコードする。
+            html = r.content.decode("cp932", errors="replace")
             print(f'[NET] fetch_thread  html_len={len(html)}  decoded_ok=True')
             if len(html) >= 300_000:
                 print(f'[NET] fetch_thread  WARNING: large html ({len(html)//1024}KB)  url={url}')
@@ -1372,7 +1370,9 @@ class FutabaFetcher:
             if not r.ok:
                 result["error"] = f"{r.status_code} {r.reason}"
                 return result
-            data = r.json()
+            # ふたばのJSON差分APIは Shift_JIS(CP932)。r.json() のエンコーディング
+            # 自動判定だと shift_jis 扱いになり ①②(NEC拡張)が化けるため明示デコードする
+            data = _json.loads(r.content.decode("cp932", errors="replace"))
         except Exception as e:
             result["error"] = str(e)
             return result
@@ -1484,7 +1484,7 @@ class FutabaFetcher:
             resp = self.session.post(
                 board.post_url, data=data, headers=headers, timeout=self.timeout)
             # ふたばは Shift_JIS でエラーメッセージを返すため明示的にデコード
-            body = resp.content.decode("shift_jis", errors="replace").strip()
+            body = resp.content.decode("cp932", errors="replace").strip()
             if body == "ok":
                 return True, "登録しました"
             # サーバーによって "OK" や空レスポンスで成功することがある
@@ -1514,7 +1514,7 @@ class FutabaFetcher:
         try:
             resp = self.session.post(
                 del_url, data=data, headers=headers, timeout=self.timeout)
-            body = resp.content.decode("shift_jis", errors="replace").strip()
+            body = resp.content.decode("cp932", errors="replace").strip()
             print(f"[REPORT_DEL] status={resp.status_code}  body={body[:80]!r}")
             return (True, "登録しました") if body == "ok" else (False, body[:200] or "削除依頼に失敗しました")
         except Exception as e:

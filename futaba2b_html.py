@@ -755,6 +755,39 @@ document.addEventListener('contextmenu', function(e) {
     function cleanup(){ var m=document.getElementById('__ng_ctx'); if(m) m.parentNode.removeChild(m); }
     setTimeout(function(){ document.addEventListener('click', cleanup, {once:true}); }, 0);
 });
+/* ── ID 右クリック → 「出ちゃいましたねぇ」 ──────────────────────────
+   OPメール欄が「ID表示」のスレ（body.id-board）では表示しない。
+   非ID表示スレでIDが出ているレス（自主的にID晒し）のみ対象。 */
+document.addEventListener('contextmenu', function(e) {
+    var idEl = e.target.closest('.post-id');
+    if (!idEl) return;
+    /* ID表示スレ（OPメール欄=ID表示）では出さない */
+    if (document.body.classList.contains('id-board')) return;
+    var id = idEl.getAttribute('data-id');
+    if (!id) return;
+    e.preventDefault();
+    var old = document.getElementById('__id_ctx');
+    if (old) old.parentNode.removeChild(old);
+    var menu = document.createElement('div');
+    menu.id = '__id_ctx';
+    menu.style.cssText = 'position:fixed;background:#fff;border:1px solid #999;'
+        + 'padding:2px 0;z-index:9999;box-shadow:2px 2px 4px rgba(0,0,0,.3);font-size:9pt;';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top  = e.clientY + 'px';
+    var item = document.createElement('div');
+    item.textContent = '出ちゃいましたねぇ';
+    item.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;color:#000;';
+    item.onmouseenter = function(){ this.style.background='#0078d7';this.style.color='#fff'; };
+    item.onmouseleave = function(){ this.style.background='';this.style.color='#000'; };
+    item.onclick = function(){
+        openUrl('https://futaba-id.site/search.php?mode=id&q=' + encodeURIComponent(id));
+        if (menu.parentNode) menu.parentNode.removeChild(menu);
+    };
+    menu.appendChild(item);
+    document.body.appendChild(menu);
+    function cleanupId(){ var m=document.getElementById('__id_ctx'); if(m) m.parentNode.removeChild(m); }
+    setTimeout(function(){ document.addEventListener('click', cleanupId, {once:true}); }, 0);
+});
 function updateSodane(no, cnt) {
     var el = document.getElementById('sod' + no);
     if (el) el.textContent = cnt > 0 ? 'そうだねx' + cnt : '+';
