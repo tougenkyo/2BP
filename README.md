@@ -1,3 +1,7 @@
+#### Ver1.0までuser.cssやThemeがアップデートの度に上書きされるのでのバックアップを取っておいてください
+
+---
+
 # 2BP (futaba2b python版)
 
 ふたば☆ちゃんねる（2chan.net）専用ブラウザ — PySide6 / QtWebEngine 製のデスクトップアプリケーションです。
