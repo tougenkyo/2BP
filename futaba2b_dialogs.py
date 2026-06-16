@@ -3561,6 +3561,13 @@ class AppSettingsDialog(QDialog):
             tip="スレをバックグラウンドで開いた時に自動で切り替える表示モード")
         of.addRow("バックグラウンドで開く:", self._thread_open_bg_mode)
 
+        # 画像表示モード（タブ / ウインドウ）
+        g_imgmode = QGroupBox("画像表示モード"); f1.addWidget(g_imgmode)
+        imf = QFormLayout(g_imgmode)
+        self._image_display_mode = _combo(["タブ", "ウインドウ"],
+            tip="タブ=画像タブで開く（従来）\nウインドウ=専用の画像ウインドウで開く（1つのみ）")
+        imf.addRow("画像表示モード:", self._image_display_mode)
+
         # ── 自分のレス ──
         g_self = QGroupBox("自分のレス"); f1.addWidget(g_self); sf = QFormLayout(g_self)
         self._self_res_highlight   = QCheckBox("自分のレスを青帯でハイライト表示する（新着赤より優先）")
@@ -4117,6 +4124,7 @@ class AppSettingsDialog(QDialog):
         self._download_workers.setValue(getattr(s, "download_workers", 4))
         self._thread_open_mode.setCurrentIndex(getattr(s, 'thread_open_mode', 0))
         self._thread_open_bg_mode.setCurrentIndex(getattr(s, 'thread_open_bg_mode', 0))
+        self._image_display_mode.setCurrentIndex(getattr(s, 'image_display_mode', 0))
         self._cat_hover_zoom.setChecked(getattr(s, "catalog_hover_zoom", False))
         self._cat_hover_comment.setChecked(getattr(s, "catalog_hover_comment", False))
 
@@ -4248,6 +4256,7 @@ class AppSettingsDialog(QDialog):
         s.download_workers        = self._download_workers.value()
         s.thread_open_mode        = self._thread_open_mode.currentIndex()
         s.thread_open_bg_mode     = self._thread_open_bg_mode.currentIndex()
+        s.image_display_mode      = self._image_display_mode.currentIndex()
         s.catalog_hover_zoom      = self._cat_hover_zoom.isChecked()
         s.catalog_hover_comment   = self._cat_hover_comment.isChecked()
         s.catalog_show_email      = False  # メール欄バッジは常にOFF

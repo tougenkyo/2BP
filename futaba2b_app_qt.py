@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.19"
+APP_VER = "0.9.21"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8579,6 +8579,13 @@ f"  el.style.visibility='visible';}}"
                 self._img_list[self._idx].get("url", ""),
                 self._img_list, self._idx)
 
+    def load_image(self, url: str, img_list: list, idx: int):
+        """ウインドウ再利用時などに、表示中の画像を別の画像に差し替える。"""
+        self._stop_mp4()
+        self._img_list = img_list or []
+        self._idx = idx if (img_list and 0 <= idx < len(img_list)) else 0
+        self._show_current()
+
     def cleanup(self):
         """タブが閉じられる時のクリーンアップ"""
         self._stop_mp4()
@@ -8851,6 +8858,57 @@ f"  el.style.visibility='visible';}}"
             self._res_overlay_view.setUrl(QUrl.fromLocalFile(tmp_path))
         except Exception:
             pass
+
+
+class ImageWindow(QMainWindow):
+    """画像表示モード=ウインドウ のときに使う専用ウインドウ。
+    ImageTabView を内包し、画像タブと同じ機能を持つ。アプリ内で1つだけ
+    生成して再利用する（新しい画像は同じウインドウに表示）。
+    閉じても破棄せず非表示にして再利用する（WebEngine の再生成によるクラッシュ回避）。"""
+
+    def __init__(self, image_view: "ImageTabView", settings=None, parent=None):
+        super().__init__(parent)
+        self._settings = settings
+        self.setWindowTitle("画像")
+        self._image_view = image_view
+        self.setCentralWidget(image_view)
+        # ジオメトリ復元
+        try:
+            geo = getattr(settings, "image_window_geometry", None) if settings else None
+            if geo and isinstance(geo, (list, tuple)) and len(geo) == 4:
+                self.setGeometry(int(geo[0]), int(geo[1]), int(geo[2]), int(geo[3]))
+            else:
+                self.resize(900, 700)
+        except Exception:
+            self.resize(900, 700)
+
+    @property
+    def image_view(self) -> "ImageTabView":
+        return self._image_view
+
+    def _save_geometry(self):
+        if not self._settings:
+            return
+        try:
+            g = self.geometry()
+            self._settings.image_window_geometry = [g.x(), g.y(), g.width(), g.height()]
+            self._settings.save()
+        except Exception:
+            pass
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+
+    def closeEvent(self, event):
+        # 破棄せず隠して再利用する（位置・サイズは保存）
+        self._save_geometry()
+        try:
+            if self._image_view:
+                self._image_view.pause_media()
+        except Exception:
+            pass
+        self.hide()
+        event.ignore()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

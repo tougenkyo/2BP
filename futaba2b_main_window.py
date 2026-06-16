@@ -36,7 +36,7 @@ from futaba2b_const    import UA, ThemeManager
 from futaba2b_app_qt import (
     APP_VER, _DebugPage, WrapTabBar, Interceptor, InnerTabWidget,
     BoardTreePane, BoardPane,
-    VideoPlayerWindow, ThreadView, CatalogView, ImageTabView,
+    VideoPlayerWindow, ThreadView, CatalogView, ImageTabView, ImageWindow,
     AutoRefreshManager, AutoRefreshDialog,
     _compute_interval_sec,
     _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
@@ -82,6 +82,7 @@ class MainWindow(QMainWindow):
         self._welcome_idx   = -1    # ウェルカムタブのインデックス
         self._settings     = AppSettings()
         self._fetcher      = FutabaFetcher(self._settings)
+        self._image_window = None   # 画像表示モード=ウインドウ の単一インスタンス
         self._ar_mgr       = AutoRefreshManager(self._fetcher, self._settings, self)
         self._ar_dlg: "AutoRefreshDialog | None" = None
         self._ng_filter    = self._settings.ng_filter  # シングルトン参照
@@ -707,6 +708,7 @@ class MainWindow(QMainWindow):
                         found = True
             if not found:
                 pass
+            self._update_image_window_img_list(_src_view, img_list)
 
         view.img_list_updated.connect(_on_img_list_updated)
         idx = inner.addTab(view, f"No.{no}"); inner.setCurrentIndex(idx)  # ← タブに追加
@@ -1131,6 +1133,7 @@ class MainWindow(QMainWindow):
                 w = _inner.widget(i)
                 if isinstance(w, ImageTabView) and w._src_thread_view is _sv:
                     w.update_img_list(img_list)
+            self._update_image_window_img_list(_sv, img_list)
         view.img_list_updated.connect(_on_img_list_updated_m)
         idx = inner.addTab(view, f"No.{no}"); inner.setCurrentIndex(idx)
         self._refresh_tab_pane()
@@ -1238,6 +1241,7 @@ class MainWindow(QMainWindow):
                 w = _p.widget(i)
                 if isinstance(w, ImageTabView) and w._src_thread_view is _sv:
                     w.update_img_list(img_list)
+            self._update_image_window_img_list(_sv, img_list)
         view.img_list_updated.connect(_on_img_list_updated_bg)
         view.thread_loaded.connect(
             lambda n2, cnt, _p=pane, _v=view:
@@ -2130,6 +2134,10 @@ class MainWindow(QMainWindow):
                 and url.startswith(("http://", "https://"))):
             _open_url(url)
             return
+        # 画像表示モード=ウインドウ → 専用ウインドウで開く
+        if getattr(self._settings, "image_display_mode", 0) == 1:
+            self._open_image_window(url, img_list, idx)
+            return
         inner = self._active_inner()
         if not inner: return
         # 既存の画像タブに同一URLがあれば切り替えるだけ
@@ -2164,6 +2172,10 @@ class MainWindow(QMainWindow):
                 and url.startswith(("http://", "https://"))):
             _open_url(url)
             return
+        # 画像表示モード=ウインドウ → 専用ウインドウで開く（フォアグラウンドにはしない）
+        if getattr(self._settings, "image_display_mode", 0) == 1:
+            self._open_image_window(url, img_list, idx, activate=False)
+            return
         inner = self._active_inner()
         if not inner: return
         # 既存の画像タブに同一URLがあれば開かない
@@ -2188,6 +2200,65 @@ class MainWindow(QMainWindow):
         else:
             inner.addTab(view, f"🖼 {name}")   # setCurrentIndex しない → 非アクティブ
         self._record_recent_image(url, img_list, idx)
+
+    def _open_image_window(self, url: str, img_list: list, idx: int, activate: bool = True):
+        """画像表示モード=ウインドウ。専用ウインドウ(1つのみ)で画像を開く。
+        既存ウインドウがあれば再利用し、新しい画像に差し替える。"""
+        # 元のThreadView（img_list更新追跡用）
+        src = None
+        inner = self._active_inner()
+        if inner is not None:
+            cw = inner.currentWidget()
+            if isinstance(cw, ThreadView):
+                src = cw
+        win = self._image_window
+        # 既存ウインドウが破棄済み(参照切れ)なら作り直す
+        try:
+            import shiboken6
+            if win is not None and not shiboken6.isValid(win):
+                win = self._image_window = None
+        except Exception:
+            pass
+        if win is None:
+            view = ImageTabView(url, img_list, idx, self._fetcher, None)
+            view._src_thread_view = src
+            view.set_settings(self._settings)
+            view.open_settings.connect(lambda: self._open_settings("画像保存"))
+            view.image_navigated.connect(self._record_recent_image)
+            # ウインドウモード中の中クリックは同じウインドウに表示
+            view.open_image_tab_bg.connect(
+                lambda u, l, i: self._open_image_window(u, l, i, activate=False))
+            win = ImageWindow(view, self._settings, self)
+            self._image_window = win
+        else:
+            view = win.image_view
+            view._src_thread_view = src
+            view.set_settings(self._settings)
+            view.load_image(url, img_list, idx)
+        win.show()
+        if activate:
+            win.raise_()
+            win.activateWindow()
+        self._record_recent_image(url, img_list, idx)
+
+    def _update_image_window_img_list(self, src_view, img_list):
+        """画像ウインドウ(ウインドウモード)の画像が src_view 由来なら img_list を更新する。"""
+        win = getattr(self, "_image_window", None)
+        if win is None:
+            return
+        try:
+            import shiboken6
+            if not shiboken6.isValid(win):
+                self._image_window = None
+                return
+        except Exception:
+            pass
+        try:
+            iv = win.image_view
+            if iv is not None and iv._src_thread_view is src_view:
+                iv.update_img_list(img_list)
+        except Exception:
+            pass
 
     def _record_recent_image(self, url: str, img_list: list, idx: int):
         """最近開いた画像を記録する"""
@@ -4271,6 +4342,22 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_splitter"):
             self._settings.window_splitter = self._splitter.saveState().toHex().data().decode()
         self._settings.save()
+        # 画像ウインドウ（ウインドウモード）の WebEngine を明示クリーンアップ
+        win = getattr(self, "_image_window", None)
+        if win is not None:
+            try:
+                win._save_geometry()
+            except Exception:
+                pass
+            try:
+                win.image_view.cleanup()
+            except Exception:
+                pass
+            try:
+                win.deleteLater()
+            except Exception:
+                pass
+            self._image_window = None
         super().closeEvent(event)
 
     def _restore_window_state(self):

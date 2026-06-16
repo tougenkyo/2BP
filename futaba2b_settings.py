@@ -378,6 +378,8 @@ class AppSettings:
         # スレオープンモード 0=通常 1=返信 2=画像 3=引用
         self.thread_open_mode:    int = 0  # アクティブで開く (0=返信, 1=画像, 2=引用)
         self.thread_open_bg_mode: int = 0  # バックグラウンドで開く
+        self.image_display_mode:  int = 0  # 画像表示モード (0=タブ, 1=ウインドウ)
+        self.image_window_geometry: list | None = None  # 画像ウインドウの位置・サイズ [x,y,w,h]
         self.auto_close_dead_tab:    bool = False  # スレ落ち時にタブを自動で閉じる
         self.auto_close_full_tab:    bool = False  # 1000レス到達時にタブを自動で閉じる
         self.auto_close_skip_pinned: bool = False  # ピン留めタブは閉じない
@@ -730,6 +732,8 @@ class AppSettings:
             self.theme = str(raw.get("theme", "dark"))
             self.thread_open_mode    = int(raw.get("thread_open_mode", 0))
             self.thread_open_bg_mode = int(raw.get("thread_open_bg_mode", 0))
+            self.image_display_mode  = int(raw.get("image_display_mode", 0))
+            self.image_window_geometry = raw.get("image_window_geometry", None)
             self.auto_close_dead_tab    = raw.get("auto_close_dead_tab",    False)
             self.auto_close_full_tab    = raw.get("auto_close_full_tab",    False)
             self.auto_close_skip_pinned = raw.get("auto_close_skip_pinned", False)
@@ -892,6 +896,8 @@ class AppSettings:
                         "theme": self.theme,
                         "thread_open_mode":    self.thread_open_mode,
                         "thread_open_bg_mode": self.thread_open_bg_mode,
+                        "image_display_mode":  self.image_display_mode,
+                        "image_window_geometry": self.image_window_geometry,
                         "auto_close_dead_tab":    self.auto_close_dead_tab,
                         "auto_close_full_tab":    self.auto_close_full_tab,
                         "auto_close_skip_pinned": self.auto_close_skip_pinned,
