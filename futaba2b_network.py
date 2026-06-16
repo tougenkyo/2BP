@@ -1370,9 +1370,10 @@ class FutabaFetcher:
             if not r.ok:
                 result["error"] = f"{r.status_code} {r.reason}"
                 return result
-            # ふたばのJSON差分APIは Shift_JIS(CP932)。r.json() のエンコーディング
-            # 自動判定だと shift_jis 扱いになり ①②(NEC拡張)が化けるため明示デコードする
-            data = _json.loads(r.content.decode("cp932", errors="replace"))
+            # ふたばのJSON差分API(futaba.php?mode=json)は application/json; charset=utf-8。
+            # HTMLページ(Shift_JIS)とは異なり UTF-8 なので UTF-8 でデコードする。
+            # （cp932でデコードすると自動更新で取得する新着レスが文字化けする）
+            data = _json.loads(r.content.decode("utf-8", errors="replace"))
         except Exception as e:
             result["error"] = str(e)
             return result
