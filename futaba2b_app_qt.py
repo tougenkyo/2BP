@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.26"
+APP_VER = "0.9.28"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -622,8 +622,16 @@ class WrapTabBar(QTabBar):
             p.drawText(tr, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                        self.tabText(i))
             cr = self._close_rect(rect)
-            p.setPen(QColor(self._C_CLZ))
-            p.drawText(cr, Qt.AlignmentFlag.AlignCenter, "×")
+            # カタログタブは閉じられない → × を描画しない
+            _is_catalog = False
+            if parent_tw:
+                try:
+                    _is_catalog = isinstance(parent_tw.widget(i), CatalogView)
+                except Exception:
+                    _is_catalog = False
+            if not _is_catalog:
+                p.setPen(QColor(self._C_CLZ))
+                p.drawText(cr, Qt.AlignmentFlag.AlignCenter, "×")
         p.end()
 
     # ── マウス ──────────────────────────────────────────────────────────────
@@ -1532,6 +1540,7 @@ class InnerTabWidget(QTabWidget):
 
     def _on_close(self, idx: int):
         w = self.widget(idx)
+        if isinstance(w, CatalogView): return   # カタログタブは閉じない
         self.tab_closing.emit(w)   # 閉じる前にビューを通知
         self.removeTab(idx)
         if not isinstance(w, CatalogView):
@@ -1839,6 +1848,7 @@ class BoardPane(QWidget):
 
     def _on_close_tab(self, idx: int):
         w = self._tabs.widget(idx)
+        if isinstance(w, CatalogView): return   # カタログタブは閉じない
         if w in self._pinned: return
         self.tab_closing.emit(w)     # 閉じる前にビューを通知
 
@@ -2812,6 +2822,7 @@ class ThreadView(QWidget):
         self._bridge.quote_text_requested.connect(self._quote_text_selection)
         self._bridge.ng_text_requested.connect(self._on_ng_text)
         self._bridge.extract_text_requested.connect(self._on_extract_text)
+        self._bridge.extract_clear_requested.connect(self._clear_extract_field)
         self._bridge.copy_text_requested.connect(self._on_copy_text)
         self._bridge.ng_image_requested.connect(self._on_ng_image)
         self._bridge.url_open_external_requested.connect(_open_url)
@@ -2867,6 +2878,13 @@ class ThreadView(QWidget):
             return
         self._search_edit.setText(text)
         self._search_edit.setFocus()
+
+    def _clear_extract_field(self):
+        """抽出ポップアップの×ボタン → 抽出フィールドをクリアする。
+        setText("") で textChanged→_do_extract("")→extractPostsPopup("") が走り、
+        ポップアップも閉じる。フォーカスは移さない。"""
+        if hasattr(self, "_search_edit") and self._search_edit.text():
+            self._search_edit.clear()
 
     def _on_copy_text(self, text: str):
         """テキスト選択メニューの「コピー」→ クリップボードにコピー"""

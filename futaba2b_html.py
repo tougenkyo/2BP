@@ -931,6 +931,8 @@ function showExtraction(no) {
 function closeExtraction() {
     var p = document.getElementById('_extract_panel');
     if (p) p.style.display = 'none';
+    // ツールバーの抽出フィールドもクリアする（×で抽出解除）
+    if (typeof _b === 'function') { try { _b('clearExtract', []); } catch(e) {} }
 }
 /* ─ ID 抽出 ─ */
 function showIdExtraction(id) {

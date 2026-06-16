@@ -32,6 +32,7 @@ class ThreadBridge(QObject):
     quote_text_requested  = Signal(str)          # テキスト選択引用
     ng_text_requested     = Signal(str)          # テキスト選択NG
     extract_text_requested = Signal(str)         # テキスト選択抽出（ステータスバーへ転送）
+    extract_clear_requested = Signal()           # 抽出ポップアップの×で抽出フィールドをクリア
     copy_text_requested   = Signal(str)          # テキスト選択コピー
     ng_image_requested    = Signal(str)          # img_url
     url_open_external_requested = Signal(str)    # 外部ブラウザで直接開く
@@ -117,6 +118,11 @@ class ThreadBridge(QObject):
     def extractText(self, text: str):
         """テキスト選択 → ステータスバーの抽出テキストボックスに転送"""
         self.extract_text_requested.emit(text)
+
+    @Slot()
+    def clearExtract(self):
+        """抽出ポップアップの×ボタン → ツールバーの抽出フィールドをクリア"""
+        self.extract_clear_requested.emit()
 
     @Slot(str)
     def copyText(self, text: str):
