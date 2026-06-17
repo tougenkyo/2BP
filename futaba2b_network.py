@@ -1609,9 +1609,20 @@ class FutabaFetcher:
             data = cache_path.read_bytes()
             self._store_img_cache(url, data)
             return data
-        # HTTP 取得
+        # HTTP 取得（ブラウザの <img> 読込と同等のヘッダを付与）
+        # ふたばの src/ はホットリンク対策で Referer 無しのリクエストに
+        # 404 を返すことがあるため、板ルートを Referer に付ける。
         try:
-            r = self.session.get(url, timeout=self.timeout)
+            parsed  = urllib.parse.urlparse(url)
+            segs    = [s for s in parsed.path.split("/") if s]
+            referer = f"{parsed.scheme}://{parsed.hostname}/"
+            if segs:
+                referer += segs[0] + "/"
+            hdr = {
+                "Referer": referer,
+                "Accept":  "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            }
+            r = self.session.get(url, headers=hdr, timeout=self.timeout)
             r.raise_for_status()
             data = r.content
             self._save_img_cache(url, data)
