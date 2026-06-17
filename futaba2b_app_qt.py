@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.51"
+APP_VER = "0.9.53"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6022,7 +6022,9 @@ class CatalogView(QWidget):
         # mode=json（バッジ②④・隔離①のいずれかが有効なときのみ取得）
         try:
             _need_json = (getattr(self._settings, 'catalog_show_mail_badge', True)
-                          or getattr(self._settings, 'catalog_quarantine_bottom', True))
+                          or getattr(self._settings, 'catalog_quarantine_bottom', True)
+                          or getattr(self._settings, 'catalog_common_id_bottom', False)
+                          or getattr(self._settings, 'ng_catalog_hide_common_id', False))
             if _need_json:
                 jinfo = self._fetcher.fetch_catalog_json(board)
                 self._catalog_json_ready.emit(jinfo)
@@ -6207,6 +6209,9 @@ class CatalogView(QWidget):
         elif ng_empty_mode == 0:
             # 「本文空のみNG」: 画像なし かつ タイトルも空のスレのみ除外
             entries = [e for e in entries if (e.thumb_url or "").strip() or (e.title or "").strip()]
+        # 3.5 共通ID(mode=json id)のスレを非表示にする
+        if getattr(self._settings, "ng_catalog_hide_common_id", False):
+            entries = [e for e in entries if not (getattr(e, 'op_id', '') or '').strip()]
         # 4. 検索: ヒットを上に隔離して表示 (正規表現対応)
         kw = self._search.text().strip()
         search_sections = None
@@ -6530,7 +6535,8 @@ class CatalogView(QWidget):
                             hover_comment=getattr(self._settings, "catalog_hover_comment", False),
                             show_email=False,  # カタログのメール内容バッジ（フッタ）は常に非表示
                             show_badge=getattr(self._settings, "catalog_show_mail_badge", True),
-                            quarantine_section=getattr(self._settings, "catalog_quarantine_bottom", True))
+                            quarantine_section=getattr(self._settings, "catalog_quarantine_bottom", True),
+                            common_id_section=getattr(self._settings, "catalog_common_id_bottom", False))
         self._load_html_via_tempfile(_cat_html, QUrl("https://www.2chan.net/"))
 
         # catalog_read_counts: 未登録スレのみ現在のレス数を基準値として登録する

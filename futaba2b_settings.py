@@ -348,6 +348,7 @@ class AppSettings:
         self.catalog_hover_comment: bool = False  # カタログオンマウスでスレ本文表示
         self.catalog_show_mail_badge:  bool = True  # サムネ右上にメール欄/IDバッジ表示
         self.catalog_quarantine_bottom: bool = True  # 隔離スレ(json非存在)を最下部表示
+        self.catalog_common_id_bottom:  bool = False # 共通ID(mode=json id)スレを最下部にまとめる
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
         self.recent_closed_max: int = 30     # 最近閉じたスレの保持件数
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
@@ -526,6 +527,7 @@ class AppSettings:
         # ng_catalog_empty: 0=本文空のみNG, 1=NGにする, 2=何もしない
         self.ng_catalog_empty: int   = 2
         self.ng_catalog_pack:  bool  = True  # 無視スレを詰める
+        self.ng_catalog_hide_common_id: bool = False  # 共通IDのスレをカタログから非表示
 
         # ─────────────────────────────────────────────────────
         # NG設定 – 設定[逆NG]タブ
@@ -665,6 +667,7 @@ class AppSettings:
             self.ng_thread_close_ng      = raw.get("ng_thread_close_ng",  False)
             self.ng_catalog_empty        = raw.get("ng_catalog_empty", 2)
             self.ng_catalog_pack         = raw.get("ng_catalog_pack",  True)
+            self.ng_catalog_hide_common_id = bool(raw.get("ng_catalog_hide_common_id", False))
             self.ng_reverse_action        = raw.get("ng_reverse_action", 0)
             self.ng_reverse_custom_action  = raw.get("ng_reverse_custom_action", "")
             self.ng_reverse_max_open       = raw.get("ng_reverse_max_open", 99)
@@ -713,6 +716,7 @@ class AppSettings:
             self.catalog_hover_comment = bool(raw.get("catalog_hover_comment", False))
             self.catalog_show_mail_badge  = bool(raw.get("catalog_show_mail_badge",  True))
             self.catalog_quarantine_bottom = bool(raw.get("catalog_quarantine_bottom", True))
+            self.catalog_common_id_bottom = bool(raw.get("catalog_common_id_bottom", False))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
             self.recent_images_max = min(100, max(1, int(raw.get("recent_images_max", 30))))
@@ -834,6 +838,7 @@ class AppSettings:
                         "ng_thread_close_ng":   self.ng_thread_close_ng,
                         "ng_catalog_empty":     self.ng_catalog_empty,
                         "ng_catalog_pack":      self.ng_catalog_pack,
+                        "ng_catalog_hide_common_id": self.ng_catalog_hide_common_id,
                         "ng_reverse_action":         self.ng_reverse_action,
                         "ng_reverse_custom_action":  self.ng_reverse_custom_action,
                         "ng_reverse_max_open":        self.ng_reverse_max_open,
@@ -886,6 +891,7 @@ class AppSettings:
                         "catalog_hover_comment": self.catalog_hover_comment,
                         "catalog_show_mail_badge":  self.catalog_show_mail_badge,
                         "catalog_quarantine_bottom": self.catalog_quarantine_bottom,
+                        "catalog_common_id_bottom":  self.catalog_common_id_bottom,
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
                         "recent_images_max": self.recent_images_max,

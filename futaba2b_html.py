@@ -432,6 +432,13 @@ body {
 }
 .cat-badge-g { background: #2E7D32; }   /* 緑: ID表示/IP表示/・3・/他 */
 .cat-badge-r { background: #cc1105; }   /* 赤: 非ID表示でID実在 */
+/* 隔離バッジ（サムネ右下・オレンジ） */
+.cat-badge-quar {
+    position: absolute; bottom: 1px; right: 1px; top: auto;
+    font-size: 7pt; font-weight: bold; line-height: 1;
+    color: #fff; background: #E08000; padding: 1px 2px; border-radius: 2px;
+    pointer-events: none; z-index: 2;
+}
 .entry img {
     display: block;
     max-width: calc(var(--cell-w, 84px) - 4px);
@@ -474,6 +481,11 @@ body {
 .sec-hdr.quar-hdr {
     color: #8a4b00; background: #FFF3E0;
     border-bottom: 2px solid #E08000;
+}
+/* 共通ID(mode=json id) まとめセクション見出し */
+.sec-hdr.cid-hdr {
+    color: #8b0000; background: #FFEBEE;
+    border-bottom: 2px solid #cc1105;
 }
 /* ─ 逆NGエントリハイライト ─ */
 .entry.reverse-ng {
@@ -2149,7 +2161,8 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                      hover_comment: bool = False,
                      show_email: bool = False,
                      show_badge: bool = False,
-                     quarantine_section: bool = False) -> str:
+                     quarantine_section: bool = False,
+                     common_id_section: bool = False) -> str:
     """
     search_sections: None | (matched_list, unmatched_list)
     指定された場合、matched を上にセクション表示する
@@ -2246,10 +2259,11 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             _embl  = _em.lower()
             _hasid = bool((getattr(e, 'op_id', '') or '').strip())
             _bt = ''; _bc = ''
-            if _embl == 'id表示':
-                _bt, _bc = 'ID', 'cat-badge-g'
-            elif _hasid:
+            if _hasid:
+                # 共通ID(mode=json id)が出ている → 赤IDバッジ優先（ID表示要求の有無を問わず）
                 _bt, _bc = 'ID', 'cat-badge-r'
+            elif _embl == 'id表示':
+                _bt, _bc = 'ID', 'cat-badge-g'
             elif _embl == 'ip表示':
                 _bt, _bc = 'IP', 'cat-badge-g'
             elif _em == '・3・':
@@ -2258,6 +2272,11 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                 _bt, _bc = '他', 'cat-badge-g'
             if _bt:
                 _thumb_badge = f'<span class="cat-badge {_bc}" title="{_e(_em) or "ID"}">{_bt}</span>'
+
+        # 隔離スレは右下にオレンジの隔離バッジを表示
+        _quar_badge = ''
+        if getattr(e, 'is_quarantine', False):
+            _quar_badge = '<span class="cat-badge-quar" title="隔離スレ">隔離</span>'
 
         # hover用データ属性とイベント
         _hover_attrs = ""
@@ -2275,7 +2294,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             f'onclick="handleCatClick(\'{url}\',event)" '
             f'onmousedown="handleCatMouseDown(\'{url}\',event)"'
             f'{_hover_attrs}>' +
-            f'<div class="entry-img">{img_elem}{_thumb_badge}</div>' +
+            f'<div class="entry-img">{img_elem}{_thumb_badge}{_quar_badge}</div>' +
             f'<div class="entry-title"{_title_style}>{_e(title)}</div>' +
             f'<div class="entry-foot"><span>{_rc_disp}</span><span>{delta_s}</span>'
             f'{_email_badge}</div>' +
@@ -2306,11 +2325,42 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         quar   = [e for e in elist if getattr(e, 'is_quarantine', False)]
         return normal, quar
 
+    def _pull_common_id(elist):
+        """common_id_section=True のとき op_id(共通ID) を持つスレを op_id ごとにまとめて分離。
+        戻り値: (rest, [(id, [entries]), ...])（件数降順→ID昇順）"""
+        if not common_id_section:
+            return elist, []
+        rest = []
+        groups: dict = {}
+        for e in elist:
+            _cid = (getattr(e, 'op_id', '') or '').strip()
+            if _cid:
+                groups.setdefault(_cid, []).append(e)
+            else:
+                rest.append(e)
+        ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        return rest, ordered
+
+    def _common_id_section(groups):
+        """共通IDまとめを最下部セクションとして描画（同一IDごとに赤バッジで英数字表示）"""
+        if not groups:
+            return ""
+        parts = ['<div class="sec-div"></div>']
+        for _cid, es in groups:
+            parts.append(
+                f'<div class="sec-hdr cid-hdr">'
+                f'共通ID: {_e(_cid)} ({len(es)}件)</div>'
+            )
+            parts.extend(_make_entry(e) for e in es)
+        return "".join(parts)
+
     if search_sections:
         matched, unmatched = search_sections
         matched   = _filter_entries(matched)
         unmatched = _filter_entries(unmatched)
         matched,   mq = _pull_quar(matched)
+        # 共通IDを隔離より優先で抽出（隔離かつ共通IDのスレは共通ID側へ）
+        unmatched, ucid = _pull_common_id(unmatched)
         unmatched, uq = _pull_quar(unmatched)
         parts = []
         if matched:
@@ -2321,12 +2371,17 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             parts.extend(_make_entry(e) for e in matched)
         parts.append('<div class="sec-div"></div>')
         parts.extend(_make_entry(e) for e in unmatched)
+        parts.append(_common_id_section(ucid))
         parts.append(_quar_section(mq + uq))
         inner = "".join(parts)
     else:
         filtered = _filter_entries(entries)
+        # 共通IDを隔離より優先で抽出（隔離かつ共通IDのスレは共通ID側へ）
+        filtered, cid_groups = _pull_common_id(filtered)
         filtered, quar = _pull_quar(filtered)
-        inner = "".join(_make_entry(e) for e in filtered) + _quar_section(quar)
+        inner = ("".join(_make_entry(e) for e in filtered)
+                 + _common_id_section(cid_groups)
+                 + _quar_section(quar))
 
     if cols > 0:
         grid_style = (
