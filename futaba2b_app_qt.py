@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.37"
+APP_VER = "0.9.39"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -4323,6 +4323,21 @@ class ThreadView(QWidget):
         self._last_html_dirty = False
 
 
+    def _thread_footer_html(self, thread) -> str:
+        """スレ表示用フッター（レス数/受信/最終更新/バージョン）HTMLを返す。
+        返信モードと同一内容を画像・引用モードでも使うための共通生成。"""
+        import datetime as _dt
+        if not thread:
+            return ""
+        _DAY_JP = ['月','火','水','木','金','土','日']
+        res_count = max(0, len(thread.res_list) - 1)  # OP除く
+        new_count = getattr(thread, '_footer_new_count', 0)
+        _n = _dt.datetime.now()
+        now_str = (f"{_n.year}/{_n.month:02d}/{_n.day:02d}"
+                   f" ({_DAY_JP[_n.weekday()]}) {_n.hour}:{_n.minute:02d}:{_n.second:02d}")
+        return (f'<div class="page-footer">レス: {res_count}件 ／ 受信: {new_count}件'
+                f' ／ 最終更新: {now_str} ／ 2BP {APP_VER}</div>')
+
     def _render_quote_mode(self):
         """引用ツリーモード: 返信関係をツリー表示"""
         if not self._thread:
@@ -4447,7 +4462,7 @@ class ThreadView(QWidget):
             f"{_usr_q}"
             f"{WEBCHANNEL_JS}"
             f"{_scroll_js}"
-            f"</head><body>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}{res_pool}</body></html>"
+            f"</head><body>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}{res_pool}{self._thread_footer_html(self._thread)}</body></html>"
         )
         url = (self._thread.url if self._thread else None) or "https://www.2chan.net/"
         self._load_html_via_tempfile(html, QUrl(url))
@@ -4539,7 +4554,7 @@ class ThreadView(QWidget):
                     'visibility:hidden;pointer-events:none;">'
                     + res_pool_html + '</div>')
 
-        body_html = getattr(self, "_error_banner_html", "") + "\n".join(rows) + res_pool
+        body_html = getattr(self, "_error_banner_html", "") + "\n".join(rows) + res_pool + self._thread_footer_html(self._thread)
         body_js = _json.dumps(body_html, ensure_ascii=False)
         js = (
             f"document.body.innerHTML = {body_js};\n"
@@ -4595,7 +4610,7 @@ class ThreadView(QWidget):
               '<script>'+_img_js+'</script>'
               f'{_scroll_js_img}'
               f'</head><body>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
-              f'{res_pool}</body></html>')
+              f'{res_pool}{self._thread_footer_html(self._thread)}</body></html>')
         url=(self._thread.url if self._thread else None) or 'https://www.2chan.net/'
         self._load_html_via_tempfile(html, QUrl(url))
         self._loaded_page_mode = 'image'
@@ -4640,7 +4655,8 @@ class ThreadView(QWidget):
                      + '<div class="wrap"><div class="grid">'
                      + ''.join(items)
                      + '</div></div>'
-                     + res_pool)
+                     + res_pool
+                     + self._thread_footer_html(self._thread))
         import json as _json
         grid_js = _json.dumps(grid_html, ensure_ascii=False)
         # _gallery_list も JS側に同期
@@ -5587,9 +5603,11 @@ class CatalogView(QWidget):
         self._bridge.cat_hover_leave.connect(self._on_cat_hover_leave)
 
         # ホバーポップアップウィジェット
+        # Qt.Tool: システム全体の最前面ではなく本ソフトの前面に表示（親=メインウインドウ）。
+        # 表示時に _ensure_hover_parent で親を設定し、_clamp_to_window で窓内に収める。
         self._hover_popup = QLabel()
         self._hover_popup.setWindowFlags(
-            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self._hover_popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._hover_popup.setStyleSheet(
             f"QLabel{{background:{_TM.thread('id_popup_bg','#FFFFEE')};border:1px solid {_TM.thread('id_popup_border','#800000')};"
@@ -5598,7 +5616,7 @@ class CatalogView(QWidget):
         self._hover_popup.hide()
         self._hover_img_popup = QWidget()
         self._hover_img_popup.setWindowFlags(
-            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self._hover_img_popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._hover_img_popup.setStyleSheet(
             f"QWidget{{background:{_TM.thread('id_popup_bg','#FFFFEE')};border:1px solid {_TM.thread('id_popup_border','#800000')};}}"
@@ -5635,6 +5653,26 @@ class CatalogView(QWidget):
             f"  window._scrollTopSetCount({tn});"
         )
 
+    def _ensure_hover_parent(self):
+        """ホバーポップアップの親をメインウインドウに設定（本ソフト前面・非システム最前面）。"""
+        mw = self.window()
+        flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+        for w in (self._hover_popup, self._hover_img_popup):
+            if w.parent() is not mw:
+                w.setParent(mw, flags)
+                w.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+    def _clamp_to_window(self, gx: int, gy: int, w: int, h: int):
+        """ポップアップ左上(gx,gy)・サイズ(w,h)を本ソフトのウインドウ矩形内に収める。"""
+        mw = self.window()
+        try:
+            r = mw.frameGeometry()  # 画面座標でのウインドウ全体矩形
+        except Exception:
+            return gx, gy
+        x = max(r.left(), min(gx, r.right()  - w))
+        y = max(r.top(),  min(gy, r.bottom() - h))
+        return x, y
+
     def _on_cat_hover_enter(self, url: str, thumb_url: str, comment: str):
         """カタログエントリへのマウスオーバー：画像拡大・本文ポップアップ"""
         s = self._settings
@@ -5655,9 +5693,14 @@ class CatalogView(QWidget):
             # テキストのみ: 独立ポップアップ
             self._hover_popup.setText(comment)
             self._hover_popup.adjustSize()
-            self._hover_popup.move(cursor_pos.x() + offset_x,
-                                   cursor_pos.y() + offset_y)
+            self._ensure_hover_parent()
+            px, py = self._clamp_to_window(cursor_pos.x() + offset_x,
+                                           cursor_pos.y() + offset_y,
+                                           self._hover_popup.width(),
+                                           self._hover_popup.height())
+            self._hover_popup.move(px, py)
             self._hover_popup.show()
+            self._hover_popup.raise_()
 
         if zoom_on and thumb_url:
             import threading as _th, urllib.request as _ur
@@ -5686,8 +5729,13 @@ class CatalogView(QWidget):
         self._hover_img_lbl.setPixmap(pix)
         # テキストは _on_cat_hover_enter で既にセット済み（_hover_txt_lbl）
         self._hover_img_popup.adjustSize()
-        self._hover_img_popup.move(cursor_pos.x() + 16, cursor_pos.y() + 16)
+        self._ensure_hover_parent()
+        px, py = self._clamp_to_window(cursor_pos.x() + 16, cursor_pos.y() + 16,
+                                       self._hover_img_popup.width(),
+                                       self._hover_img_popup.height())
+        self._hover_img_popup.move(px, py)
         self._hover_img_popup.show()
+        self._hover_img_popup.raise_()
 
     def _on_cat_hover_leave(self):
         """カタログエントリからマウスアウト：ポップアップ非表示"""
@@ -8583,6 +8631,8 @@ class ImageTabView(QWidget):
                 f"  }} else {{"
                 f"    el.style.width='{pct}%';el.style.height='auto';"
                 f"  }}"
+                f"  if({pct}===100){{el.classList.add('actual');window._zoomState='100';}}"
+                f"  else{{el.classList.remove('actual');}}"
                 f"  el.style.display='block';el.style.margin='auto';"
                 f"  el.style.visibility='visible';"
                 f"}}"
@@ -8628,6 +8678,8 @@ class ImageTabView(QWidget):
                 f"  el.style.maxWidth='none';el.style.maxHeight='none';"
                 f"  el.style.width=(nw>0?Math.round(nw*{pct}/100):'auto')+'px';"
                 f"  el.style.height='auto';el.style.display='block';el.style.margin='auto';"
+                f"  if({pct}===100){{el.classList.add('actual');window._zoomState='100';}}"
+                f"  else{{el.classList.remove('actual');}}"
 f"  el.style.visibility='visible';}}"
                 f"if(el){{if(el.complete&&el.naturalWidth)applyZ();else el.onload=applyZ;}}"
             )
