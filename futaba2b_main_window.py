@@ -800,12 +800,19 @@ class MainWindow(QMainWindow):
 
     def _update_tab_id_flag(self, tb, view, idx: int):
         """ID表示スレ(op-no-id)のピンク基底フラグを _tab_id_set に反映する。
-        条件: IDが表示されている かつ OPメール欄が "id表示" 要求でない。"""
+        条件: IDが表示されている かつ OPメール欄が "id表示" 要求でない。
+        ※IDの有無は OP(=res_list[0]) の id_str で判定する。
+          （JSON差分API mode=json&res= の返信レスは非ID表示スレでも id を持つため、
+            any(r.id_str) では誤検出する。OPは常にHTMLパース由来で信頼できる）"""
         if not hasattr(tb, "_tab_id_set") or not isinstance(view, ThreadView):
             return
         _rl = (view._thread.res_list if getattr(view, "_thread", None) else None) or []
-        _op_email = (_rl[0].email or "").strip() if _rl else ""
-        _pink = any(r.id_str for r in _rl) and _op_email.lower() != "id表示"
+        if not _rl:
+            tb._tab_id_set.discard(idx)
+            return
+        _op = _rl[0]
+        _op_email = (_op.email or "").strip()
+        _pink = bool(_op.id_str) and _op_email.lower() != "id表示"
         if _pink:
             tb._tab_id_set.add(idx)
         else:
@@ -820,12 +827,18 @@ class MainWindow(QMainWindow):
             # ID表示スレのピンク基底色フラグを更新（全表示経路共通・赤/青より下位）
             self._update_tab_id_flag(tb, view, idx)
             if new_count > 0:
-                # 新着あり → 通常スレは青文字 / op-no-idスレはピンク（赤は維持）
+                # 新着あり → 色を決定（エラー赤は最優先で維持）
                 cur = tb._tab_colors.get(idx)
                 if cur != QColor(Qt.GlobalColor.red):
-                    tb._tab_colors[idx] = (QColor("#ff80c0")
-                                           if idx in tb._tab_id_set
-                                           else QColor("#4488ff"))
+                    if idx in tb._tab_id_set:
+                        tb._tab_colors[idx] = QColor("#ff80c0")   # op-no-id は常にピンク
+                    elif view.isVisible():
+                        # 表示中（自分が見ている）タブ → 青にせず基底色（=既読扱い）
+                        if cur and cur == QColor("#4488ff"):
+                            del tb._tab_colors[idx]
+                        tb._refresh_base_color(idx)
+                    else:
+                        tb._tab_colors[idx] = QColor("#4488ff")   # 背景タブの新着 → 青
             else:
                 # 新着なし → 青を解除し基底色（ピンク or デフォルト）を反映（エラー赤は維持）
                 cur = tb._tab_colors.get(idx)
@@ -931,9 +944,15 @@ class MainWindow(QMainWindow):
                 self._update_tab_id_flag(tb, w, ii)
                 cur = tb._tab_colors.get(ii)
                 if cur != QColor(Qt.GlobalColor.red):
-                    tb._tab_colors[ii] = (QColor("#ff80c0")
-                                          if ii in tb._tab_id_set
-                                          else QColor("#4488ff"))
+                    if ii in tb._tab_id_set:
+                        tb._tab_colors[ii] = QColor("#ff80c0")    # op-no-id は常にピンク
+                    elif w.isVisible():
+                        # 表示中タブ → 青にせず基底色（既読扱い）
+                        if cur and cur == QColor("#4488ff"):
+                            del tb._tab_colors[ii]
+                        tb._refresh_base_color(ii)
+                    else:
+                        tb._tab_colors[ii] = QColor("#4488ff")    # 背景タブ → 青
                 # 青背景（水色）
                 self._on_unread_state(inner, w, True)
         tb.update()
