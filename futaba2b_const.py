@@ -317,6 +317,9 @@ QMenu::item:selected {{
     background-color: {c("progress_chunk", "#5588cc")};
     color: #fff;
 }}
+QMenu::item:disabled {{
+    color: {c("text_muted", "#888888")};
+}}
 QMenu::separator {{
     height: 1px;
     background: {c("menu_separator", "#666")};

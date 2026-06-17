@@ -3595,8 +3595,6 @@ class AppSettingsDialog(QDialog):
         w1 = QWidget(); f1 = QVBoxLayout(w1)
 
         g_th = QGroupBox("スレッド表示"); f1.addWidget(g_th); tf = QFormLayout(g_th)
-        self._img_ext   = QCheckBox("画像を常に外部ブラウザで開く"); tf.addRow(self._img_ext)
-        self._img_next  = QCheckBox("画像を隣タブで開く");            tf.addRow(self._img_next)
         self._pin_after_post = QCheckBox("レスしたスレを自動的にピン留めする")
         tf.addRow(self._pin_after_post)
         self._near_limit_chk = QCheckBox("最大保存数1/10以下のスレを仮赤字（薄ピンク）として扱う")
@@ -3621,8 +3619,10 @@ class AppSettingsDialog(QDialog):
         # 画像表示モード（タブ / ウインドウ）
         g_imgmode = QGroupBox("画像表示モード"); f1.addWidget(g_imgmode)
         imf = QFormLayout(g_imgmode)
-        self._image_display_mode = _combo(["タブ", "ウインドウ"],
-            tip="タブ=画像タブで開く（従来）\nウインドウ=専用の画像ウインドウで開く（1つのみ）")
+        self._image_display_mode = _combo(["タブ", "ウインドウ", "外部ブラウザ", "隣タブ"],
+            tip="タブ=画像タブで開く（従来）\nウインドウ=専用の画像ウインドウで開く（1つのみ）\n"
+                "外部ブラウザ=画像を常に外部ブラウザで開く（http系URLのみ／ログ内画像はタブ）\n"
+                "隣タブ=画像タブを現在のタブの隣に開く")
         imf.addRow("画像表示モード:", self._image_display_mode)
 
         # ── 自分のレス ──
@@ -4141,8 +4141,6 @@ class AppSettingsDialog(QDialog):
         s = self._settings
 
         # スレッド
-        self._img_ext.setChecked(s.show_image_external)
-        self._img_next.setChecked(s.image_next_tab)
         self._pin_after_post.setChecked(getattr(s, "pin_after_post", False))
         self._near_limit_chk.setChecked(getattr(s, "treat_near_limit_as_expiring", False))
         self._scroll_bottom_count.setValue(getattr(s, "scroll_bottom_count", 30))
@@ -4279,8 +4277,6 @@ class AppSettingsDialog(QDialog):
         s = self._settings
 
         # スレッド
-        s.show_image_external     = self._img_ext.isChecked()
-        s.image_next_tab          = self._img_next.isChecked()
         s.pin_after_post          = self._pin_after_post.isChecked()
         s.treat_near_limit_as_expiring = self._near_limit_chk.isChecked()
         s.scroll_bottom_count     = self._scroll_bottom_count.value()

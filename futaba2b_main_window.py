@@ -768,6 +768,7 @@ class MainWindow(QMainWindow):
                         cur = tb_e._tab_colors.get(idx_e)
                         if cur is not None and cur == QColor(Qt.GlobalColor.red):
                             del tb_e._tab_colors[idx_e]
+                            tb_e._refresh_base_color(idx_e)  # ID表示スレならピンクへ復帰
                             tb_e.update()
             if view._thread and view._thread.title:
                 t = view._thread.title.rsplit(" - ", 1)[0]
@@ -797,21 +798,40 @@ class MainWindow(QMainWindow):
             self._refresh_tab_pane()
         view.thread_loaded.connect(lambda _n, _c: _update())
 
+    def _update_tab_id_flag(self, tb, view, idx: int):
+        """ID表示スレ(op-no-id)のピンク基底フラグを _tab_id_set に反映する。
+        条件: IDが表示されている かつ OPメール欄が "id表示" 要求でない。"""
+        if not hasattr(tb, "_tab_id_set") or not isinstance(view, ThreadView):
+            return
+        _rl = (view._thread.res_list if getattr(view, "_thread", None) else None) or []
+        _op_email = (_rl[0].email or "").strip() if _rl else ""
+        _pink = any(r.id_str for r in _rl) and _op_email.lower() != "id表示"
+        if _pink:
+            tb._tab_id_set.add(idx)
+        else:
+            tb._tab_id_set.discard(idx)
+
     def _update_thread_badge(self, inner: "BoardPane", view, no: int, new_count: int):
         """タブに未読レス数バッジを表示"""
         idx = inner.indexOf(view)
         if idx < 0: return
         tb = inner.tabBar()
         if hasattr(tb, "_tab_colors"):
+            # ID表示スレのピンク基底色フラグを更新（全表示経路共通・赤/青より下位）
+            self._update_tab_id_flag(tb, view, idx)
             if new_count > 0:
-                # 新着あり → 青文字（エラー赤が既にあれば上書きしない）
-                if idx not in tb._tab_colors:
-                    tb._tab_colors[idx] = QColor("#4488ff")
-            else:
-                # 新着なし → 文字色リセット（エラー赤以外）
+                # 新着あり → 通常スレは青文字 / op-no-idスレはピンク（赤は維持）
                 cur = tb._tab_colors.get(idx)
-                if cur and cur != QColor(Qt.GlobalColor.red):
+                if cur != QColor(Qt.GlobalColor.red):
+                    tb._tab_colors[idx] = (QColor("#ff80c0")
+                                           if idx in tb._tab_id_set
+                                           else QColor("#4488ff"))
+            else:
+                # 新着なし → 青を解除し基底色（ピンク or デフォルト）を反映（エラー赤は維持）
+                cur = tb._tab_colors.get(idx)
+                if cur and cur == QColor("#4488ff"):
                     del tb._tab_colors[idx]
+                tb._refresh_base_color(idx)
             tb.update()
         base = re.sub(r' \(\+\d+\)$', '', inner.tabText(idx))
         new_text = f"{base} (+{new_count})" if new_count > 0 else base
@@ -837,6 +857,7 @@ class MainWindow(QMainWindow):
         cur = tb._tab_colors.get(idx)
         if cur and cur == QColor("#4488ff"):
             del tb._tab_colors[idx]
+            tb._refresh_base_color(idx)  # ID表示スレならピンクへ復帰
             tb.update()
 
     def _on_inner_tab_changed(self, pane, idx: int):
@@ -906,10 +927,13 @@ class MainWindow(QMainWindow):
         for ii in range(inner.count()):
             w = inner.widget(ii)
             if isinstance(w, ThreadView) and w._thread and (w._thread.url in urls):
-                # 青文字（エラー赤が既にあれば上書きしない）
+                # op-no-idフラグを更新してから文字色を決定（赤は維持）
+                self._update_tab_id_flag(tb, w, ii)
                 cur = tb._tab_colors.get(ii)
                 if cur != QColor(Qt.GlobalColor.red):
-                    tb._tab_colors[ii] = QColor("#4488ff")
+                    tb._tab_colors[ii] = (QColor("#ff80c0")
+                                          if ii in tb._tab_id_set
+                                          else QColor("#4488ff"))
                 # 青背景（水色）
                 self._on_unread_state(inner, w, True)
         tb.update()
@@ -924,6 +948,15 @@ class MainWindow(QMainWindow):
             tb._tab_bg_colors[idx] = QColor(0, 180, 220, 80)  # 水色・半透明
         else:
             tb._tab_bg_colors.pop(idx, None)
+            # 末尾表示＝既読 → 青文字を解除し基底色（ピンク or デフォルト）を反映
+            # （バッジ処理の前後どちらで来ても正しくなるよう、ここでもフラグを算出）
+            if hasattr(tb, "_tab_colors"):
+                self._update_tab_id_flag(tb, view, idx)
+                cur = tb._tab_colors.get(idx)
+                if cur and cur == QColor("#4488ff"):
+                    del tb._tab_colors[idx]
+                if hasattr(tb, "_refresh_base_color"):
+                    tb._refresh_base_color(idx)
         tb.update()
 
     def _check_unread_bg(self, inner, view):
@@ -1785,8 +1818,8 @@ class MainWindow(QMainWindow):
 
     def _open_recent_image(self, url: str):
         """最近開いた画像をImageTabViewで開く"""
-        if (getattr(self._settings, "show_image_external", False)
-                and url.startswith(("http://", "https://"))):
+        _mode = getattr(self._settings, "image_display_mode", 0)
+        if _mode == 2 and url.startswith(("http://", "https://")):  # 外部ブラウザ
             _open_url(url)
             return
         inner = self._active_inner()
@@ -1806,7 +1839,7 @@ class MainWindow(QMainWindow):
         view.open_settings.connect(lambda: self._open_settings("画像保存"))
         view.image_navigated.connect(self._record_recent_image)
         view.open_image_tab_bg.connect(self._open_image_tab_bg)
-        if getattr(self._settings, "image_next_tab", False):
+        if _mode == 3:  # 隣タブ
             i = inner.insertTab(inner.currentIndex() + 1, view, f"🖼 {name}")
         else:
             i = inner.addTab(view, f"🖼 {name}")
@@ -2129,13 +2162,13 @@ class MainWindow(QMainWindow):
                    resto=0, on_success=_on_new_thread_success, parent=self).show()
 
     def _open_image_tab(self, url: str, img_list: list, idx: int):
-        # 「画像を常に外部ブラウザで開く」(http系URLのみ。ログ内相対パスはタブ表示)
-        if (getattr(self._settings, "show_image_external", False)
-                and url.startswith(("http://", "https://"))):
+        _mode = getattr(self._settings, "image_display_mode", 0)
+        # 外部ブラウザ (http系URLのみ。ログ内相対パスはタブ表示)
+        if _mode == 2 and url.startswith(("http://", "https://")):
             _open_url(url)
             return
         # 画像表示モード=ウインドウ → 専用ウインドウで開く
-        if getattr(self._settings, "image_display_mode", 0) == 1:
+        if _mode == 1:
             self._open_image_window(url, img_list, idx)
             return
         inner = self._active_inner()
@@ -2159,7 +2192,7 @@ class MainWindow(QMainWindow):
         view.open_image_tab_bg.connect(self._open_image_tab_bg)
         name = (img_list[idx].get("name", "画像")[:14]
                 if img_list and 0 <= idx < len(img_list) else "画像")
-        if getattr(self._settings, "image_next_tab", False):
+        if _mode == 3:  # 隣タブ
             i = inner.insertTab(inner.currentIndex() + 1, view, f"🖼 {name}")
         else:
             i = inner.addTab(view, f"🖼 {name}")
@@ -2168,12 +2201,12 @@ class MainWindow(QMainWindow):
 
     def _open_image_tab_bg(self, url: str, img_list: list, idx: int):
         """中クリック：画像タブを非アクティブ（バックグラウンド）で開く。既存タブがあれば何もしない。"""
-        if (getattr(self._settings, "show_image_external", False)
-                and url.startswith(("http://", "https://"))):
+        _mode = getattr(self._settings, "image_display_mode", 0)
+        if _mode == 2 and url.startswith(("http://", "https://")):  # 外部ブラウザ
             _open_url(url)
             return
         # 画像表示モード=ウインドウ → 専用ウインドウで開く（フォアグラウンドにはしない）
-        if getattr(self._settings, "image_display_mode", 0) == 1:
+        if _mode == 1:
             self._open_image_window(url, img_list, idx, activate=False)
             return
         inner = self._active_inner()
@@ -2195,7 +2228,7 @@ class MainWindow(QMainWindow):
         view.open_image_tab_bg.connect(self._open_image_tab_bg)
         name = (img_list[idx].get("name", "画像")[:14]
                 if img_list and 0 <= idx < len(img_list) else "画像")
-        if getattr(self._settings, "image_next_tab", False):
+        if _mode == 3:  # 隣タブ
             inner.insertTab(inner.currentIndex() + 1, view, f"🖼 {name}")   # 非アクティブ
         else:
             inner.addTab(view, f"🖼 {name}")   # setCurrentIndex しない → 非アクティブ

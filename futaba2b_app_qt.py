@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.41"
+APP_VER = "0.9.48"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -353,6 +353,7 @@ class WrapTabBar(QTabBar):
         self._cached_rows = 1
         self._tab_colors:   dict = {}   # idx → QColor（文字色: エラー赤・新着青）
         self._tab_bg_colors: dict = {}  # idx → QColor（背景色: 未読水色）
+        self._tab_id_set:   set  = set()  # ID表示スレのタブindex（基底色=ピンク）
         self._tab_icons:    dict = {}   # idx → QPixmap（タブアイコン）
         self._tab_width_cache: dict = {}  # idx → ((text, has_icon), width)
         self._pinned_widgets: set = set()  # BoardPane._pinnedへの参照（描画用）
@@ -485,6 +486,19 @@ class WrapTabBar(QTabBar):
             self.updateGeometry()
         self.update()
 
+    def _refresh_base_color(self, idx: int):
+        """基底文字色を反映する。op-no-id スレ(_tab_id_set)は青より優先でピンク。
+        エラー赤は最優先で維持。op-no-id でない通常スレの新着青は維持する。"""
+        cur = self._tab_colors.get(idx)
+        if cur is not None and cur == QColor(Qt.GlobalColor.red):
+            return  # 赤(エラー)は最優先
+        if idx in self._tab_id_set:
+            self._tab_colors[idx] = QColor("#ff80c0")  # op-no-id=ピンク（青より優先）
+        elif cur is not None and cur == QColor("#4488ff"):
+            return  # 通常スレの新着青は維持
+        elif cur is not None:
+            del self._tab_colors[idx]
+
     def tabRemoved(self, idx: int):
         """タブ削除時に _tab_colors / _tab_icons / _tab_width_cache のインデックスをシフト"""
         super().tabRemoved(idx)
@@ -496,6 +510,9 @@ class WrapTabBar(QTabBar):
                 elif k > idx:
                     new_d[k - 1] = v
             d.clear(); d.update(new_d)
+        # _tab_id_set も同様にシフト
+        self._tab_id_set = {(k - 1 if k > idx else k)
+                            for k in self._tab_id_set if k != idx}
 
     def tabInserted(self, idx: int):
         super().tabInserted(idx)
@@ -505,6 +522,7 @@ class WrapTabBar(QTabBar):
             for k, v in d.items():
                 new_d[k + 1 if k >= idx else k] = v
             d.clear(); d.update(new_d)
+        self._tab_id_set = {(k + 1 if k >= idx else k) for k in self._tab_id_set}
 
     def setTabText(self, idx: int, text: str):
         super().setTabText(idx, text)
@@ -726,6 +744,7 @@ class WrapTabBar(QTabBar):
         snap_color = [self._tab_colors.get(i)    for i in range(n)]
         snap_bg    = [self._tab_bg_colors.get(i) for i in range(n)]
         snap_width = [self._tab_width_cache.get(i) for i in range(n)]
+        snap_id    = [(i in self._tab_id_set)    for i in range(n)]
 
         order = list(range(n))
         order.insert(dst, order.pop(src))
@@ -736,11 +755,13 @@ class WrapTabBar(QTabBar):
 
         self._tab_icons.clear(); self._tab_colors.clear()
         self._tab_bg_colors.clear(); self._tab_width_cache.clear()
+        self._tab_id_set.clear()
         for new_i, old_i in enumerate(order):
             if snap_icon[old_i]  is not None: self._tab_icons[new_i]       = snap_icon[old_i]
             if snap_color[old_i] is not None: self._tab_colors[new_i]      = snap_color[old_i]
             if snap_bg[old_i]    is not None: self._tab_bg_colors[new_i]   = snap_bg[old_i]
             if snap_width[old_i] is not None: self._tab_width_cache[new_i] = snap_width[old_i]
+            if snap_id[old_i]:                self._tab_id_set.add(new_i)
 
         # widget順・テキスト順スナップショットも同じ順序で更新
         if len(self._drag_widget_order) == n:
@@ -2219,6 +2240,26 @@ class BoardPane(QWidget):
             self._ctx_clear_cache_app)
         menu.addAction("キャッシュを消去 [2BP・QtWebEngine] (2)",
             self._ctx_clear_cache_web)
+        # ── ヒットした逆NG（ThreadViewのみ・ヒット時のみ表示・選択不可）──
+        _w_rev = self._tabs.widget(self._ctx_tab_idx)
+        if (isinstance(_w_rev, ThreadView)
+                and getattr(_w_rev, "_thread", None) is not None and self._main):
+            try:
+                _ngf = self._main._settings.ng_filter
+                _matched, _seen = [], set()
+                for _r in (_w_rev._thread.res_list or []):
+                    for _ng in _ngf.get_matched_reverse_ng_words(_r):
+                        _p = (_ng.get("pattern", "") or "").strip()
+                        if _p and _p not in _seen:
+                            _seen.add(_p); _matched.append(_p)
+            except Exception:
+                _matched = []
+            if _matched:
+                menu.addSeparator()
+                _hdr = menu.addAction("↓ヒットした逆NG")
+                _hdr.setEnabled(False)
+                for _p in _matched:
+                    menu.addAction(_p).setEnabled(False)
         menu.exec(self._tabs.tabBar().mapToGlobal(pos))
 
     def _get_tab_url(self, idx: int) -> str:

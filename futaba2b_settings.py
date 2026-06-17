@@ -380,7 +380,7 @@ class AppSettings:
         # スレオープンモード 0=通常 1=返信 2=画像 3=引用
         self.thread_open_mode:    int = 0  # アクティブで開く (0=返信, 1=画像, 2=引用)
         self.thread_open_bg_mode: int = 0  # バックグラウンドで開く
-        self.image_display_mode:  int = 0  # 画像表示モード (0=タブ, 1=ウインドウ)
+        self.image_display_mode:  int = 0  # 画像表示モード (0=タブ, 1=ウインドウ, 2=外部ブラウザ, 3=隣タブ)
         self.image_window_geometry: list | None = None  # 画像ウインドウの位置・サイズ [x,y,w,h]
         self.auto_close_dead_tab:    bool = False  # スレ落ち時にタブを自動で閉じる
         self.auto_close_full_tab:    bool = False  # 1000レス到達時にタブを自動で閉じる
@@ -737,6 +737,12 @@ class AppSettings:
             self.thread_open_mode    = int(raw.get("thread_open_mode", 0))
             self.thread_open_bg_mode = int(raw.get("thread_open_bg_mode", 0))
             self.image_display_mode  = int(raw.get("image_display_mode", 0))
+            # 旧設定の移行: 「外部ブラウザ/隣タブ」を画像表示モードに統合 (v0.9.42)
+            if self.image_display_mode == 0:
+                if raw.get("show_image_external", False):
+                    self.image_display_mode = 2
+                elif raw.get("image_next_tab", False):
+                    self.image_display_mode = 3
             self.image_window_geometry = raw.get("image_window_geometry", None)
             self.auto_close_dead_tab    = raw.get("auto_close_dead_tab",    False)
             self.auto_close_full_tab    = raw.get("auto_close_full_tab",    False)
@@ -1295,6 +1301,45 @@ class NgFilter:
                 continue
             rxp = self._compile_one(pat)
             hit = bool(rxp.search(title)) if rxp else pat.lower() in title.lower()
+            if hit:
+                seen_pats.add(pat)
+                result.append(ng)
+        return result
+
+    def get_matched_reverse_ng_words(self, res: "ResData") -> list[dict]:
+        """逆NGにマッチしたワード辞書のリストを返す（レス用・スコープ考慮）"""
+        body    = res.comment_text or ""
+        name    = res.name or ""
+        trip    = res.trip or ""
+        subject = getattr(res, "subject", "") or ""
+        mail    = res.email or ""
+        id_str  = res.id_str or ""
+        result = []
+        seen_pats: set = set()
+        for ng in self._settings.ng_words:
+            if not ng.get("enabled", True):
+                continue
+            if ng.get("ng_type", "ng") != "reverse_ng":
+                continue
+            pat = ng.get("pattern", "").strip()
+            if not pat or pat in seen_pats:
+                continue
+            has_any = any(ng.get(k) for k in
+                ("scope_body", "scope_name", "scope_subject",
+                 "scope_mail", "scope_id", "scope_ip"))
+            targets = []
+            if ng.get("scope_body", not has_any) and body: targets.append(body)
+            if ng.get("scope_name", False):
+                if name: targets.append(name)
+                if trip: targets.append(trip)
+            if ng.get("scope_subject", False) and subject: targets.append(subject)
+            if ng.get("scope_mail", False)    and mail:    targets.append(mail)
+            if ng.get("scope_id", False)      and id_str:  targets.append(id_str)
+            if not targets:
+                continue
+            rxp = self._compile_one(pat)
+            hit = any(bool(rxp.search(t)) if rxp else pat.lower() in t.lower()
+                      for t in targets)
             if hit:
                 seen_pats.add(pat)
                 result.append(ng)
