@@ -3565,6 +3565,10 @@ class AppSettingsDialog(QDialog):
         _tab_hint = QLabel("0=無制限（テキスト幅に自動調整）　数値を指定すると長いタブ名が切れます")
         _tab_hint.setStyleSheet("color: gray; font-size: 11px;")
         taf.addRow("", _tab_hint)
+        self._tab_pink_op_no_id = QCheckBox("IDが出ちゃったスレのタブをピンク色にする")
+        self._tab_pink_op_no_id.setToolTip(
+            "メール欄にID表示の指定が無いのにIDが出ているスレのタブ文字をピンクにします")
+        taf.addRow(self._tab_pink_op_no_id)
 
         # 保持件数
         g_keep = QGroupBox("保持件数"); f0.addWidget(g_keep); kpf = QFormLayout(g_keep)
@@ -4148,6 +4152,7 @@ class AppSettingsDialog(QDialog):
         self._parse_sem_kb.setValue(getattr(s, "parse_sem_kb", 50))
         self._show_console.setChecked(getattr(s, "show_console", False))
         self._tab_max_width.setValue(getattr(s, "tab_max_width", 0))
+        self._tab_pink_op_no_id.setChecked(getattr(s, "tab_pink_op_no_id", False))
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
         self._recent_closed_max.setValue(getattr(s, "recent_closed_max", 30))
         self._recent_images_max.setValue(getattr(s, "recent_images_max", 30))
@@ -4284,6 +4289,7 @@ class AppSettingsDialog(QDialog):
         s.parse_sem_kb            = self._parse_sem_kb.value()
         s.show_console            = self._show_console.isChecked()
         s.tab_max_width           = self._tab_max_width.value()
+        s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.recent_closed_max       = self._recent_closed_max.value()
         s.recent_images_max       = self._recent_images_max.value()

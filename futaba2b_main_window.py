@@ -812,7 +812,8 @@ class MainWindow(QMainWindow):
             return
         _op = _rl[0]
         _op_email = (_op.email or "").strip()
-        _pink = bool(_op.id_str) and _op_email.lower() != "id表示"
+        _enabled = getattr(self._settings, "tab_pink_op_no_id", False)
+        _pink = _enabled and bool(_op.id_str) and _op_email.lower() != "id表示"
         if _pink:
             tb._tab_id_set.add(idx)
         else:

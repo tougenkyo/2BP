@@ -375,6 +375,8 @@ class AppSettings:
         self.parse_sem_kb: int = 50
         # タブ最大幅 (px, 0=無制限)
         self.tab_max_width: int = 0
+        # IDが出ちゃったスレ(メール欄にID表示要求が無いのにIDが出ている)のタブをピンクにする
+        self.tab_pink_op_no_id: bool = False
         self.image_mode_cols: int = 6   # 画像モードの折り返し列数
         self.id_warn_count: int = 5   # ID出現回数がこの値以上ならIDを赤くする
         # スレオープンモード 0=通常 1=返信 2=画像 3=引用
@@ -731,6 +733,7 @@ class AppSettings:
             self.download_workers = int(raw.get("download_workers", 4))
             self.parse_sem_kb = int(raw.get("parse_sem_kb", 50))
             self.tab_max_width = int(raw.get("tab_max_width", 0))
+            self.tab_pink_op_no_id = bool(raw.get("tab_pink_op_no_id", False))
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
             self.id_warn_count = int(raw.get("id_warn_count", 5))
             self.theme = str(raw.get("theme", "dark"))
@@ -903,6 +906,7 @@ class AppSettings:
                         "download_workers": self.download_workers,
                         "parse_sem_kb": self.parse_sem_kb,
                         "tab_max_width": self.tab_max_width,
+                        "tab_pink_op_no_id": self.tab_pink_op_no_id,
                         "image_mode_cols": self.image_mode_cols,
                         "id_warn_count": self.id_warn_count,
                         "theme": self.theme,
