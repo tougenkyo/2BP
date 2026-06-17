@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.39"
+APP_VER = "0.9.41"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8437,7 +8437,11 @@ class ImageTabView(QWidget):
         _prev_zoom = self._zoom_combo.currentText()  # 継承用
         self._fit_mode = (_prev_zoom == "画面に合わせる")
         base_css = (
-            "html,body{margin:0;padding:0;width:100%;height:100%;background:#222;}"
+            # html/body の背景・高さモデルは !important で固定する。user.css は base_css の
+            # 後ろに連結され、user.css の body{background:#FFFFEE} が画像ウインドウ背景を
+            # 上書きして白/黒分裂を起こすため、ここを user.css より優先させる。
+            "html{margin:0;padding:0;width:100%;height:100%;background:#222 !important;}"
+            "body{margin:0!important;padding:0!important;width:100%;min-height:100% !important;background:#222 !important;}"
             # justify-content/align-items に safe を付与: 画像がビューポートより
             # 大きい場合、通常の center だと左/上にはみ出した部分がスクロール不可
             # （scrollLeft が負にならない）になり左側が永久に見切れる。safe は
