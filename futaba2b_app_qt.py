@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.62"
+APP_VER = "0.9.64"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -364,6 +364,8 @@ class WrapTabBar(QTabBar):
         self._drag_start_pos = None       # ドラッグ開始座標
         self._drag_active: bool = False   # ドラッグ中フラグ
         self._drag_widget_order: list = []  # ドラッグ開始時のwidget順（確定用）
+        # アクティブタブ切替時にバー全体を再描画（アクティブ行を最下段へ移動するため）
+        self.currentChanged.connect(self.update)
 
     def setTabIcon(self, idx: int, icon):
         """アイコンをローカル辞書に保存して再描画。QPixmap / QIcon どちらも受け取る。"""
@@ -433,11 +435,20 @@ class WrapTabBar(QTabBar):
             if row_w + tw > avail and rows[-1]:
                 rows.append([]); row_w = 0
             rows[-1].append(i); row_w += tw
+        # アクティブタブのある行を最下段へ（実インデックスは不変・描画順のみ並べ替え）
+        if len(rows) > 1:
+            cur = self.currentIndex()
+            if cur >= 0:
+                for ri, row in enumerate(rows):
+                    if cur in row:
+                        if ri != len(rows) - 1:
+                            rows.append(rows.pop(ri))
+                        break
         return rows
 
     def _tab_rects(self):
         # キャッシュ: サイズ・タブ数・テキストが変わらない限り再計算しない
-        key = (self.width(), self.count(),
+        key = (self.width(), self.count(), self.currentIndex(),
                tuple(self.tabText(i) for i in range(self.count())),
                tuple(bool(self._tab_icons.get(i)) for i in range(self.count())))
         if getattr(self, '_tab_rects_cache_key', None) == key:

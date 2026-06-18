@@ -816,8 +816,12 @@ document.addEventListener('contextmenu', function(e) {
     setTimeout(function(){ document.addEventListener('click', cleanupId, {once:true}); }, 0);
 });
 function updateSodane(no, cnt) {
-    var el = document.getElementById('sod' + no);
-    if (el) el.textContent = cnt > 0 ? 'そうだねx' + cnt : '+';
+    // ポップアップは元レスの innerHTML を複製するため id="sodNNN" が重複する。
+    // getElementById だと本体側1個しか取れずポップアップが更新されないので、
+    // querySelectorAll で同id要素（本体＋表示中の全ポップアップ）を一括更新する。
+    var txt = cnt > 0 ? 'そうだねx' + cnt : '+';
+    var els = document.querySelectorAll('#sod' + no);
+    for (var i = 0; i < els.length; i++) els[i].textContent = txt;
 }
 /* ── 引用ポップアップ: ThreadView._inject_popup_js() で後付け注入 ── */
 function showPopup(no, x, y) { /* injected after load */ }
