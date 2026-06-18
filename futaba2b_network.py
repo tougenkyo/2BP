@@ -1595,10 +1595,13 @@ class FutabaFetcher:
             print(f"[Sodane] エラー: {e}")
         return -1
 
-    def fetch_image_bytes(self, url: str) -> Optional[bytes]:
+    def fetch_image_bytes(self, url: str, retry_404: bool = False) -> Optional[bytes]:
         """
         画像データを返す。
         1) メモリキャッシュ → 2) ディスクキャッシュ → 3) HTTP の順で探す。
+        retry_404=True の場合、404/接続エラー時に間隔を空けて数回リトライする。
+        スレ落ち直後の自動保存で、ふたば側のスレ削除処理中に src/ が一時的に
+        404 を返すケース（少し待つと取得できる）を救済するため。
         """
         # メモリキャッシュ
         if url in self._img_cache:
@@ -1610,26 +1613,44 @@ class FutabaFetcher:
             self._store_img_cache(url, data)
             return data
         # HTTP 取得（ブラウザの <img> 読込と同等のヘッダを付与）
-        # ふたばの src/ はホットリンク対策で Referer 無しのリクエストに
-        # 404 を返すことがあるため、板ルートを Referer に付ける。
-        try:
-            parsed  = urllib.parse.urlparse(url)
-            segs    = [s for s in parsed.path.split("/") if s]
-            referer = f"{parsed.scheme}://{parsed.hostname}/"
-            if segs:
-                referer += segs[0] + "/"
-            hdr = {
-                "Referer": referer,
-                "Accept":  "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-            }
-            r = self.session.get(url, headers=hdr, timeout=self.timeout)
-            r.raise_for_status()
-            data = r.content
-            self._save_img_cache(url, data)
-            return data
-        except Exception as e:
-            print(f"[Fetch] 画像エラー [{url}]: {e}")
-            return None
+        # ふたばの src/ はリクエストヘッダで弾く対策があり、Referer 無し／
+        # Sec-Fetch 無しの素のリクエストに 404 を返すことがある。
+        # ブラウザが <img> を読む時と同じヘッダ構成にする。
+        parsed  = urllib.parse.urlparse(url)
+        segs    = [s for s in parsed.path.split("/") if s]
+        referer = f"{parsed.scheme}://{parsed.hostname}/"
+        if segs:
+            referer += segs[0] + "/"
+        hdr = {
+            "Referer":        referer,
+            "Accept":         "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "Sec-Fetch-Dest": "image",
+            "Sec-Fetch-Mode": "no-cors",
+            "Sec-Fetch-Site": "same-origin",
+            # 画像取得ではナビゲーション用ヘッダを送らない（None で除去）
+            "Upgrade-Insecure-Requests": None,
+        }
+        attempts = 3 if retry_404 else 1
+        last_err = None
+        for i in range(attempts):
+            try:
+                r = self.session.get(url, headers=hdr, timeout=self.timeout)
+                # スレ落ち直後の一時的 404 → 間隔を空けて再試行
+                if r.status_code == 404 and retry_404 and i < attempts - 1:
+                    time.sleep(1.5 * (i + 1))
+                    continue
+                r.raise_for_status()
+                data = r.content
+                self._save_img_cache(url, data)
+                return data
+            except Exception as e:
+                last_err = e
+                if retry_404 and i < attempts - 1:
+                    time.sleep(1.5 * (i + 1))
+                    continue
+                break
+        print(f"[Fetch] 画像エラー [{url}]: {last_err}")
+        return None
 
     def _img_disk_path(self, url: str) -> Path:
         parsed = urllib.parse.urlparse(url)

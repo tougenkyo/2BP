@@ -2900,8 +2900,8 @@ class MainWindow(QMainWindow):
             raw = None
             try:
                 # fetch_image_bytes はメモリ→ディスク→HTTPの順でキャッシュ活用
-                # 削除画像のハング防止: 10秒タイムアウトで直接取得
-                raw = self._fetcher.fetch_image_bytes(url)
+                # スレ落ち直後の一時的404を救済するため retry_404=True
+                raw = self._fetcher.fetch_image_bytes(url, retry_404=True)
             except Exception:
                 pass
             with lock:
