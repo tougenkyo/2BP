@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.58"
+APP_VER = "0.9.59"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8525,23 +8525,50 @@ class ImageTabView(QWidget):
             base_css = base_css + _ucss_b
         if is_native_video:
             self._img_page_ready = False  # MP4→静止画切替でJS差し替え不可
+            self._is_media_page  = True
             self._start_mp4(url)
         elif is_web_video:
             self._stop_mp4()
             self._img_page_ready = False  # 動画→静止画切替でJS差し替え不可
+            self._is_media_page  = True   # 次ナビは必ずsetHtml（src差し替え不可）
             self._mp_ctr.hide(); self._view.show()
+            # 動画は #img 用のフィットJS（doFit/jspz）の対象外で、CSSの
+            # visibility:hidden のままになり何も表示されない。専用の
+            # インラインスクリプトで loadedmetadata 時にフィット＋可視化する。
+            _vfit = "true" if _prev_zoom == "画面に合わせる" else "false"
+            _vid_js = (
+                "(function(){"
+                "function fitV(){"
+                "  var v=document.querySelector('video'); if(!v) return;"
+                "  var vw=window.innerWidth,vh=window.innerHeight;"
+                "  var nw=v.videoWidth||0,nh=v.videoHeight||0;"
+                "  if(nw>0&&nh>0){"
+                # 画面に合わせる: 小さい動画も拡大。それ以外は原寸
+                f"    var s={_vfit}?Math.min(vw/nw,vh/nh):1;"
+                "    v.style.width=Math.round(nw*s)+'px'; v.style.height='auto';"
+                "  } else { v.style.maxWidth='100%'; v.style.maxHeight='100vh'; }"
+                "  v.style.maxWidth='none'; v.style.maxHeight='none';"
+                "  v.style.display='block'; v.style.margin='auto';"
+                "  v.style.visibility='visible';"
+                "}"
+                "document.addEventListener('DOMContentLoaded',function(){"
+                "  var v=document.querySelector('video'); if(!v) return;"
+                "  if(v.videoWidth>0) fitV(); else v.addEventListener('loadedmetadata',fitV);"
+                "  window.addEventListener('resize',fitV);"
+                "});"
+                "})();"
+            )
             self._view.setHtml(
-                f'<html><head><style>{base_css}</style></head>'
+                f'<html><head><style>{base_css}</style>'
+                f'<script>{_vid_js}</script></head>'
                 f'<body><video src="{url}" controls autoplay loop>'
                 f'お使いのブラウザは動画に対応していません</video></body></html>',
                 QUrl(url))
-            # 動画も拡大率を継承
-            if _prev_zoom != "画面に合わせる":
-                self._pending_zoom = _prev_zoom
-                self._pending_fit = False
-            else:
-                self._pending_fit = True
+            # フィットはインラインJSで処理するため pending は立てない
+            self._pending_fit  = False
+            self._pending_zoom = None
         else:
+            self._is_media_page = False
             self._stop_mp4()
             self._mp_ctr.hide(); self._view.show()
             _hover_cmt = info.get("comment", "").replace("\\", "\\\\").replace("'", "\\'")\
@@ -8723,6 +8750,13 @@ class ImageTabView(QWidget):
     def _inject_fit_bridge(self, ok: bool):
         """loadFinished後にtitleChangedをfit通知として接続（初回のみ）"""
         if not ok:
+            return
+        # 動画ページは #img 用のJS差し替え・フィット対象外。可視化は専用の
+        # インラインJSが行う。ここで _img_page_ready を True にすると次ナビが
+        # src差し替え経路に入り、#img を持たない動画ページ上で空振りして
+        # 白画面になるため、False のままにして必ず setHtml させる。
+        if getattr(self, '_is_media_page', False):
+            self._img_page_ready = False
             return
         # 静止画ページが準備完了 → 次回ナビはJS src差し替えで白フラッシュ防止
         self._img_page_ready = True
