@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.59"
+APP_VER = "0.9.61"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2210,7 +2210,6 @@ class BoardPane(QWidget):
         menu.addAction("このタブ以外閉じる (B)", self._ctx_close_others)
         menu.addAction("これより左を閉じる (L)", self._ctx_close_left)
         menu.addAction("これより右を閉じる (R)", self._ctx_close_right)
-        menu.addAction("画像を全て閉じる (M)",   self._ctx_close_images)
         menu.addSeparator()
         # 自動更新に追加（ThreadView かつスレ読み込み済みのみ有効）
         _w_ar = self._tabs.widget(self._ctx_tab_idx)
@@ -2252,6 +2251,16 @@ class BoardPane(QWidget):
                         _p = (_ng.get("pattern", "") or "").strip()
                         if _p and _p not in _seen:
                             _seen.add(_p); _matched.append(_p)
+                # カタログ件名でヒットした逆NGも対象に含める
+                # （scope_catalog 専用の逆NG等、レス本文側では拾えないもの）
+                _cat_entry = self._find_catalog_entry(
+                    getattr(_w_rev, "_board", None),
+                    getattr(_w_rev, "_thread_no", None))
+                if _cat_entry is not None:
+                    for _ng in _ngf.get_matched_reverse_ng_words_catalog(_cat_entry):
+                        _p = (_ng.get("pattern", "") or "").strip()
+                        if _p and _p not in _seen:
+                            _seen.add(_p); _matched.append(_p)
             except Exception:
                 _matched = []
             if _matched:
@@ -2261,6 +2270,27 @@ class BoardPane(QWidget):
                 for _p in _matched:
                     menu.addAction(_p).setEnabled(False)
         menu.exec(self._tabs.tabBar().mapToGlobal(pos))
+
+    def _find_catalog_entry(self, board, no):
+        """スレに対応するカタログエントリを探す。
+        開いているカタログタブ（CatalogView）の _all_entries から、同じ板かつ
+        no 一致のエントリを返す。見つからなければ None。"""
+        if not no:
+            return None
+        _burl = (getattr(board, "url", "") or "").rstrip("/")
+        for i in range(self._tabs.count()):
+            w = self._tabs.widget(i)
+            if not isinstance(w, CatalogView):
+                continue
+            _cb = getattr(w, "_board", None)
+            _cburl = (getattr(_cb, "url", "") or "").rstrip("/")
+            # 板URLが両方取れる場合のみ板一致を要求（取れない場合は no のみで照合）
+            if _burl and _cburl and _burl != _cburl:
+                continue
+            for e in (getattr(w, "_all_entries", None) or []):
+                if getattr(e, "no", None) == no:
+                    return e
+        return None
 
     def _get_tab_url(self, idx: int) -> str:
         w = self._tabs.widget(idx)
@@ -2279,14 +2309,6 @@ class BoardPane(QWidget):
                 self._tabs.removeTab(i)
                 _dispose_tab_view(_w)
                 if i < keep: keep -= 1
-
-    def _ctx_close_images(self):
-        for i in range(self._tabs.count() - 1, -1, -1):
-            if isinstance(self._tabs.widget(i), ImageTabView):
-                _w = self._tabs.widget(i)
-                self.tab_closing.emit(_w)
-                self._tabs.removeTab(i)
-                _dispose_tab_view(_w)
 
     def _ctx_close_left(self):
         for i in range(self._ctx_tab_idx - 1, -1, -1):
