@@ -1228,9 +1228,9 @@ class NgFilter:
             elif ng_type == "reverse_ng": is_rev = True
             if is_ng and is_rev:
                 break
-        if is_ng and is_rev:
-            priority = getattr(self._settings, "ng_priority_word_idx", 0)
-            return "ng" if priority == 0 else "reverse_ng"
+        # レス単位の逆NGは「NG非表示の打ち消し（ホワイトリスト）」には使わない。
+        # NGワードにヒットしていれば、逆NGの有無・優先設定に関わらず "ng" を返す。
+        # （ng_priority_word_idx はカタログ判定 classify_catalog 側でのみ有効）
         if is_ng:  return "ng"
         if is_rev: return "reverse_ng"
         return "none"

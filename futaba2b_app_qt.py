@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.61"
+APP_VER = "0.9.62"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2246,13 +2246,16 @@ class BoardPane(QWidget):
             try:
                 _ngf = self._main._settings.ng_filter
                 _matched, _seen = [], set()
-                for _r in (_w_rev._thread.res_list or []):
-                    for _ng in _ngf.get_matched_reverse_ng_words(_r):
+                # OP（スレ文）のみで判定する。スレ全体の走査はレス数に比例して
+                # 重く、メニュー表示が遅延するため行わない。
+                _res = _w_rev._thread.res_list or []
+                if _res:
+                    for _ng in _ngf.get_matched_reverse_ng_words(_res[0]):
                         _p = (_ng.get("pattern", "") or "").strip()
                         if _p and _p not in _seen:
                             _seen.add(_p); _matched.append(_p)
                 # カタログ件名でヒットした逆NGも対象に含める
-                # （scope_catalog 専用の逆NG等、レス本文側では拾えないもの）
+                # （scope_catalog 専用の逆NG等、OPレス側のスコープでは拾えないもの）
                 _cat_entry = self._find_catalog_entry(
                     getattr(_w_rev, "_board", None),
                     getattr(_w_rev, "_thread_no", None))
