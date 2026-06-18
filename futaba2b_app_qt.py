@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.56"
+APP_VER = "0.9.58"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -4214,8 +4214,6 @@ class ThreadView(QWidget):
         }, 0);
     });
 
-    console.log('[popup] v2 initialized');
-
     /* ── スクロール時: タブ青背景の制御（新着の帯は末尾では消さない） ── */
     /*    末尾を表示したら「既読（_unreadSeen）」とみなしタブ青背景をデフォルトに   */
     /*    戻す。新着の帯（.new-res / .new-res-divider / .qt-new）はここでは消さず、  */
@@ -4991,13 +4989,26 @@ class ThreadView(QWidget):
         if ar_mgr:
             ar_mgr._speak_bouyomi(res_list)
 
+    def _schedule_scroll_reload(self):
+        """末尾/先頭スクロール検知時のリロードをデバウンスする。
+        連続発火しても単一タイマーを再起動するだけなので、リロードは1回に
+        集約される（旧実装は毎回 singleShot を積んでフルGETが重複していた）。"""
+        t = getattr(self, '_scroll_reload_timer', None)
+        if t is None:
+            t = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(1000)
+            t.timeout.connect(self.reload_thread)
+            self._scroll_reload_timer = t
+        t.start()  # 再起動: 既存カウントダウンを破棄して1秒からやり直し
+
     def _on_scroll_bottom(self):
-        """末尾スクロール検知 → 1秒後にスレッドを更新"""
-        QTimer.singleShot(1000, self.reload_thread)
+        """末尾スクロール検知 → 1秒後にスレッドを更新（デバウンス）"""
+        self._schedule_scroll_reload()
 
     def _on_scroll_top(self):
-        """先頭スクロール検知 → 1秒後にスレッドを更新"""
-        QTimer.singleShot(1000, self.reload_thread)
+        """先頭スクロール検知 → 1秒後にスレッドを更新（デバウンス）"""
+        self._schedule_scroll_reload()
 
     def _on_scroll_count(self, remaining: int):
         """末尾スクロール残回数をシグナルで上位へ通知"""
@@ -5317,9 +5328,17 @@ def _make_scroll_bottom_js(scroll_bottom_count: int = 5, scroll_top_count: int =
         if _page is not None:
             if _prof is not None:
                 try:
-                    _page.destroyed.connect(lambda *a, p=_prof: p.deleteLater())
+                    # page の QObject 破棄を検知してから、さらに数秒待って
+                    # profile を解放する。QtWebEngine は page 破棄後も Chromium の
+                    # WebContents 解放が非同期で遅れるため、destroyed 直後に
+                    # 即 profile.deleteLater() すると
+                    # "Release of profile requested but WebEnginePage still not
+                    #  deleted" 警告が出る。profile を長生きさせる方向なので
+                    # 早期解放クラッシュのリスクは無い。
+                    _page.destroyed.connect(
+                        lambda *a, p=_prof: QTimer.singleShot(3000, p.deleteLater))
                 except Exception:
-                    QTimer.singleShot(1000, lambda p=_prof: p.deleteLater())
+                    QTimer.singleShot(3000, lambda p=_prof: p.deleteLater())
             try:
                 _page.deleteLater()
             except Exception:
@@ -8190,7 +8209,7 @@ class ImageTabView(QWidget):
             "    var s=(window._zoomState==='fit')?Math.min(vw/nw,vh/nh):Math.min(vw/nw,vh/nh,1.0);"
             "    el.style.width=Math.round(nw*s)+'px';"
             "    el.style.height='auto';"
-            "    if(window._zoomState===undefined)window._zoomState=(vw>=nw&&vh>=nh)?'100':'fit';"
+            "    if(window._zoomState===undefined)window._zoomState='fit';"
             "  } else {"
             "    el.style.width='100%';el.style.height='auto';"
             "  }"
@@ -8745,11 +8764,12 @@ f"  el.style.visibility='visible';}}"
                 "  var nw=el.naturalWidth||el.videoWidth||0;"
                 "  var nh=el.naturalHeight||el.videoHeight||0;"
                 "  if(nw>0&&nh>0){"
-                "    var s=Math.min(vw/nw,vh/nh,1.0);"
+                "    var s=Math.min(vw/nw,vh/nh);"
                 "    el.style.width=Math.round(nw*s)+'px';"
                 "    el.style.height='auto';"
-                # 初期状態: 収まる画像=100%状態、はみ出す画像=fit状態
-                "    window._zoomState=(vw>=nw&&vh>=nh)?'100':'fit';"
+                # 画面に合わせるモードでは拡大・縮小いずれもfit状態
+                # （小さい画像も表示領域に合わせて拡大する）
+                "    window._zoomState='fit';"
                 "  } else {"
                 "    el.style.width='100%';el.style.height='auto';"
                 "  }"
