@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.69"
+APP_VER = "0.9.70"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8263,8 +8263,9 @@ class ImageTabView(QWidget):
             "  var nw=el.naturalWidth||el.videoWidth||0;"
             "  var nh=el.naturalHeight||el.videoHeight||0;"
             "  if(nw>0&&nh>0){"
-            # fit状態なら上限なし（小画像の拡大フィット維持）、それ以外は100%上限
-            "    var s=(window._zoomState==='fit')?Math.min(vw/nw,vh/nh):Math.min(vw/nw,vh/nh,1.0);"
+            # 画面に合わせる＝上限なし（画面より小さい画像も拡大してフィット）。
+            # この関数は fit_mode 中のみ実行されるため常にフィット倍率を使う。
+            "    var s=Math.min(vw/nw,vh/nh);"
             "    el.style.width=Math.round(nw*s)+'px';"
             "    el.style.height='auto';"
             "    if(window._zoomState===undefined)window._zoomState='fit';"
@@ -8757,17 +8758,19 @@ class ImageTabView(QWidget):
     def _on_zoom_combo(self, text: str):
         """コンボ選択→zoomFactor適用。「画面に合わせる」は画面フィット、%値は固定サイズ"""
         if text == "画面に合わせる":
-            # 画像・動画をビューポートにフィット（100%上限、はみ出す時のみ縮小）
+            # 画像・動画をビューポートにフィット（上限なし＝画面より小さい画像も拡大）
             js = (
                 "var el=document.querySelector('img,video');"
                 "if(el){"
+                "  el.classList.remove('actual');"
                 "  var vw=window.innerWidth,vh=window.innerHeight;"
                 "  var nw=el.naturalWidth||el.videoWidth||vw;"
                 "  var nh=el.naturalHeight||el.videoHeight||vh;"
                 "  if(nw>0&&nh>0){"
-                "    var s=Math.min(vw/nw,vh/nh,1.0);"
+                "    var s=Math.min(vw/nw,vh/nh);"
                 "    el.style.width=Math.round(nw*s)+'px';"
                 "    el.style.height='auto';"
+                "    window._zoomState='fit';"
                 "  } else {"
                 "    el.style.width='100%';el.style.height='auto';"
                 "  }"
