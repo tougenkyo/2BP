@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.64"
+APP_VER = "0.9.68"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2750,6 +2750,7 @@ class ThreadView(QWidget):
     auto_refresh_requested = Signal()           # 自動更新ダイアログを開く要求
     close_requested       = Signal()            # NGスレッド即閉じ要求
     unread_state_changed  = Signal(bool)        # 未読（赤帯）有無通知
+    thread_recovered      = Signal()            # エラー→正常更新で復旧（タブのエラー赤解除用）
     _ng_image_apply       = Signal(str, str)    # (img_url, hide_mode) NG画像即時反映
     _ng_image_md5_ready   = Signal(str, str)    # (img_url, md5) MD5取得完了→ダイアログ表示
     img_list_updated      = Signal(list)        # 更新後の img_list → 画像タブに反映
@@ -5105,9 +5106,18 @@ class ThreadView(QWidget):
     # ── スクリーンショット ────────────────────────────────────────────────────
 
     def _resolve_img_list(self, url: str, idx: int):
-        """idx=-1（うｐろだ等）の場合、URLから単一要素リストを生成してidx=0を返す。"""
-        if idx >= 0 and self._img_list and idx < len(self._img_list):
-            return self._img_list, idx
+        """クリックされた画像を解決する。
+        idxが有効かつURL一致ならそのまま使う（高速・正確）。
+        一致しない場合はURLでimg_list内を検索する（画像モードのポップアップ内
+        サムネは隠しレスプールがidx=0固定で生成されるため、idxを信頼すると
+        OPスレ画が開いてしまう。URL照合で正しい画像に補正する）。
+        どちらも該当しなければ（うｐろだ等）URLから単一要素リストを生成する。"""
+        lst = self._img_list or []
+        if idx >= 0 and idx < len(lst) and lst[idx].get("url") == url:
+            return lst, idx
+        for i, e in enumerate(lst):
+            if e.get("url") == url:
+                return lst, i
         name = url.rsplit("/", 1)[-1].split("?")[0] or url
         single = [{"url": url, "name": name, "res_no": ""}]
         return single, 0
@@ -7127,6 +7137,11 @@ class AutoRefreshManager(QObject):
         _base = view._known_res_count if view._known_res_count > 0                 else self._settings.thread_read_counts.get(thread.url, 0)
         for i, r in enumerate(thread.res_list):
             r.is_new = (i >= _base)
+        # フッター（レス数/受信/最終更新/version）用の受信数を確定。
+        # _update_view 内の thread_to_html 群は footer_html を渡さないと
+        # フッター無しHTMLになり、返信モードでそれを _last_html 経由で
+        # 再ロードした際にフッターが消える（画像/引用モードは毎回再生成のため無影響）。
+        thread._footer_new_count = sum(1 for r in thread.res_list if r.is_new)
 
         # エラーがある場合は差分更新しない
         if thread.error:
@@ -7143,6 +7158,7 @@ class AutoRefreshManager(QObject):
             html, _ = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                       ng_filter=_ng, ng_settings=self._settings,
                                       scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
+                                      footer_html=view._thread_footer_html(thread),
                                       my_nos=self._get_my_nos_for_view(view, thread),
                 id_warn_count=getattr(self._settings,'id_warn_count',5))
             banner = (f'<div style="background:#a00;color:#fff;padding:6px 8px;'
@@ -7160,6 +7176,10 @@ class AutoRefreshManager(QObject):
             return
 
         # ── 差分更新判定 ──────────────────────────────────────────────────
+        # ここまで来た = エラーなしで更新成功 → エラー赤タブだった場合の復旧を通知
+        # （タブのエラー赤は thread_error で付くが、自動更新での復旧時は
+        #   thread_loaded/_was_error 経路を通らず赤が残るため明示的にクリアさせる）
+        view.thread_recovered.emit()
         _is_same_thread = (
             view._known_res_count > 0
             and view._thread is not None
@@ -7198,6 +7218,7 @@ class AutoRefreshManager(QObject):
                                            ng_filter=_ng, ng_settings=self._settings,
                                            scroll_bottom_count=_sbc,
                                            scroll_top_count=getattr(self._settings,'scroll_top_count',0),
+                                           footer_html=view._thread_footer_html(thread),
                                            my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5))
             view._last_html = _html_full
             view._last_html_dirty = False
@@ -7257,6 +7278,7 @@ class AutoRefreshManager(QObject):
         html, _ = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                   ng_filter=_ng, ng_settings=self._settings,
                                   scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
+                                  footer_html=view._thread_footer_html(thread),
                                   my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5))
         view._thread = thread
         view._known_res_count = len(thread.res_list)
@@ -8636,7 +8658,7 @@ class ImageTabView(QWidget):
                 "    document.addEventListener('mouseup',onUp);"
                 "    e.preventDefault();"
                 "  });"
-                "  el.addEventListener('click',function(){"
+                "  el.addEventListener('click',function(e){"
                 "    if(_dragMoved){_dragMoved=false;return;}"  # ドラッグ後はクリック無視
                 # 状態トグル: '100'(等倍) ⇔ 'fit'(画面フィット・上限なし)
                 # 小さい画像: 100% → クリックで拡大フィット → クリックで100%…
@@ -8645,6 +8667,11 @@ class ImageTabView(QWidget):
                 "    var nw=el.naturalWidth||0,nh=el.naturalHeight||0;"
                 "    var s=(nw>0&&nh>0)?Math.min(vw/nw,vh/nh):1;"
                 "    var st=window._zoomState||((s>=1)?'100':'fit');"
+                # 拡大前にクリックした画像内位置（0..1）を控える
+                "    var r1=el.getBoundingClientRect();"
+                "    var fx=r1.width? (e.clientX-r1.left)/r1.width : 0.5;"
+                "    var fy=r1.height?(e.clientY-r1.top)/r1.height : 0.5;"
+                "    fx=Math.max(0,Math.min(1,fx));fy=Math.max(0,Math.min(1,fy));"
                 "    if(st==='100'){"
                 "      el.classList.remove('actual');"
                 "      if(nw>0){el.style.width=Math.round(nw*s)+'px';el.style.height='auto';}"
@@ -8654,6 +8681,11 @@ class ImageTabView(QWidget):
                 "      el.classList.add('actual');"
                 "      window._zoomState='100';"
                 "      document.title='__actual__';"
+                # クリック位置を拡大の中心に: 該当点をカーソル直下へスクロール
+                "      var r2=el.getBoundingClientRect();"
+                "      var dl=r2.left+window.scrollX, dt=r2.top+window.scrollY;"
+                "      var tx=dl+fx*el.offsetWidth, ty=dt+fy*el.offsetHeight;"
+                "      window.scrollTo(tx-e.clientX, ty-e.clientY);"
                 "    }"
                 "  });"
                 "  el.addEventListener('mouseenter',function(){"

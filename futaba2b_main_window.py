@@ -728,6 +728,19 @@ class MainWindow(QMainWindow):
                 tb._tab_colors[idx2] = QColor(Qt.GlobalColor.red)
                 tb.update()
         view.thread_error.connect(_set_error_tab)
+        # 復旧時にタブのエラー赤を解除する
+        def _clear_error_tab(_inner=inner, _view=view):
+            idx2 = _inner.indexOf(_view)
+            if idx2 < 0:
+                return
+            tb = _inner.tabBar()
+            if hasattr(tb, "_tab_colors"):
+                cur = tb._tab_colors.get(idx2)
+                if cur is not None and cur == QColor(Qt.GlobalColor.red):
+                    del tb._tab_colors[idx2]
+                    tb._refresh_base_color(idx2)  # ID表示スレならピンクへ復帰
+                    tb.update()
+        view.thread_recovered.connect(_clear_error_tab)
         view.thread_dead.connect(
             lambda url, _v=view: self._on_thread_dead(url, _v))
         view.scroll_count_updated.connect(self._on_scroll_count_updated)
@@ -1201,6 +1214,17 @@ class MainWindow(QMainWindow):
                 tb._tab_colors[idx2] = QColor(Qt.GlobalColor.red)
                 tb.update()
         view.thread_error.connect(_set_err_m)
+        def _clear_err_m(_inner=inner, _view=view):
+            idx2 = _inner.indexOf(_view)
+            if idx2 < 0: return
+            tb = _inner.tabBar()
+            if hasattr(tb, "_tab_colors"):
+                cur = tb._tab_colors.get(idx2)
+                if cur is not None and cur == QColor(Qt.GlobalColor.red):
+                    del tb._tab_colors[idx2]
+                    tb._refresh_base_color(idx2)
+                    tb.update()
+        view.thread_recovered.connect(_clear_err_m)
         view.thread_dead.connect(
             lambda url, _v=view: self._on_thread_dead(url, _v))
         view.scroll_count_updated.connect(self._on_scroll_count_updated)
@@ -1307,6 +1331,17 @@ class MainWindow(QMainWindow):
                 tb._tab_colors[idx2] = QColor(Qt.GlobalColor.red)
                 tb.update()
         view.thread_error.connect(_set_err_bg)
+        def _clear_err_bg(_p=pane, _v=view):
+            idx2 = _p.indexOf(_v)
+            if idx2 < 0: return
+            tb = _p.tabBar()
+            if hasattr(tb, "_tab_colors"):
+                cur = tb._tab_colors.get(idx2)
+                if cur is not None and cur == QColor(Qt.GlobalColor.red):
+                    del tb._tab_colors[idx2]
+                    tb._refresh_base_color(idx2)
+                    tb.update()
+        view.thread_recovered.connect(_clear_err_bg)
         view.thread_dead.connect(
             lambda url, _v=view: self._on_thread_dead(url, _v))
         view.scroll_count_updated.connect(self._on_scroll_count_updated)
