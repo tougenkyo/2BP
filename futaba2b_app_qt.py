@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.68"
+APP_VER = "0.9.69"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8861,28 +8861,36 @@ f"  el.style.visibility='visible';}}"
             # img.onloadを待ってからfit適用
             js = (
                 "var el=document.getElementById('img');"
-                "function doFit(){"
-                "  var vw=window.innerWidth,vh=window.innerHeight;"
-                "  var nw=el.naturalWidth||el.videoWidth||0;"
-                "  var nh=el.naturalHeight||el.videoHeight||0;"
-                "  if(nw>0&&nh>0){"
-                "    var s=Math.min(vw/nw,vh/nh);"
-                "    el.style.width=Math.round(nw*s)+'px';"
-                "    el.style.height='auto';"
+                "if(el){"
+                # 状態を先に確定する。初回表示で load イベントの取りこぼしや
+                # キャッシュ済み画像のタイミングずれで doFit が一度も走らないと、
+                # 画像が原寸のまま（スクロールバーが出る）で _zoomState が未定義になり、
+                # 最初のクリックが空振り（100%表示なのに拡大されない）になる。
+                # 先に 'fit' を入れ、load/即時/遅延の複数経路で doFit を確実に当てる。
+                "  window._zoomState='fit';"
+                "  function doFit(){"
+                "    var vw=window.innerWidth,vh=window.innerHeight;"
+                "    var nw=el.naturalWidth||el.videoWidth||0;"
+                "    var nh=el.naturalHeight||el.videoHeight||0;"
+                "    if(nw>0&&nh>0){"
+                "      var s=Math.min(vw/nw,vh/nh);"
+                "      el.style.width=Math.round(nw*s)+'px';"
+                "      el.style.height='auto';"
                 # 画面に合わせるモードでは拡大・縮小いずれもfit状態
                 # （小さい画像も表示領域に合わせて拡大する）
-                "    window._zoomState='fit';"
-                "  } else {"
-                "    el.style.width='100%';el.style.height='auto';"
+                "      window._zoomState='fit';"
+                "    } else {"
+                "      el.style.width='100%';el.style.height='auto';"
+                "    }"
+                "    el.style.maxWidth='none';el.style.maxHeight='none';"
+                "    el.style.display='block';el.style.margin='auto';"
+                "    el.style.visibility='visible';"
                 "  }"
-                "  el.style.maxWidth='none';el.style.maxHeight='none';"
-                "  el.style.display='block';el.style.margin='auto';"
-                "  el.style.visibility='visible';"
-"}"
-                "if(el){"
+                "  el.addEventListener('load',doFit);"
                 "  if(el.complete&&el.naturalWidth)doFit();"
-                "  else el.onload=doFit;"
-"}"
+                "  setTimeout(function(){if(el.naturalWidth&&!el.classList.contains('actual'))doFit();},60);"
+                "  setTimeout(function(){if(el.naturalWidth&&!el.classList.contains('actual'))doFit();},250);"
+                "}"
             )
             self._view.page().runJavaScript(js)
 
