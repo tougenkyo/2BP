@@ -276,6 +276,10 @@ class AppSettings:
         # 板別の最大スレOP No.（落ちるまで残り件数の計算用）
         # キー: board.base_url  値: その板で見た最大OP No.
         self.global_max_no_by_board: dict = {}
+        # 板別の最大保存件数（保存数はN件）。スレHTMLから抽出できない場合の
+        # フォールバック用。カタログ取得時に学習し永続化する。
+        # キー: board.base_url  値: max_saved
+        self.max_saved_by_board: dict = {}
         # 旧フィールド互換のため残す（移行用）
         self.global_max_no: int = 0
         # 自動更新ダイアログ: 各行で最後に設定した分数 [100%, 50%, 30%, 15%, 5%]
@@ -611,6 +615,11 @@ class AppSettings:
                 self.global_max_no_by_board = _sanitized
             else:
                 self.global_max_no_by_board = {}
+            _raw_ms = raw.get("max_saved_by_board", {})
+            self.max_saved_by_board = {
+                k: v for k, v in _raw_ms.items()
+                if isinstance(v, int) and v > 0
+            } if isinstance(_raw_ms, dict) else {}
             self.ar_last_intervals   = raw.get("ar_last_intervals", [3600, 1800, 600, 120, 60, 30])
             self.ar_last_checks      = raw.get("ar_last_checks",    [False]*5)
             self.ar_default_thread_intervals  = raw.get("ar_default_thread_intervals",  [3600, 1800, 600, 120, 60, 30])
@@ -825,6 +834,7 @@ class AppSettings:
             _catalog_read = dict(self.catalog_read_counts)
             _ng_hidden    = {k: list(v) for k, v in self.ng_hidden_res_nos.items() if v}
             _global_max   = dict(self.global_max_no_by_board)
+            _max_saved_bb = dict(self.max_saved_by_board)
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(
                     {
@@ -953,6 +963,7 @@ class AppSettings:
                         "catalog_view_states": self.catalog_view_states,
                         "global_max_no": self.global_max_no,
                         "global_max_no_by_board": _global_max,
+                        "max_saved_by_board": _max_saved_bb,
                         "ar_last_intervals": self.ar_last_intervals,
                         "ar_last_checks":    self.ar_last_checks,
                         "ar_default_thread_intervals":  self.ar_default_thread_intervals,

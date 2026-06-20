@@ -1099,10 +1099,16 @@ class MainWindow(QMainWindow):
                 rule["enabled"] = chks[i - 1]
 
         # 実際の残り件数%でカウントダウン初期値を決定
-        max_saved = th.board.max_saved if th.board else 0
+        # max_saved はスレHTMLの「保存数はN件」由来だが、稀に拾えず0になる。
+        # その場合は板別キャッシュ(カタログ取得で学習)→板設定の順でフォールバック。
+        board_url = url.rsplit("/res/", 1)[0] + "/" if "/res/" in url else ""
+        max_saved = th.board.max_saved if (th.board and th.board.max_saved) else 0
+        if max_saved <= 0 and board_url:
+            max_saved = self._settings.max_saved_by_board.get(board_url, 0)
+        if max_saved <= 0 and board:
+            max_saved = getattr(board, 'max_saved', 0) or 0
         pct       = 100.0
-        if max_saved > 0 and "/res/" in url:
-            board_url = url.rsplit("/res/", 1)[0] + "/"
+        if max_saved > 0 and board_url:
             o = self._settings.global_max_no_by_board.get(board_url, 0)
             if o > 0:
                 remaining = th.no + max_saved - o

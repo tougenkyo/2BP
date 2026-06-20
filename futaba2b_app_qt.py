@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.71"
+APP_VER = "0.9.72"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6023,6 +6023,11 @@ class CatalogView(QWidget):
         if self._board and _real_entries:
             board_url  = self._board.base_url
             max_saved  = self._board.max_saved or 0
+            # 学習した max_saved を板別に永続キャッシュ（スレ個別取得で
+            # 「保存数はN件」が拾えず0になった場合のフォールバック用）
+            if max_saved > 0:
+                if self._settings.max_saved_by_board.get(board_url) != max_saved:
+                    self._settings.max_saved_by_board[board_url] = max_saved
             global_max = self._settings.global_max_no_by_board.get(board_url, 0)
             # エントリの最大スレNo を記録（異常値が入っていれば強制リセット）
             cur_max = max((e.no for e in _real_entries), default=0)
@@ -7038,6 +7043,12 @@ class AutoRefreshManager(QObject):
                         self._sd_apply.emit(view, _sd)
                     # 新着なしでも段階更新間隔は再計算する（global_maxが変化している可能性）
                     _th0 = th_cur
+                    # max_saved が未取得(0)ならキャッシュから補完して自己修復
+                    if entry.max_saved <= 0:
+                        _bk0 = entry.url.rsplit("/res/", 1)[0] + "/"
+                        _ms0 = self._settings.max_saved_by_board.get(_bk0, 0)
+                        if _ms0 > 0:
+                            entry.max_saved = _ms0
                     if getattr(entry, 'adaptive_intervals', None) and entry.max_saved > 0:
                         _o0 = self._settings.global_max_no_by_board.get(
                             entry.url.rsplit("/res/", 1)[0] + "/", 0)
@@ -7061,6 +7072,12 @@ class AutoRefreshManager(QObject):
                         return
 
                 # ── 段階的更新間隔を適用 ──────────────────────────────────────
+                # max_saved が未取得(0)ならキャッシュから補完して自己修復
+                if entry.max_saved <= 0:
+                    _bk = entry.url.rsplit("/res/", 1)[0] + "/"
+                    _ms = self._settings.max_saved_by_board.get(_bk, 0)
+                    if _ms > 0:
+                        entry.max_saved = _ms
                 if getattr(entry, 'adaptive_intervals', None) and entry.max_saved > 0:
                     o = self._settings.global_max_no_by_board.get(
                         entry.url.rsplit("/res/", 1)[0] + "/", 0)
