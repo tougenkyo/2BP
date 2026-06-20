@@ -594,7 +594,7 @@ function _ensureDelPop() {
     pop.style.cssText = 'display:none;position:fixed;border:2px solid #800000;background:#FFFFEE;padding:8px;z-index:9999;box-shadow:2px 2px 6px rgba(0,0,0,.3);min-width:220px;font-size:9pt;';
     pop.innerHTML =
         '<div style="margin-bottom:4px;">'
-      +   '<button onclick="delReport()" style="background:#F0E0D6;border:1px solid #800;padding:3px 0;cursor:pointer;width:100%;font-size:9pt;">削除依頼(del)</button>'
+      +   '<span onclick="delReport()" style="color:#800000;text-decoration:underline;cursor:pointer;font-size:9pt;">削除依頼(del)</span>'
       + '</div>'
       + '<label style="display:block;margin:3px 0;font-size:8pt;">'
       +   '<input id="del-hide" type="checkbox"> delしたレスを非表示にする'
