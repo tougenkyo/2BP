@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.79"
+APP_VER = "0.9.80"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -4279,7 +4279,7 @@ class ThreadView(QWidget):
         }
         var has = (!window._unreadSeen)
                   && (document.querySelectorAll('.res.new-res').length > 0);
-        if (typeof bridge !== 'undefined' && bridge.notifyUnread) {
+        if (bridge && bridge.notifyUnread) {
             bridge.notifyUnread(has);
         }
     }
