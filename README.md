@@ -1,5 +1,4 @@
-#### <font color="FF0000">Ver1.0までuser.cssやThemeがアップデートの度に上書きされるのでのバックアップを取っておいてください</font>
-
+#### $${\color{red}Ver1.0までuser.cssやThemeがアップデートの度に上書きされるのでのバックアップを取っておいてください}$$
 ---
 
 # 2BP (futaba2b python版)
