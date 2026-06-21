@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.72"
+APP_VER = "0.9.73"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6898,14 +6898,18 @@ class AutoRefreshManager(QObject):
             return
         self._fetching.add(idx)
         entry = self._entries[idx]
+        # entry と同時に表示先ビュー参照を捕捉する（メインスレッド）。
+        # BG実行時に self._views[idx] を再読みすると、投入〜実行の間に
+        # remove() で並列リストが前詰めシフトした場合 idx が別エントリの
+        # ビューを指し、別スレの新着が混入する（v0.9.73で修正）。
+        ref_v = self._views[idx]
 
         # ── カタログエントリの場合は reload シグナルを発火するだけ ────────
         if getattr(entry, 'is_catalog', False):
-            def _catalog_fetch(_idx=idx):
+            def _catalog_fetch(_ref=ref_v, _idx=idx):
                 try:
                     entry.last_update_str = _dt.now().strftime("%y/%m/%d %H:%M:%S")
-                    ref  = self._views[_idx]
-                    view = ref() if ref else None
+                    view = _ref() if _ref else None
                     self._catalog_reload.emit(view)
                     self.updated.emit(_idx)
                 finally:
@@ -6919,9 +6923,14 @@ class AutoRefreshManager(QObject):
                 board = BoardInfo(name=entry.board_name, url=entry.url.rsplit("/res/", 1)[0] + "/")
                 no    = entry.no
 
-                ref_v = self._views[idx]
-                view  = ref_v() if ref_v else None
+                ref_v_local = ref_v
+                view  = ref_v_local() if ref_v_local else None
                 th_cur = getattr(view, '_thread', None) if view else None
+                # 防御: 捕捉ビューのスレが entry と別物なら append/emit せず中断。
+                # （ref_v捕捉で混入は塞がるが、ビュー使い回し等の異常時の二重防御。
+                #  1サイクル分スキップするだけで diff API は次回 start_no から復帰）
+                if th_cur is not None and th_cur.no != entry.no:
+                    return
                 # start_no: API は start 以降（含む）を返すので +1 して重複を防ぐ
                 start_no = (th_cur.res_list[-1].no + 1
                             if th_cur and th_cur.res_list else no)
