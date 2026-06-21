@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.73"
+APP_VER = "0.9.74"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3070,7 +3070,7 @@ class ThreadView(QWidget):
         o  = self._settings.global_max_no_by_board.get(board.base_url, 0)
         if ms > 0 and o > 0:
             n = thread.no + ms - o
-            saved_str = f"保存 {n}/{ms}件{'  ｻﾄﾞﾝﾃﾞｽ' if n <= 0 else ''}"
+            saved_str = f"保存 {n}/{ms}件"
         elif ms > 0:
             saved_str = f"保存上限 {ms}件"
         else:
