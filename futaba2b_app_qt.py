@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.74"
+APP_VER = "0.9.79"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -4070,13 +4070,13 @@ class ThreadView(QWidget):
 
     /* ── 画像モード: ギャラリーセル(.gi)に ▼被引用インジケータを付与 ── */
     (function() {
-        var cells = document.querySelectorAll('.gi[data-popup-no]');
+        var cells = document.querySelectorAll('.gi[data-res-no]');
         if (!cells.length) return;                 /* 画像モード以外は何もしない */
         if (typeof _computeQuotedBy !== 'function') return;
         var quotedBy = _computeQuotedBy();          /* respool 内の .res から再計算 */
         cells.forEach(function(cell) {
             if (cell.querySelector('.gi-qi')) return;   /* 二重付与防止 */
-            var no = parseInt(cell.getAttribute('data-popup-no'));
+            var no = parseInt(cell.getAttribute('data-res-no'));
             var qs = quotedBy[no];
             if (!qs || !qs.length) return;          /* 被引用なしは付けない */
             var btn = document.createElement('span');
@@ -4169,6 +4169,7 @@ class ThreadView(QWidget):
                     e.preventDefault(); e.stopPropagation();
                     var t = m._selTxt||'', x = m._selX||0, y = m._selY||0;
                     if (t) d[1](t, x, y);
+                    m._suppress = true;   /* 直後の mouseup で再表示させない */
                     m.style.display = 'none';
                 });
                 m.appendChild(btn);
@@ -4183,9 +4184,18 @@ class ThreadView(QWidget):
             document.body.appendChild(m);
             return m;
         }
-        document.addEventListener('mouseup', function(e) {
+        /* 再注入(_inject_popup_js は更新のたびに走る)で document リスナーが
+           重複登録されると、1つ目が _suppress を消費し2つ目が再表示してしまう。
+           前回分を除去してから現在のクロージャで登録し、常に1個に保つ。 */
+        if (window._selMenuUp)   document.removeEventListener('mouseup',   window._selMenuUp);
+        if (window._selMenuDown) document.removeEventListener('mousedown', window._selMenuDown);
+        window._selMenuUp = function(e) {
             var sm = document.getElementById('_selmenu');
             if (sm && sm.contains(e.target)) return;
+            /* ボタン押下直後の mouseup では再表示しない。ボタンの mousedown で
+               display:none にするため e.target がメニュー外となり、上の contains
+               判定をすり抜けて（選択は残るため）メニューが再表示されるのを防ぐ。 */
+            if (sm && sm._suppress) { sm._suppress = false; return; }
             setTimeout(function() {
                 var sel = window.getSelection();
                 var txt = sel ? sel.toString().trim() : '';
@@ -4201,15 +4211,19 @@ class ThreadView(QWidget):
                 if (ly < 4) ly = e.clientY + 4;
                 sm.style.left = lx + 'px'; sm.style.top = ly + 'px';
             }, 10);
-        });
-        document.addEventListener('mousedown', function(e) {
+        };
+        window._selMenuDown = function(e) {
             var sm = document.getElementById('_selmenu');
             if (sm && !sm.contains(e.target)) sm.style.display = 'none';
-        });
+        };
+        document.addEventListener('mouseup',   window._selMenuUp);
+        document.addEventListener('mousedown', window._selMenuDown);
     })();
 
     /* ── 引用モード/画像モードのサムネイル右クリックメニュー ── */
-    document.addEventListener('contextmenu', function(e) {
+    /* 再注入での重複登録を防ぐため前回分を除去してから登録 */
+    if (window._thumbCtx) document.removeEventListener('contextmenu', window._thumbCtx);
+    window._thumbCtx = function(e) {
         var img = e.target;
         if (img.tagName !== 'IMG') return;
         /* .qt-thumb (引用モード) か .gi img (画像モード) のみ対象 */
@@ -4249,7 +4263,8 @@ class ThreadView(QWidget):
                 document.removeEventListener('click', cleanup2);
             });
         }, 0);
-    });
+    };
+    document.addEventListener('contextmenu', window._thumbCtx);
 
     /* ── スクロール時: タブ青背景の制御（新着の帯は末尾では消さない） ── */
     /*    末尾を表示したら「既読（_unreadSeen）」とみなしタブ青背景をデフォルトに   */
@@ -4428,12 +4443,29 @@ class ThreadView(QWidget):
         children = {r.no: [] for r in res_list}
         parent_of = {}
 
+        # 画像ファイル名引用 ( >1234567890.png 等 ) → その画像を投稿したレスを親に。
+        # サーバ割当ファイル名（画像URLのbasename）で照合する。
+        _qt_img_re = _re.compile(
+            r"^>+(\d{10,}\.(?:jpe?g|png|gif|webp|bmp|mp4|webm))\s*$", _re.IGNORECASE)
+        _img_src_by_name = {}
+        for _r in res_list:
+            if _r.image_url:
+                _fn = _r.image_url.rsplit("/", 1)[-1].split("?")[0].lower()
+                if _fn:
+                    _img_src_by_name.setdefault(_fn, _r.no)
         for res in res_list:
             txt = (res.comment_text or "").strip()
             quoted = set()
             for line in txt.split("\n"):
                 line = line.strip()
                 if not line.startswith(">"):
+                    continue
+                # 画像ファイル名引用を先に判定（>数字.ext は数字引用に誤判定されるため）
+                mi = _qt_img_re.match(line)
+                if mi:
+                    _pno = _img_src_by_name.get(mi.group(1).lower())
+                    if _pno is not None and _pno != res.no:
+                        quoted.add(_pno)
                     continue
                 m = _re.match(r">+(No\.)?(\d+)", line)
                 if m:
@@ -4559,12 +4591,29 @@ class ThreadView(QWidget):
         res_map = {r.no: r for r in res_list}
         children = {r.no: [] for r in res_list}
         parent_of = {}
+        # 画像ファイル名引用 ( >1234567890.png 等 ) → その画像を投稿したレスを親に。
+        # サーバ割当ファイル名（画像URLのbasename）で照合する。
+        _qt_img_re = _re.compile(
+            r"^>+(\d{10,}\.(?:jpe?g|png|gif|webp|bmp|mp4|webm))\s*$", _re.IGNORECASE)
+        _img_src_by_name = {}
+        for _r in res_list:
+            if _r.image_url:
+                _fn = _r.image_url.rsplit("/", 1)[-1].split("?")[0].lower()
+                if _fn:
+                    _img_src_by_name.setdefault(_fn, _r.no)
         for res in res_list:
             txt = (res.comment_text or "").strip()
             quoted = set()
             for line in txt.split("\n"):
                 line = line.strip()
                 if not line.startswith(">"):
+                    continue
+                # 画像ファイル名引用を先に判定（>数字.ext は数字引用に誤判定されるため）
+                mi = _qt_img_re.match(line)
+                if mi:
+                    _pno = _img_src_by_name.get(mi.group(1).lower())
+                    if _pno is not None and _pno != res.no:
+                        quoted.add(_pno)
                     continue
                 m = _re.match(r">+(No\.)?(\d+)", line)
                 if m:
@@ -4585,7 +4634,16 @@ class ThreadView(QWidget):
 
         def _esc(s): return (s or "").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         def _short(res):
-            t = (res.comment_text or "").replace("\n", " ").strip()
+            lines = (res.comment_text or "").split("\n")
+            # 「>テキスト」の緑引用行（>No.XXX以外）を除外し、通常テキストのみ残す
+            # （初回 _render_quote_mode と同一ロジック。更新後に > が復活するのを防ぐ）
+            kept = []
+            for ln in lines:
+                s = ln.strip()
+                if s.startswith(">") and not _re.match(r">+(No\.)?\d+", s):
+                    continue  # 引用テキスト行はスキップ
+                kept.append(s)
+            t = " ".join(kept).strip()
             return t[:60] + ("…" if len(t) > 60 else "")
         rows = []
         seq = [0]
@@ -4651,7 +4709,14 @@ class ThreadView(QWidget):
         items=[]
         # ポップアップ用に全レスを隠しプールへ（▼被引用の引用元が画像なしレスでも
         # ポップアップ表示・引用マップ計算ができるよう全件入れる）
-        hidden_res=[render_res(r, r.is_op, []) for r in self._thread.res_list]
+        # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
+        _id_counts = {}
+        for _r in self._thread.res_list:
+            if _r.id_str:
+                _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
+        _id_warn = getattr(self._settings, 'id_warn_count', 5)
+        hidden_res=[render_res(r, r.is_op, [], id_counts=_id_counts, id_warn_count=_id_warn)
+                    for r in self._thread.res_list]
         for seq,r in img_res:
             ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
             info=ext+' / '+_fmt(r.file_size_bytes)
@@ -4659,11 +4724,11 @@ class ThreadView(QWidget):
             # 左上の番号: スレ内通し番号（OP=0 → "OP"、返信は res_idx）
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             items.append(
-                '<div class="gi" data-popup-no="'+str(r.no)+'"'
+                '<div class="gi" data-res-no="'+str(r.no)+'"'
                 ' onclick="try{openGalleryImg('+str(idx)+')}catch(e){}"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 '<div class="gn">'+display_no+'</div>'
-                '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy"></div>'
+                '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy" data-popup-no="'+str(r.no)+'"></div>'
                 '<div class="gs">'+info+'</div>'
                 '</div>'
             )
@@ -4708,19 +4773,26 @@ class ThreadView(QWidget):
             if b>=1024: return f'{b//1024}KB'
             return f'{b}B' if b else '?'
         items=[]
-        # ポップアップ用に全レスを隠しプールへ（▼被引用対応のため全件）
-        hidden_res=[render_res(r, r.is_op, []) for r in self._thread.res_list]
+        # ポップアップ用に全レスを隠しプールへ（▼被引用対応のため全件）。
+        # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
+        _id_counts = {}
+        for _r in self._thread.res_list:
+            if _r.id_str:
+                _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
+        _id_warn = getattr(self._settings, 'id_warn_count', 5)
+        hidden_res=[render_res(r, r.is_op, [], id_counts=_id_counts, id_warn_count=_id_warn)
+                    for r in self._thread.res_list]
         for seq,r in img_res:
             ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
             info=ext+' / '+_fmt(r.file_size_bytes)
             idx=seq-1
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             items.append(
-                '<div class="gi" data-popup-no="'+str(r.no)+'"'
+                '<div class="gi" data-res-no="'+str(r.no)+'"'
                 ' onclick="try{openGalleryImg('+str(idx)+')}catch(e){}"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 '<div class="gn">'+display_no+'</div>'
-                '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy"></div>'
+                '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy" data-popup-no="'+str(r.no)+'"></div>'
                 '<div class="gs">'+info+'</div>'
                 '</div>'
             )
@@ -4741,6 +4813,10 @@ class ThreadView(QWidget):
             "document.body.innerHTML = " + grid_js + ";\n"
             "window._galleryList = " + gallery_js + ";\n"
             "window.scrollTo(0, " + str(int(scroll_y)) + ");\n"
+            # body差替ではDOMContentLoaded非発火のため、隠しプールのレスに
+            # ▼被引用インジケータが付与されない。明示的に再構築し、続く
+            # _inject_popup_js のフック付与で有効化する。
+            "if (typeof _rebuildQuoteIndicators === 'function') _rebuildQuoteIndicators();\n"
         )
         self._view.page().runJavaScript(js,
             lambda _: QTimer.singleShot(50, self._inject_popup_js))
