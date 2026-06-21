@@ -4,7 +4,7 @@
 
 # 2BP (futaba2b python版)
 
-ふたば☆ちゃんねる（2chan.net）専用ブラウザ — PySide6 / QtWebEngine 製のデスクトップアプリケーションです。
+ふたば☆ちゃんねる（2chan.net）専用ブラウザ — PySide6 / QtWebEngine 製の広告無し・完全無料のデスクトップアプリケーションです。
 
 ![version](https://img.shields.io/badge/version-0.9.xx-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-green)
@@ -18,6 +18,14 @@
 ## スクリーンショット
 
 .　　<a href="screenshots/catalog.png"><img src="screenshots/catalog.png" width="300"></a>　<a href="screenshots/thread.png"><img src="screenshots/thread.png" width="300"></a>
+
+---
+
+## このツール作った経緯
+
+旧2Bは長時間使い続けるとメモリが逼迫してフリーズや強制終了が発生してしまうこと
+さらにプロキシを通してでしか使えなくなっていたことも使い勝手の面で引っかかっていました
+加えて丁度CloudAIのトークンが余っていたのでこれらを解消すべく新しく作り直すことにしました
 
 ---
 
