@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.80"
+APP_VER = "0.9.82"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3515,8 +3515,11 @@ class ThreadView(QWidget):
         html_bytes = html.encode('utf-8')
 
         if _is_error:
+            # network 側で error 文字列に既に「(キャッシュ表示)」が含まれる場合があり、
+            # ここでも付けると二重表示になるため未付与のときだけ付ける。
+            _cn = '' if 'キャッシュ表示' in (thread.error or '') else ' (キャッシュ表示)'
             banner = (f'<div style="background:#a00;color:#fff;padding:4px 8px;font-size:8pt;">'
-                      f'⚠ {thread.error} (キャッシュ表示)</div>')
+                      f'⚠ {thread.error}{_cn}</div>')
             self._error_banner_html = banner
             html = html.replace("<body>", f"<body>{banner}", 1)
         else:
@@ -3815,6 +3818,29 @@ class ThreadView(QWidget):
         self._view.setHtml(html, QUrl("about:blank"))
         self._lbl_count.setText(code)
         self.thread_error.emit(err)
+
+    def _inject_dead_banner(self):
+        """スレ落ち確定時、表示中ページの最上部・最下部へ赤帯(404)を注入する。
+        自動更新の diff is_dead 検知は再フェッチせず現ページを保持するため、
+        再表示(_show_impl/_update_view)と同等の赤帯を JS で被せる。
+        既に赤帯(._deadband)があればスキップして二重注入を防ぐ。"""
+        try:
+            import json as _json
+            banner = ('<div class="_deadband" style="background:#a00;color:#fff;'
+                      'padding:6px 8px;font-size:9pt;font-weight:bold;text-align:center;">'
+                      '⚠ 404 スレッドが落ちました</div>')
+            self._error_banner_html = banner   # モード再描画でも先頭に残す
+            _h = _json.dumps(banner)
+            js = ("(function(){try{"
+                  "if(!document.body) return;"
+                  "if(document.querySelector('._deadband')) return;"
+                  "var h=" + _h + ";"
+                  "document.body.insertAdjacentHTML('afterbegin', h);"
+                  "document.body.insertAdjacentHTML('beforeend', h);"
+                  "}catch(e){}})();")
+            self._view.page().runJavaScript(js)
+        except Exception:
+            pass
 
     def _inject_popup_js(self):
         js = r"""(function() {
@@ -6817,6 +6843,10 @@ class AutoRefreshManager(QObject):
                 pass
             try:
                 v._is_dead = True
+                # 再フェッチしない経路は表示中ページに赤帯が無いため注入する
+                if getattr(v, '_pending_dead_banner', False):
+                    v._pending_dead_banner = False
+                    v._inject_dead_banner()
                 v.thread_error.emit("スレ落ち")
                 v.thread_dead.emit(u)
             except RuntimeError:
@@ -7055,6 +7085,9 @@ class AutoRefreshManager(QObject):
                     print(f'[AutoRefresh] スレ落ち検知（dielong） No.{no} → 削除・自動保存')
                     self._remove_later_url.emit(entry.url)
                     if view:
+                        # この経路は再フェッチしないため表示中ページに赤帯が無い。
+                        # _on_thread_dead_sig で赤帯を注入させるフラグを立てる。
+                        view._pending_dead_banner = True
                         # メインスレッドで thread_dead を発火（BGスレッドから直接 QTimer は危険）
                         self._thread_dead_sig.emit(view, entry.url)
                     return
@@ -7263,9 +7296,10 @@ class AutoRefreshManager(QObject):
                                       footer_html=view._thread_footer_html(thread),
                                       my_nos=self._get_my_nos_for_view(view, thread),
                 id_warn_count=getattr(self._settings,'id_warn_count',5))
+            _cn = '' if 'キャッシュ表示' in (thread.error or '') else ' (キャッシュ表示)'
             banner = (f'<div style="background:#a00;color:#fff;padding:6px 8px;'
                       f'font-size:9pt;font-weight:bold;text-align:center;">'
-                      f'⚠ {thread.error} (キャッシュ表示)</div>')
+                      f'⚠ {thread.error}{_cn}</div>')
             html = html.replace("<body>", f"<body>{banner}", 1)
             html = html.replace("</body>", f"{banner}</body>", 1)
             view._thread = thread
