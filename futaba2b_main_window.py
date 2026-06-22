@@ -2408,7 +2408,7 @@ class MainWindow(QMainWindow):
 
     def _log_filename(self, thread, ext: str) -> str:
         """設定のテンプレートに従いファイル名を生成する。
-        変数: {no} {title} {board} {date} {time} {datetime}
+        変数: {no} {title} {board} {date} {time} {datetime} {逆NG}
         テンプレートに '/' が含まれる場合、先頭部分をサブフォルダとして扱う。"""
         import re, datetime
         tpl = getattr(self._settings, "log_filename_template", "No.{no}_{title}")
@@ -2453,6 +2453,43 @@ class MainWindow(QMainWindow):
             line = lines[0] if lines else ""
             line = re.sub(r'[\\/:*?"<>|]', '', line)
             title = line[:40]
+        # 逆NG: OPがマッチした逆NGワード（レススコープ＋カタログスコープ、重複除去）
+        revng = ""
+        _ngf = getattr(self._settings, "ng_filter", None)
+        if _ngf is not None and thread.res_list:
+            _op = thread.res_list[0]
+            _pats = []
+            _seen: set = set()
+            def _collect(_lst):
+                for _w in (_lst or []):
+                    _p = (_w.get("pattern") or "").strip() if isinstance(_w, dict) else ""
+                    if _p and _p not in _seen:
+                        _seen.add(_p)
+                        _pats.append(_p)
+            try:
+                _collect(_ngf.get_matched_reverse_ng_words(_op))
+            except Exception:
+                pass
+            try:
+                _t = (getattr(_op, "subject", "") or "").strip() or title
+                if _t:
+                    class _CE:        # get_matched_reverse_ng_words_catalog は .title のみ参照
+                        pass
+                    _ce = _CE(); _ce.title = _t
+                    _collect(_ngf.get_matched_reverse_ng_words_catalog(_ce))
+            except Exception:
+                pass
+            revng = re.sub(r'[\\/:*?"<>|]', '', "_".join(_pats))[:60]
+
+        # {逆NG} と {逆NG:代替文字} を先に解決する。
+        # ・マッチあり → マッチ語、・マッチなし → ':' 以降の代替文字（無ければ空）。
+        # str.format は {逆NG:...} を書式指定と誤解するため、ここで literal 化しておく。
+        def _resolve_revng(m):
+            _d = m.group(1)                       # ':' 以降（無ければ None）
+            _v = revng if revng else (_d if _d is not None else "")
+            return _v.replace("{", "{{").replace("}", "}}")
+        tpl = re.sub(r'\{(?:逆NG|revng)(?::([^}]*))?\}', _resolve_revng, tpl)
+
         # テンプレート変数展開
         vars_ = dict(
             no       = no,
@@ -2462,7 +2499,11 @@ class MainWindow(QMainWindow):
             time     = now.strftime("%H%M%S"),
             datetime = now.strftime("%Y%m%d_%H%M%S"),
         )
-        expanded = tpl.format(**vars_)
+        try:
+            expanded = tpl.format(**vars_)
+        except (KeyError, IndexError, ValueError):
+            # 未知の変数等で失敗した場合は既定テンプレートにフォールバック
+            expanded = "{date}/{date}_No.{no}_{title}".format(**vars_)
         # '/' でフォルダとファイル名に分割
         parts = expanded.split('/')
         file_part = parts[-1]

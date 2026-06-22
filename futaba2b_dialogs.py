@@ -1457,6 +1457,12 @@ document.addEventListener('keydown',function(e){{
                     _now = _dt.datetime.now()
                     _board_name = _re.sub(r'[\\/:*?"<>|]', '',
                         getattr(self._board, "name", "") or "" if self._board else "")
+                    # {逆NG}/{逆NG:代替文字} を解決（手書き保存は逆NGマッチ無し）
+                    def _rv_hw(m):
+                        _d = m.group(1)
+                        _v = _d if _d is not None else ""
+                        return _v.replace("{", "{{").replace("}", "}}")
+                    _tpl = _re.sub(r'\{(?:逆NG|revng)(?::([^}]*))?\}', _rv_hw, _tpl)
                     _fname = _tpl.format(
                         no=self._resto or 0, title="", board=_board_name,
                         date=_now.strftime("%Y%m%d"), time=_now.strftime("%H%M%S"),
@@ -3780,7 +3786,8 @@ class AppSettingsDialog(QDialog):
         nf.addRow(QLabel(
             "<span style='font-size:9pt;'>"
             "{no}=スレ番号　{title}=OP1行目(40文字)　{board}=板名<br>"
-            "{date}=YYYYMMDD　{time}=HHMMSS　{datetime}=YYYYMMDD_HHMMSS"
+            "{date}=YYYYMMDD　{time}=HHMMSS　{datetime}=YYYYMMDD_HHMMSS<br>"
+            "{逆NG}=マッチした逆NGワード（未マッチは空。{逆NG:文字}で未マッチ時の文字指定）"
             "</span>"))
 
         # ダウンロード

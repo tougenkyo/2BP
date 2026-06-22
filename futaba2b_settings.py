@@ -400,7 +400,8 @@ class AppSettings:
         self.image_save_label_len: int = 0   # ボタンラベルの最大文字数（0=全表示）
         # ログファイル命名テンプレート
         # 変数: {no}=スレ番号, {title}=OP1行目, {board}=板名,
-        #        {date}=YYYYMMDD, {time}=HHMMSS, {datetime}=YYYYMMDD_HHMMSS
+        #        {date}=YYYYMMDD, {time}=HHMMSS, {datetime}=YYYYMMDD_HHMMSS,
+        #        {逆NG}=マッチした逆NGワード（未マッチは空。{逆NG:文字}で未マッチ時の文字を指定）
         self.log_filename_template: str = "{date}/{date}_No.{no}_{title}"
         # ── 棒読みちゃん連携 ──────────────────────────────────────────────────
         self.bouyomi_enabled: bool = False
