@@ -572,7 +572,13 @@ function delRes(no, el) {
         pwdEl.value = pwd;
     }
     document.getElementById('del-img').checked = false;
-    document.getElementById('del-hide').checked = false;
+    document.getElementById('del-hide').checked =
+        (typeof window._delHideDefault === 'boolean') ? window._delHideDefault : true;
+    // 自分の書き込みでない場合は削除セクションの背景をグレーアウト（操作は可能）
+    var _resEl = document.getElementById('r' + no);
+    var _mine  = !!(_resEl && _resEl.classList.contains('self-res'));
+    var _dsec  = document.getElementById('del-delsec');
+    if (_dsec) _dsec.style.background = _mine ? '' : '#d0d0d0';
     const pop = document.getElementById('del-pop');
     pop.style.display = 'block';
     const btn = el || event.target;
@@ -599,16 +605,18 @@ function _ensureDelPop() {
       + '<label style="display:block;margin:3px 0;font-size:8pt;">'
       +   '<input id="del-hide" type="checkbox"> delしたレスを非表示にする'
       + '</label>'
-      + '<hr style="border:none;border-top:1px solid #ccc;margin:4px 0">'
-      + '<div style="margin:3px 0;">'
-      +   '削除キー&nbsp;<input id="del-pwd" type="password" size="10" style="border:1px inset #aaa;padding:1px">'
-      + '</div>'
-      + '<div style="display:flex;align-items:center;gap:6px;margin-top:4px;">'
-      +   '<label style="font-size:8pt;white-space:nowrap;">'
-      +     '<input id="del-img" type="checkbox"> 画像だけ'
-      +   '</label>'
-      +   '<button onclick="delArticle()" style="flex:1;background:#F0E0D6;border:1px solid #800;padding:3px;cursor:pointer;font-size:9pt;">記事削除</button>'
-      +   '<button onclick="delClose()" style="padding:3px 8px;cursor:pointer;font-size:9pt;">×</button>'
+      + '<div id="del-delsec" style="padding:3px;border-radius:3px;">'
+      +   '<hr style="border:none;border-top:1px solid #ccc;margin:4px 0">'
+      +   '<div style="margin:3px 0;">'
+      +     '削除キー&nbsp;<input id="del-pwd" type="password" size="10" style="border:1px inset #aaa;padding:1px">'
+      +   '</div>'
+      +   '<div style="display:flex;align-items:center;gap:6px;margin-top:4px;">'
+      +     '<label style="font-size:8pt;white-space:nowrap;">'
+      +       '<input id="del-img" type="checkbox"> 画像だけ'
+      +     '</label>'
+      +     '<button onclick="delArticle()" style="flex:1;background:#F0E0D6;border:1px solid #800;padding:3px;cursor:pointer;font-size:9pt;">記事削除</button>'
+      +     '<button onclick="delClose()" style="padding:3px 8px;cursor:pointer;font-size:9pt;">×</button>'
+      +   '</div>'
       + '</div>';
     document.body.appendChild(pop);
     document.addEventListener('click', function(e){
@@ -1667,7 +1675,7 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
 
     # 削除レスは "reply deleted" クラス、新着は "new-res" クラス、自分のレスは "self-res"
     if is_op:
-        bg_class = "op"
+        bg_class = "op self-res" if (my_nos and res.no in my_nos) else "op"
     elif res.is_deleted:
         bg_class = "reply deleted"
     else:

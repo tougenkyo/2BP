@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.82"
+APP_VER = "0.9.84"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3411,7 +3411,7 @@ class ThreadView(QWidget):
         # ── NGスレッドを開いたら即閉じる ─────────────────────────────────────
         if getattr(self._settings, "ng_thread_close_ng", False):
             op = thread.res_list[0] if thread.res_list else None
-            if op and _ng.is_ng(op):
+            if op and _ng is not None and _ng.is_ng(op):
                 self.close_requested.emit()
                 return
 
@@ -4323,6 +4323,9 @@ class ThreadView(QWidget):
     setTimeout(_checkUnreadAtBottom, 300);
 
 })();"""
+        # 「delしたレスを非表示にする」チェックの記憶状態をJSへ渡す（delResで参照）
+        _dh = 'true' if getattr(self._settings, 'del_hide_checked', True) else 'false'
+        js = f"window._delHideDefault = {_dh};\n" + js
         self._view.page().runJavaScript(js)
 
     def _on_thread_context_menu(self, pos):
@@ -5318,8 +5321,13 @@ class ThreadView(QWidget):
         board = self._board
         turl  = (self._thread.url if self._thread else "") or ""
         self._pending_del_no = no
+        # 削除依頼はサーバ削除しないため、非表示は「非表示にする」チェック時のみ。
+        self._pending_del_should_hide = bool(hide)
+        # チェック状態を次回デフォルトとして記憶
+        self._settings.del_hide_checked = bool(hide)
         if hide:
             self._hide_res_after_del(no)
+        self._settings.save()
         def _do():
             ok2, msg = self._fetcher.report_del(board, no, thread_url=turl)
             self._del_result.emit(ok2, msg)
@@ -5330,8 +5338,13 @@ class ThreadView(QWidget):
         board = self._board
         turl  = (self._thread.url if self._thread else "") or ""
         self._pending_del_no = no
+        # 記事削除は実際にサーバ削除されるため常に非表示にする。
+        self._pending_del_should_hide = True
+        # チェック状態を次回デフォルトとして記憶
+        self._settings.del_hide_checked = bool(hide)
         if hide:
             self._hide_res_after_del(no)
+        self._settings.save()
         def _do():
             ok2, msg = self._fetcher.delete_res(board, no, pwd, onlyimg, thread_url=turl)
             self._del_result.emit(ok2, msg)
@@ -5351,7 +5364,7 @@ class ThreadView(QWidget):
         if ok:
             # 成功: 削除したレスを即座にDOM非表示
             no = getattr(self, "_pending_del_no", None)
-            if no is not None:
+            if no is not None and getattr(self, "_pending_del_should_hide", False):
                 self._view.page().runJavaScript(
                     f'(function(){{var el=document.getElementById("r{no}");'
                     f'if(el)el.classList.add("deleted");}})();'

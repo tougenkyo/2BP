@@ -306,6 +306,7 @@ class AppSettings:
         self.post_save_name: bool = False  # おなまえを記憶するか
         self.post_save_mail: bool = False  # E-mailを記憶するか
         self.post_dialog_pin: bool = False # レスウィンドウを投稿後も閉じない
+        self.del_hide_checked: bool = True # 「delしたレスを非表示にする」の記憶状態（既定ON）
         # ── ログ保存 ──────────────────────────────────────────────────────────
         self.log_save_dir: str = ""        # 保存先ディレクトリ（空=プログラム隣の logs/）
         self.log_save_images: bool = True  # アーカイブに画像を含める
@@ -714,6 +715,7 @@ class AppSettings:
             self.post_save_name = raw.get("post_save_name", False)
             self.post_save_mail = raw.get("post_save_mail", False)
             self.post_dialog_pin = raw.get("post_dialog_pin", False)
+            self.del_hide_checked = raw.get("del_hide_checked", True)
             self.post_rules_open = raw.get("post_rules_open", {})
             self.pin_after_post  = raw.get("pin_after_post",  False)
             self.show_tab_icon      = raw.get("show_tab_icon",      True)
@@ -890,6 +892,7 @@ class AppSettings:
                         "post_save_name": self.post_save_name,
                         "post_save_mail": self.post_save_mail,
                         "post_dialog_pin": self.post_dialog_pin,
+                        "del_hide_checked": self.del_hide_checked,
                         "post_rules_open": self.post_rules_open,
                         "pin_after_post":  self.pin_after_post,
                         "show_tab_icon":        self.show_tab_icon,
