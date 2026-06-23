@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.87"
+APP_VER = "0.9.90"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2733,6 +2733,28 @@ def _show_video_window(url: str, fetcher, settings=None) -> None:
     win.show()
 
 
+def _build_error_band_js(text: str) -> str:
+    """通信エラー赤帯(._errband)を最上部と最下部に注入/解除するJSを生成する。
+    text が空なら解除のみ。全モード(返信/画像/引用/カタログ)の body に適用可。"""
+    if not text:
+        return ("(function(){try{var l=document.querySelectorAll('._errband');"
+                "for(var i=0;i<l.length;i++)l[i].parentNode.removeChild(l[i]);"
+                "}catch(_){}})();")
+    import json as _json
+    _t = (text or "").strip()[:120]
+    html = ('<div class="_errband" style="background:#a00;color:#fff;padding:5px 8px;'
+            'font-size:9pt;font-weight:bold;text-align:center;">'
+            '⚠ 通信エラー: ' + _t + '</div>')
+    _h = _json.dumps(html)
+    return ("(function(){try{if(!document.body)return;"
+            "var l=document.querySelectorAll('._errband');"
+            "for(var i=0;i<l.length;i++)l[i].parentNode.removeChild(l[i]);"
+            "var h=" + _h + ";"
+            "document.body.insertAdjacentHTML('afterbegin',h);"
+            "document.body.insertAdjacentHTML('beforeend',h);"
+            "}catch(_){}})();")
+
+
 class ThreadView(QWidget):
     open_reply_window = Signal(int, str)
     open_image_tab    = Signal(str, list, int)
@@ -3359,7 +3381,8 @@ class ThreadView(QWidget):
         # キャッシュなしのエラー → まず _last_valid_thread で再表示を試みる
         if thread.error and not thread.res_list:
             err = thread.error or ""
-            if err and err[0].isdigit():   # "404 Not Found" 等のHTTPエラー
+            # スレ消滅(404)のみ死亡扱い＝自動保存対象。503等の一時エラーは死亡にしない。
+            if (err.split() or [''])[0] == "404":
                 self._is_dead = True
                 self.thread_dead.emit(thread.url or "")
             # _last_valid_thread があればキャッシュ表示（バナー付き）
@@ -3702,7 +3725,8 @@ class ThreadView(QWidget):
         if _is_error:
             self.thread_error.emit(thread.error)
             _err_code = thread.error.split()[0] if thread.error.split() else ''
-            if _err_code.isdigit() and int(_err_code) >= 400:
+            # スレ消滅(404)のみ死亡扱い＝自動保存対象。503等の一時エラーは死亡にしない。
+            if _err_code == "404":
                 self._is_dead = True
                 self.thread_dead.emit(thread.url or "")
         # 1000レス到達 → thread_deadで自動保存・自動更新停止を起動
@@ -3818,6 +3842,21 @@ class ThreadView(QWidget):
         self._view.setHtml(html, QUrl("about:blank"))
         self._lbl_count.setText(code)
         self.thread_error.emit(err)
+
+    def _inject_error_band(self, text: str):
+        """通信エラー赤帯を表示中ページの上下へ注入（全モード対応・帯のみ）。"""
+        try:
+            self._view.page().runJavaScript(_build_error_band_js(text))
+            self._has_error_band = True
+        except Exception:
+            pass
+
+    def _clear_error_band(self):
+        try:
+            self._view.page().runJavaScript(_build_error_band_js(""))
+            self._has_error_band = False
+        except Exception:
+            pass
 
     def _inject_dead_banner(self):
         """スレ落ち確定時、表示中ページの最上部・最下部へ赤帯(404)を注入する。
@@ -5706,6 +5745,8 @@ class CatalogView(QWidget):
     _catalog_del_result = Signal(bool, str)  # 削除依頼(del)の結果（ok, msg）
     _entries_ready = Signal(list)   # スレッド→UI の安全な橋渡し
     _hover_img_ready  = Signal(bytes, object)  # (img_data, cursor_pos) BGスレッド→UIスレッド
+    error_band_changed = Signal(str)  # 通信エラー赤帯（text=詳細, ""=解除）をスレタブへ伝播
+    _catalog_err_sig   = Signal(str)  # BGスレッド→UI: カタログfetch失敗の詳細
 
     def __init__(self, fetcher: FutabaFetcher, settings: AppSettings, parent=None):
         super().__init__(parent)
@@ -5816,6 +5857,7 @@ class CatalogView(QWidget):
         self._bridge.add_thread_ng_requested.connect(self._on_add_thread_ng)
         self._bridge.catalog_del_requested.connect(self._on_catalog_del)
         self._catalog_del_result.connect(self._on_catalog_del_result)
+        self._catalog_err_sig.connect(self._on_catalog_err)
         self._bridge.scroll_bottom_reached.connect(
             lambda: QTimer.singleShot(1000, self.reload))
         self._bridge.scroll_top_reached.connect(
@@ -6056,6 +6098,23 @@ class CatalogView(QWidget):
             self._catalog_del_result.emit(bool(ok), msg or "")
         threading.Thread(target=_do, daemon=True).start()
 
+    def _inject_error_band(self, text: str):
+        try:
+            self._view.page().runJavaScript(_build_error_band_js(text))
+        except Exception:
+            pass
+
+    def _clear_error_band(self):
+        try:
+            self._view.page().runJavaScript(_build_error_band_js(""))
+        except Exception:
+            pass
+
+    def _on_catalog_err(self, text: str):
+        """カタログfetch失敗: 自カタログへ赤帯を注入し、スレタブへも伝播。"""
+        self._inject_error_band(text)
+        self.error_band_changed.emit(text)
+
     def _on_catalog_del_result(self, ok: bool, msg: str):
         """カタログ削除依頼の結果をWebView下部にトースト表示する（レスdelと同等）"""
         text = (msg or ("登録しました" if ok else "削除依頼に失敗しました")).strip()
@@ -6096,12 +6155,17 @@ class CatalogView(QWidget):
         _t0 = _time.perf_counter()
         entries = self._fetcher.fetch_catalog(board, sort=sort)
         if entries is None:
-            print(f"[Catalog] fetch失敗（404等） → 更新スキップ")
+            _err = getattr(self._fetcher, "last_fetch_error", "") or "取得失敗"
+            print(f"[Catalog] fetch失敗: {_err} → 更新スキップ")
+            self._catalog_err_sig.emit(_err)
             return
         self._entries_ready.emit(entries)
 
     def _on_entries_ready(self, entries: list):
         import time as _time
+        # カタログ取得成功 → 通信エラー赤帯を解除（自カタログ＋スレタブ）
+        self._clear_error_band()
+        self.error_band_changed.emit("")
         # 削除依頼(del)したスレはカタログから除外（セッション中保持）
         _delh = getattr(self, "_del_hidden_urls", None)
         if _delh:
@@ -6823,6 +6887,7 @@ class AutoRefreshManager(QObject):
     _fetching_done    = Signal(int)            # BGスレッドからfetching完了通知
     _thread_dead_sig  = Signal(object, str)  # thread_dead をメインスレッドで発火（view, url）
     _thread_full_sig  = Signal(object, str)  # 1000レス到達専用（_is_deadを立てない）
+    _errband_sig      = Signal(object, str)  # 通信エラー赤帯（view, text; ""=解除）。帯＋タブ赤化
 
     def __init__(self, fetcher, settings, parent=None):
         super().__init__(parent)
@@ -6865,6 +6930,26 @@ class AutoRefreshManager(QObject):
             except RuntimeError:
                 pass
         self._thread_dead_sig.connect(_on_thread_dead_sig)
+
+        def _on_errband_sig(v, text):
+            if not v:
+                return
+            try:
+                from shiboken6 import isValid
+                if not isValid(v):
+                    return
+            except Exception:
+                pass
+            try:
+                if text:
+                    v._inject_error_band(text)     # 上下赤帯
+                    v.thread_error.emit(text)      # タブ赤化
+                else:
+                    v._clear_error_band()          # 赤帯解除
+                    v.thread_recovered.emit()      # タブ赤解除
+            except RuntimeError:
+                pass
+        self._errband_sig.connect(_on_errband_sig)
 
         def _on_thread_full_sig(v, u):
             if not v:
@@ -7062,8 +7147,8 @@ class AutoRefreshManager(QObject):
 
                 if diff["error"]:
                     _code = diff["error"].split()[0] if diff["error"].split() else ''
-                    if _code.isdigit() and int(_code) >= 400:
-                        print(f'[AutoRefresh] HTTP {_code} 検出 No.{no} → 削除（JSON）')
+                    if _code == "404":
+                        print(f'[AutoRefresh] HTTP 404 検出 No.{no} → 削除（JSON・スレ消滅）')
                         # フルGETでバナー表示してから削除
                         try:
                             th_err = self._fetcher.fetch_thread(board, no)
@@ -7075,6 +7160,12 @@ class AutoRefreshManager(QObject):
                         # thread_dead をメインスレッドで発火（BGスレッドから直接 QTimer は危険）
                         if view:
                             self._thread_dead_sig.emit(view, entry.url)
+                    else:
+                        # 503等の一時的エラーは削除・保存せずスキップ（自動更新は継続）。
+                        # 表示中スレに上下赤帯＋タブ赤化で通知する。
+                        print(f'[AutoRefresh] 一時エラー {diff["error"]} No.{no} → スキップ（保存・削除なし）')
+                        if view:
+                            self._errband_sig.emit(view, diff["error"])
                     return
 
                 # スレ落ち検知（dielong が 1972年以前 = エポック付近）
@@ -7299,8 +7390,8 @@ class AutoRefreshManager(QObject):
             _cur_mode_e = _checked_e.property("mode") if _checked_e else ""
             if _cur_mode_e in ("image", "quote"):
                 _code = thread.error.split()[0] if thread.error.split() else ''
-                if _code.isdigit() and int(_code) >= 400:
-                    view.thread_error.emit(thread.error)
+                view.thread_error.emit(thread.error)        # エラー通知（赤タブ等）は全エラー
+                if _code == "404":                          # スレ消滅のみ死亡＝自動保存
                     view.thread_dead.emit(thread.url or "")
                 return
             html, _ = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
@@ -7319,8 +7410,8 @@ class AutoRefreshManager(QObject):
             view._known_res_count = 0
             view._load_html_via_tempfile(html, QUrl(thread.url or 'https://www.2chan.net/'))
             _code = thread.error.split()[0] if thread.error.split() else ''
-            if _code.isdigit() and int(_code) >= 400:
-                view.thread_error.emit(thread.error)
+            view.thread_error.emit(thread.error)        # エラー通知（赤タブ等）は全エラー
+            if _code == "404":                          # スレ消滅のみ死亡＝自動保存
                 view.thread_dead.emit(thread.url or "")
             return
 
@@ -7328,6 +7419,9 @@ class AutoRefreshManager(QObject):
         # ここまで来た = エラーなしで更新成功 → エラー赤タブだった場合の復旧を通知
         # （タブのエラー赤は thread_error で付くが、自動更新での復旧時は
         #   thread_loaded/_was_error 経路を通らず赤が残るため明示的にクリアさせる）
+        # 通信エラー赤帯が残っていれば解除（503等から復旧）
+        if getattr(view, '_has_error_band', False):
+            view._clear_error_band()
         view.thread_recovered.emit()
         _is_same_thread = (
             view._known_res_count > 0

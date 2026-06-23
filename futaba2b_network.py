@@ -763,9 +763,16 @@ class FutabaFetcher:
             r.raise_for_status()
             _t1 = _time.perf_counter()
             text = r.content.decode("cp932", errors="replace")
+            self.last_fetch_error = ""
             return text
         except requests.RequestException as e:
             print(f"[Fetch] エラー [{url}]: {e}")
+            try:
+                _resp = getattr(e, "response", None)
+                self.last_fetch_error = (f"{_resp.status_code} {_resp.reason}"
+                                         if _resp is not None else f"接続エラー: {e}")
+            except Exception:
+                self.last_fetch_error = "通信エラー"
             return None
 
     # ── カタログ ──

@@ -596,6 +596,8 @@ class MainWindow(QMainWindow):
         cat_view.thread_open_mode.connect(self._open_thread_url_mode)
         cat_view.thread_open_bg_mode.connect(self._open_thread_url_bg_mode)
         cat_view.status_info.connect(self._on_thread_status)
+        cat_view.error_band_changed.connect(
+            lambda text, p=inner: self._broadcast_error_band(p, text))
         cat_view.catalog_new_arrivals.connect(
             lambda urls, _inner=inner: self._on_catalog_new_arrivals(_inner, urls))
         cat_view.auto_refresh_requested.connect(
@@ -1405,6 +1407,19 @@ class MainWindow(QMainWindow):
             else:
                 self._st_log.setText("履歴に板情報がありません (再ログインして再試行)")
 
+    def _broadcast_error_band(self, pane, text: str):
+        """カタログの通信エラー赤帯を、同じ板ペインのスレタブ（返信/画像/引用モード）へ伝播する。"""
+        try:
+            for i in range(pane.count()):
+                w = pane.widget(i)
+                if isinstance(w, ThreadView):
+                    if text:
+                        w._inject_error_band(text)
+                    else:
+                        w._clear_error_band()
+        except Exception:
+            pass
+
     def _ensure_catalog_exists(self, board: BoardInfo):
         """板タブを作成し、カタログタブがなければ追加する。"""
         pane = self._get_or_create_board_tab(board)
@@ -1416,6 +1431,8 @@ class MainWindow(QMainWindow):
         cat.thread_open_mode.connect(self._open_thread_url_mode)
         cat.thread_open_bg_mode.connect(self._open_thread_url_bg_mode)
         cat.status_info.connect(self._on_thread_status)
+        cat.error_band_changed.connect(
+            lambda text, p=pane: self._broadcast_error_band(p, text))
         pane.insertTab(0, cat, "カタログ")
         _cat_ico = self._catalog_icon()
         if not _cat_ico.isNull():
