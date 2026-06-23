@@ -900,6 +900,15 @@ class MainWindow(QMainWindow):
                 w.pause_media()
         self._sync_post_dialog_roll()
         QTimer.singleShot(0, self._refresh_title_bar)
+        # アクティブになったビューのステータスバー（nレス数等）を最新化する
+        cur = pane._tabs.widget(idx)
+        if isinstance(cur, ThreadView):
+            cur.refresh_status_info()
+        elif isinstance(cur, CatalogView) and hasattr(cur, "_emit_catalog_status"):
+            try:
+                cur._emit_catalog_status()
+            except Exception:
+                pass
 
     def _activate_thread_tab(self, thread_no: int):
         """PostDialogのタイトルバークリック時：対応するThreadViewタブをアクティブにする"""

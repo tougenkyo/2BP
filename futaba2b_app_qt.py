@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.91"
+APP_VER = "0.9.92"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3069,6 +3069,16 @@ class ThreadView(QWidget):
             f"  }});"
             f"}})();"
         )
+
+    def refresh_status_info(self):
+        """タブがアクティブになった時など、現在のスレ状態から
+        ステータスバー（nレス数等）を再計算して再送する。"""
+        th = getattr(self, "_thread", None)
+        if th is not None:
+            try:
+                self._emit_status_info(th, 0)
+            except Exception:
+                pass
 
     def _emit_status_info(self, thread, new_count: int = 0, log: str = ""):
         """ステータスバー用情報を計算して status_info シグナルで送出"""
@@ -7168,6 +7178,12 @@ class AutoRefreshManager(QObject):
                             self._errband_sig.emit(view, diff["error"])
                     return
 
+                # ここに到達 = diff取得成功（エラーなし）。
+                # 直前に通信エラーで赤帯/赤タブが付いていたら復旧として解除する。
+                # （新着が無い「変化なし」サイクルでも解除されるよう、ここで判定する）
+                if view is not None and getattr(view, '_has_error_band', False):
+                    self._errband_sig.emit(view, "")
+
                 # スレ落ち検知（dielong が 1972年以前 = エポック付近）
                 if diff["is_dead"]:
                     # 【重要】同じdiffレスポンスに最後のレス群が含まれている。
@@ -7391,6 +7407,8 @@ class AutoRefreshManager(QObject):
             if _cur_mode_e in ("image", "quote"):
                 _code = thread.error.split()[0] if thread.error.split() else ''
                 view.thread_error.emit(thread.error)        # エラー通知（赤タブ等）は全エラー
+                if _code != "404":
+                    view._has_error_band = True             # 差分成功時に復旧解除させる
                 if _code == "404":                          # スレ消滅のみ死亡＝自動保存
                     view.thread_dead.emit(thread.url or "")
                 return
@@ -7411,6 +7429,8 @@ class AutoRefreshManager(QObject):
             view._load_html_via_tempfile(html, QUrl(thread.url or 'https://www.2chan.net/'))
             _code = thread.error.split()[0] if thread.error.split() else ''
             view.thread_error.emit(thread.error)        # エラー通知（赤タブ等）は全エラー
+            if _code != "404":
+                view._has_error_band = True             # 差分成功時に復旧解除させる
             if _code == "404":                          # スレ消滅のみ死亡＝自動保存
                 view.thread_dead.emit(thread.url or "")
             return
