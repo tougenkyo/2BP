@@ -374,7 +374,8 @@ class MainWindow(QMainWindow):
                              triggered=self._reopen_closed_tab,
                              shortcut=_sc("reopen_tab")))
         bm.addSeparator()
-        bm.addAction(QAction("スレ内を検索(&F)", self,
+        _find_hint = _sc("find_in_view").toString() or "Ctrl+F"
+        bm.addAction(QAction(f"スレ内を検索(&F)\t{_find_hint}", self,
                              triggered=self._find_in_view))
         bm.addSeparator()
         log_menu = bm.addMenu("ログを保存(&W)")
@@ -3870,14 +3871,21 @@ class MainWindow(QMainWindow):
         cur = inner.currentWidget()
         if not hasattr(cur, "_find_bar"):
             return
-        # WebEngineビューの選択テキストを取得してから検索バーに渡す
+        fb = cur._find_bar
+        # 先に検索バーを確実に表示する。runJavaScript のコールバックは
+        # WebEngine の状態によっては発火しないことがあり、表示をそれに
+        # 依存させると「Ctrl+Fで出ない」事象が起きるため、表示は同期で行う。
+        fb.show_and_focus()
+        # 選択テキストがあれば後追いで反映（ベストエフォート）
         view = getattr(cur, "_view", None)
         if view and hasattr(view, "page"):
             def _apply(sel):
-                cur._find_bar.show_and_focus(sel or "")
-            view.page().runJavaScript("window.getSelection().toString()", _apply)
-        else:
-            cur._find_bar.show_and_focus()
+                if sel:
+                    fb.show_and_focus(sel)
+            try:
+                view.page().runJavaScript("window.getSelection().toString()", _apply)
+            except Exception:
+                pass
 
     def _open_ng_settings(self):
         from futaba2b_dialogs import NgSettingsDialog
