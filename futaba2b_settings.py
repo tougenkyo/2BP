@@ -392,6 +392,9 @@ class AppSettings:
         self.image_window_geometry: list | None = None  # 画像ウインドウの位置・サイズ [x,y,w,h]
         self.auto_close_dead_tab:    bool = False  # スレ落ち時にタブを自動で閉じる
         self.auto_close_full_tab:    bool = False  # 1000レス到達時にタブを自動で閉じる
+        # 逆NG自動オープン由来のスレが落ちた時、グローバル設定に関わらず
+        # タブを自動で閉じてメモリを解放する（自動オープン＋自動保存のため安全）。
+        self.auto_close_dead_reverse_ng: bool = True
         self.auto_close_skip_pinned: bool = False  # ピン留めタブは閉じない
         self.log_auto_save_full:     bool = False  # 1000レス到達時にも自動保存する
         # ── 画像保存フォルダ ─────────────────────────────────────────────────
@@ -765,6 +768,7 @@ class AppSettings:
             self.image_window_geometry = raw.get("image_window_geometry", None)
             self.auto_close_dead_tab    = raw.get("auto_close_dead_tab",    False)
             self.auto_close_full_tab    = raw.get("auto_close_full_tab",    False)
+            self.auto_close_dead_reverse_ng = raw.get("auto_close_dead_reverse_ng", True)
             self.auto_close_skip_pinned = raw.get("auto_close_skip_pinned", False)
             self.log_auto_save_full     = raw.get("log_auto_save_full",     False)
             self.image_save_folders  = raw.get("image_save_folders",  [])
@@ -936,6 +940,7 @@ class AppSettings:
                         "image_window_geometry": self.image_window_geometry,
                         "auto_close_dead_tab":    self.auto_close_dead_tab,
                         "auto_close_full_tab":    self.auto_close_full_tab,
+                        "auto_close_dead_reverse_ng": self.auto_close_dead_reverse_ng,
                         "auto_close_skip_pinned": self.auto_close_skip_pinned,
                         "log_auto_save_full":     self.log_auto_save_full,
                         "image_save_folders":   self.image_save_folders,

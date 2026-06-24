@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.92"
+APP_VER = "0.9.97"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2788,6 +2788,7 @@ class ThreadView(QWidget):
         self._saved_search: str = ""   # タブ切り替え時に検索テキストを保存
         self._thread_no: int = 0
         self._fetch_seq: int = 0       # 古いfetch結果を破棄するためのシーケンス番号
+        self._fetch_inflight_no = None  # フルGET実行中のスレNo（重複起動スキップ用）
         self._tmp_html_path: str = ""  # 大容量HTML用の一時ファイルパス
         self._thread_ready.connect(self._show)
         self._sodane_signal.connect(self._apply_sodane_js)
@@ -3083,16 +3084,18 @@ class ThreadView(QWidget):
     def _emit_status_info(self, thread, new_count: int = 0, log: str = ""):
         """ステータスバー用情報を計算して status_info シグナルで送出"""
         res_list  = thread.res_list
-        res_count = len(res_list)
+        res_total = len(res_list)
+        # ステータスバー表示は OP(0レス目)を除いた実レス数 (-1)
+        res_count = max(0, res_total - 1)
         img_count = sum(1 for r in res_list if r.image_url)
 
         # 勢い = レス数 / (最新レス番号 - スレ番号) * 1000
         momentum_str = ""
-        if res_count > 1:
+        if res_total > 1:
             latest_no = max(r.no for r in res_list)
             age = latest_no - thread.no
             if age > 0:
-                momentum = round(res_count / age * 1000, 1)
+                momentum = round(res_total / age * 1000, 1)
                 momentum_str = f"勢い {momentum}"
 
         board = thread.board
@@ -3129,6 +3132,12 @@ class ThreadView(QWidget):
         })
 
     def load_thread(self, board: BoardInfo, thread_no: int, open_mode: str = ""):
+        # 同一スレのフルGETが実行中なら重複起動をスキップする。
+        # スクロール更新・既開スレ再オープン・投稿後更新・手動更新などが
+        # 近接して発火すると同じスレを並行フルGETして帯域/CPUを浪費するため、
+        # 実行中の取得が最新状態を返すのに任せる（open_mode指定の明示オープンは通す）。
+        if not open_mode and self._fetch_inflight_no == thread_no:
+            return
         # 別スレッドを開く場合は差分更新カウントをリセット
         if thread_no != self._thread_no:
             self._known_res_count = 0
@@ -3137,10 +3146,12 @@ class ThreadView(QWidget):
         self._lbl_count.setText("読み込み中…")
         self._fetch_seq += 1
         seq = self._fetch_seq
+        self._fetch_inflight_no = thread_no
         _FETCH_POOL.submit(self._fetch, board, thread_no, seq)
 
     def load_log_thread(self, board, thread_no: int, html: str,
-                        media_base_url: str = "", thread_url: str = ""):
+                        media_base_url: str = "", thread_url: str = "",
+                        media_map: dict = None):
         """保存ログ(オフラインスナップショット)を通常スレと同じ描画経路で表示する。
         ・保存htm(ふたば構造)を _parse_thread で ThreadData に復元
         ・画像/サムネURLをローカル(file://)またはdata:に張り替え
@@ -3157,7 +3168,7 @@ class ThreadView(QWidget):
             self._lbl_count.setText(f"ログ解析エラー: {e}")
             return
         thread.url = url
-        self._remap_log_media(thread, html, board.base_url, media_base_url)
+        self._remap_log_media(thread, html, board.base_url, media_base_url, media_map)
         # 全レス既読扱い（新着赤帯を出さない）
         for r in thread.res_list:
             r.is_new = False
@@ -3168,9 +3179,11 @@ class ThreadView(QWidget):
             self._last_valid_thread = thread
         self._show(thread)
 
-    def _remap_log_media(self, thread, html: str, real_base: str, media_base_url: str):
+    def _remap_log_media(self, thread, html: str, real_base: str, media_base_url: str,
+                         media_map: dict = None):
         """ログの画像URLをローカル参照に張り替える。
         ・パーサが urljoin(real_base, ローカル相対) で生成した URL を media_base_url 起点に置換
+        ・media_map(元絶対URL→data:) があれば正確一致で張り替える（MHT用）
         ・「サムネ保存しない」保存分(パーサが /thumb/ 不一致で取りこぼした画像)を htm から補完"""
         # 1) パーサ取得済みURLの張り替え（html/zip: real_base → file://, mht: data:はそのまま）
         if media_base_url:
@@ -3179,6 +3192,15 @@ class ThreadView(QWidget):
                     r.image_url = media_base_url + r.image_url[len(real_base):]
                 if r.thumb_url and r.thumb_url.startswith(real_base):
                     r.thumb_url = media_base_url + r.thumb_url[len(real_base):]
+        # 1.5) MHT等: 元(絶対)URL → data: の正確マッピングで張り替える。
+        #      パースは元URL(/thumb/・-(N B)付き)のままなので拡張子/サイズが取得でき、
+        #      表示・画像ウインドウ再生はここで data: 化したログ内蔵ソースを使う。
+        if media_map:
+            for r in thread.res_list:
+                if r.image_url and r.image_url in media_map:
+                    r.image_url = media_map[r.image_url]
+                if r.thumb_url and r.thumb_url in media_map:
+                    r.thumb_url = media_map[r.thumb_url]
         # 2) 画像取りこぼし補完（no_thumb保存: <a href=保存src><img src=保存src>）
         missing = [r for r in thread.res_list if not r.image_url]
         if not missing:
@@ -3224,6 +3246,9 @@ class ThreadView(QWidget):
             if not info:
                 continue
             r.image_url, r.thumb_url, _w, _h = info
+            if media_map:
+                if r.image_url in media_map: r.image_url = media_map[r.image_url]
+                if r.thumb_url in media_map: r.thumb_url = media_map[r.thumb_url]
             if _w and not r.thumb_w: r.thumb_w = _w
             if _h and not r.thumb_h: r.thumb_h = _h
 
@@ -3346,7 +3371,10 @@ class ThreadView(QWidget):
     def _fetch(self, board, no, my_seq: int):
         import time as _t
         _t0 = _t.time()
-        thread = self._fetcher.fetch_thread(board, no)
+        try:
+            thread = self._fetcher.fetch_thread(board, no)
+        except Exception:
+            thread = None
         # sdを差分APIから別途取得してスレオブジェクトに付加
         if thread and thread.res_list:
             try:
@@ -3367,6 +3395,8 @@ class ThreadView(QWidget):
         # 自分より後のfetchが来ていれば結果を破棄（白画面防止）
         if my_seq != self._fetch_seq:
             return
+        # 取得完了かつ自分が最新 → in-flight 解除（同一スレの次回更新を許可）
+        self._fetch_inflight_no = None
         if thread:
             res_n = len(thread.res_list)
             self._thread = thread
@@ -3448,7 +3478,7 @@ class ThreadView(QWidget):
                 self.close_requested.emit()
                 return
 
-        new_count = sum(1 for r in thread.res_list if r.is_new)
+        new_count = sum(1 for r in thread.res_list[1:] if r.is_new)  # OP(0レス目)は新着に数えない
 
         # ── 差分更新判定 ────────────────────────────────────────────────────
         # 条件: ① ページがすでにロード済み ② 同スレッドの更新 ③ エラーなし
@@ -7396,7 +7426,7 @@ class AutoRefreshManager(QObject):
         # _update_view 内の thread_to_html 群は footer_html を渡さないと
         # フッター無しHTMLになり、返信モードでそれを _last_html 経由で
         # 再ロードした際にフッターが消える（画像/引用モードは毎回再生成のため無影響）。
-        thread._footer_new_count = sum(1 for r in thread.res_list if r.is_new)
+        thread._footer_new_count = sum(1 for r in thread.res_list[1:] if r.is_new)  # OP除外
 
         # エラーがある場合は差分更新しない
         if thread.error:
@@ -8581,6 +8611,32 @@ class ImageTabView(QWidget):
         cp = VideoPlayerWindow._cache_path(url)
 
         def _download():
+            import os as _os
+            # ── ログのローカルソース（ネット取得しない） ──
+            # file://: 保存済みファイルをそのまま再生。data:: デコードして一時再生。
+            if url.startswith("file://"):
+                from urllib.parse import urlparse, unquote
+                p = unquote(urlparse(url).path)
+                if len(p) >= 3 and p[0] == "/" and p[2] == ":":
+                    p = p[1:]   # Windows: /C:/... → C:/...
+                if _os.path.exists(p):
+                    self._sig_mp4_ready.emit(p)
+                else:
+                    self._sig_mp4_progress.emit("⚠ ログ内の動画が見つかりません")
+                return
+            if url.startswith("data:"):
+                try:
+                    import base64 as _b64
+                    b64data = url.split(",", 1)[1] if "," in url else ""
+                    raw = _b64.b64decode(b64data)
+                    tmp = cp.with_name(cp.name + f".{threading.get_ident()}.part")
+                    with open(tmp, 'wb') as f:
+                        f.write(raw)
+                    _os.replace(tmp, cp)
+                    self._sig_mp4_ready.emit(str(cp))
+                except Exception as e:
+                    self._sig_mp4_progress.emit(f"⚠ ログ動画の展開に失敗:\n{e}")
+                return
             # キャッシュHIT時はヘッダ検証（破損ファイルをFFmpegに渡すとクラッシュ）
             if cp.exists():
                 if _video_cache_valid(cp):
@@ -8818,9 +8874,16 @@ class ImageTabView(QWidget):
                 if i >= 0:
                     short = name[:14] if name else "画像"
                     tw.setTabText(i, f"🖼 {short}")
-        ext = url.lower().split('?')[0].rsplit('.', 1)[-1] if '.' in url else ''
-        is_native_video = ext in ('mp4', 'mov', 'm4v')
-        is_web_video    = ext in ('webm',)  # gifはimgタグで表示（アニメーション対応）
+        _lo = url.lower()
+        if _lo.startswith('data:'):
+            # ログ(MHT)の data:URI は拡張子が無いので MIME で判定する
+            _mime = _lo[5:].split(';', 1)[0].split(',', 1)[0]
+            is_native_video = _mime in ('video/mp4', 'video/quicktime', 'video/x-m4v')
+            is_web_video    = _mime in ('video/webm',)
+        else:
+            ext = _lo.split('?')[0].rsplit('.', 1)[-1] if '.' in _lo else ''
+            is_native_video = ext in ('mp4', 'mov', 'm4v')
+            is_web_video    = ext in ('webm',)  # gifはimgタグで表示（アニメーション対応）
         # 現在の拡大率を継承（前へ/次へ時にリセットしない）
         _prev_zoom = self._zoom_combo.currentText()  # 継承用
         self._fit_mode = (_prev_zoom == "画面に合わせる")

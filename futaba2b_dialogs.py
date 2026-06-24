@@ -3549,9 +3549,9 @@ class AppSettingsDialog(QDialog):
         self._cat_hover_comment = QCheckBox("オンマウスでスレ本文（先頭120文字）を表示する")
         self._cat_mail_badge    = QCheckBox("メール欄/IDをサムネ右上にバッジ表示する")
         self._cat_quarantine    = QCheckBox("隔離スレを最下部に表示する")
-        self._cat_common_id_bottom = QCheckBox("共通IDをまとめて最下部に表示する")
+        self._cat_common_id_bottom = QCheckBox("IDが出たスレを下にまとめる")
         self._cat_common_id_bottom.setToolTip(
-            "mode=json の共通IDが出ているスレを、同じID同士でまとめて最下部に表示します")
+            "IDが出ているスレ（mode=json id）を、ID別に分けず最下部に一括でまとめます")
         cat_hover_lay.addWidget(self._cat_hover_zoom)
         cat_hover_lay.addWidget(self._cat_hover_comment)
         cat_hover_lay.addWidget(self._cat_mail_badge)

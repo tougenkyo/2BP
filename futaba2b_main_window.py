@@ -1634,8 +1634,19 @@ class MainWindow(QMainWindow):
         # ── タブ自動クローズ ──────────────────────────────────────────────
         _close_dead = getattr(s, "auto_close_dead_tab", False)
         _close_full = getattr(s, "auto_close_full_tab", False)
-        if _close_dead or _close_full:
-            should_close = (is_full and _close_full) or (not is_full and _close_dead)
+        # 逆NG自動オープン由来の落ちスレは、グローバル設定に関わらず閉じてメモリ解放。
+        # （多数の逆NGスレが自動オープン→落ち後も残存しメモリが膨張するのを防ぐ。
+        #   自動保存されるためタブを閉じても内容は失われない。手動オープン由来は対象外。）
+        _rev_auto_close = (
+            getattr(s, "auto_close_dead_reverse_ng", True)
+            and (not is_full)
+            and bool(url)
+            and url in getattr(self._settings, "ng_reverse_opened_urls", set())
+        )
+        if _close_dead or _close_full or _rev_auto_close:
+            should_close = ((is_full and _close_full)
+                            or (not is_full and _close_dead)
+                            or _rev_auto_close)
             # カタログから開いた直後（一度も正常表示していない）は自動クローズしない
             if getattr(view, "_known_res_count", 0) == 0:
                 should_close = False
@@ -3510,7 +3521,8 @@ class MainWindow(QMainWindow):
             board = BoardInfo(name=bname, url=base + "futaba.htm")
         return board, no, thread_url
 
-    def _open_thread_log(self, html: str, media_base_url: str, tab_label: str):
+    def _open_thread_log(self, html: str, media_base_url: str, tab_label: str,
+                         media_map: dict = None):
         """保存ログを通常スレと同じ ThreadView で開く（オフライン表示）。
         投稿/自動更新/そうだね送信/スレ落ち処理は配線せず無効化する。"""
         info = self._recover_log_thread_info(html)
@@ -3539,7 +3551,7 @@ class MainWindow(QMainWindow):
         idx = inner.addTab(view, f"📄 {short}")
         inner.setCurrentIndex(idx)
         self._refresh_tab_pane()
-        view.load_log_thread(board, no, html, media_base_url, thread_url)
+        view.load_log_thread(board, no, html, media_base_url, thread_url, media_map)
 
     @staticmethod
     def _is_futaba_log(html: str) -> bool:
@@ -3584,21 +3596,26 @@ class MainWindow(QMainWindow):
                 media[cl] = f"data:{ct};base64,{b64}"
         if not html_part:
             raise ValueError("MHTファイルから HTML を抽出できませんでした")
-        for orig_url, data_url in media.items():
-            esc = re.escape(orig_url)
-            html_part = re.sub(
-                f'(src|href)="{esc}"',
-                lambda m, d=data_url: f'{m.group(1)}="{d}"', html_part)
         if not self._is_futaba_log(html_part):
+            # 方式B(非ふたば)ログ: URLをdata:に置換した上で静的表示する
+            html_replaced = html_part
+            for orig_url, data_url in media.items():
+                esc = re.escape(orig_url)
+                html_replaced = re.sub(
+                    f'(src|href)="{esc}"',
+                    lambda m, d=data_url: f'{m.group(1)}="{d}"', html_replaced)
             import tempfile
             from PySide6.QtCore import QUrl
             with tempfile.NamedTemporaryFile(
                     'w', suffix='.html', encoding='utf-8', delete=False) as tf:
-                tf.write(html_part); tmp_path = tf.name
+                tf.write(html_replaced); tmp_path = tf.name
             self._open_log_view(QUrl.fromLocalFile(tmp_path), os.path.basename(path))
             return
+        # ふたば構造ログ: 元(絶対)URLのままパースさせて拡張子/サイズを取得し、
+        # media(元URL→data:) を media_map として渡して表示・再生時に data: を使う。
         self._open_thread_log(
-            html_part, "", os.path.splitext(os.path.basename(path))[0])
+            html_part, "", os.path.splitext(os.path.basename(path))[0],
+            media_map=media)
 
     def _open_log_zip(self, path: str):
         """ZIP から index.htm を取り出し一時ディレクトリに展開して通常スレ表示する"""

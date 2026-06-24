@@ -1077,6 +1077,19 @@ class FutabaFetcher:
                                 flags=re.DOTALL | re.IGNORECASE)
         _html_to_parse = re.sub(r'<style[^>]*>.*?</style>', '', _html_to_parse,
                                 flags=re.DOTALL | re.IGNORECASE)
+        # ── charset宣言metaを除去 ──────────────────────────────────────────
+        # htmlは既に cp932 で正しくデコード済みのUnicode。だが
+        # <META http-equiv="Content-type" content="text/html; charset=Shift_JIS">
+        # が残っていると、BS4経由でlxml(libxml2)がこの宣言を信じて入力を
+        # Shift_JISとして再デコードしようとし、UTF-8側のバイト列で
+        # "input conversion failed" を起こした地点以降を切り捨てる
+        # （= 末尾レス欠落。1000レスが957等に化ける。画像/特定文字が多いスレほど
+        #   変換失敗バイトに早く当たり欠落数が増える）。charset宣言を取り除いて
+        # libxml2がShift_JISを選べないようにする。
+        _html_to_parse, _meta_n = re.subn(
+            r'<meta[^>]*charset[^>]*>', '', _html_to_parse, flags=re.IGNORECASE)
+        if _meta_n:
+            print(f'[NET] _parse_thread  charset-meta removed x{_meta_n}  no={no}')
         _stripped = len(html) - len(_html_to_parse)
         if _stripped > 0:
             print(f'[NET] _parse_thread  stripped  {len(html)}B->{len(_html_to_parse)}B (-{_stripped}B)')

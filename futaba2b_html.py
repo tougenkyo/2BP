@@ -790,39 +790,6 @@ document.addEventListener('contextmenu', function(e) {
     function cleanup(){ var m=document.getElementById('__ng_ctx'); if(m) m.parentNode.removeChild(m); }
     setTimeout(function(){ document.addEventListener('click', cleanup, {once:true}); }, 0);
 });
-/* ── ID 右クリック → 「出ちゃいましたねぇ」 ──────────────────────────
-   OPメール欄が「ID表示」のスレ（body.id-board）では表示しない。
-   非ID表示スレでIDが出ているレス（自主的にID晒し）のみ対象。 */
-document.addEventListener('contextmenu', function(e) {
-    var idEl = e.target.closest('.post-id');
-    if (!idEl) return;
-    /* ID表示スレ（OPメール欄=ID表示）では出さない */
-    if (document.body.classList.contains('id-board')) return;
-    var id = idEl.getAttribute('data-id');
-    if (!id) return;
-    e.preventDefault();
-    var old = document.getElementById('__id_ctx');
-    if (old) old.parentNode.removeChild(old);
-    var menu = document.createElement('div');
-    menu.id = '__id_ctx';
-    menu.style.cssText = 'position:fixed;background:#fff;border:1px solid #999;'
-        + 'padding:2px 0;z-index:9999;box-shadow:2px 2px 4px rgba(0,0,0,.3);font-size:9pt;';
-    menu.style.left = e.clientX + 'px';
-    menu.style.top  = e.clientY + 'px';
-    var item = document.createElement('div');
-    item.textContent = '出ちゃいましたねぇ';
-    item.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;color:#000;';
-    item.onmouseenter = function(){ this.style.background='#0078d7';this.style.color='#fff'; };
-    item.onmouseleave = function(){ this.style.background='';this.style.color='#000'; };
-    item.onclick = function(){
-        openUrl('https://futaba-id.site/search.php?mode=id&q=' + encodeURIComponent(id));
-        if (menu.parentNode) menu.parentNode.removeChild(menu);
-    };
-    menu.appendChild(item);
-    document.body.appendChild(menu);
-    function cleanupId(){ var m=document.getElementById('__id_ctx'); if(m) m.parentNode.removeChild(m); }
-    setTimeout(function(){ document.addEventListener('click', cleanupId, {once:true}); }, 0);
-});
 function updateSodane(no, cnt) {
     // ポップアップは元レスの innerHTML を複製するため id="sodNNN" が重複する。
     // getElementById だと本体側1個しか取れずポップアップが更新されないので、
@@ -2338,32 +2305,28 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         return normal, quar
 
     def _pull_common_id(elist):
-        """common_id_section=True のとき op_id(共通ID) を持つスレを op_id ごとにまとめて分離。
-        戻り値: (rest, [(id, [entries]), ...])（件数降順→ID昇順）"""
+        """common_id_section=True のとき op_id(ID) が出ているスレを分離して最下部送りにする。
+        IDはランダム化されID別グルーピングが無意味になったため、ID別に分けず一括でまとめる。
+        戻り値: (rest, [id付きentries...])（元の並び順を維持）"""
         if not common_id_section:
             return elist, []
         rest = []
-        groups: dict = {}
+        idres = []
         for e in elist:
             _cid = (getattr(e, 'op_id', '') or '').strip()
             if _cid:
-                groups.setdefault(_cid, []).append(e)
+                idres.append(e)
             else:
                 rest.append(e)
-        ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
-        return rest, ordered
+        return rest, idres
 
-    def _common_id_section(groups):
-        """共通IDまとめを最下部セクションとして描画（同一IDごとに赤バッジで英数字表示）"""
-        if not groups:
+    def _common_id_section(idres):
+        """IDが出たスレを最下部に一括表示（ID別に分けず下にまとめるだけ）"""
+        if not idres:
             return ""
-        parts = ['<div class="sec-div"></div>']
-        for _cid, es in groups:
-            parts.append(
-                f'<div class="sec-hdr cid-hdr">'
-                f'共通ID: {_e(_cid)} ({len(es)}件)</div>'
-            )
-            parts.extend(_make_entry(e) for e in es)
+        parts = ['<div class="sec-div"></div>',
+                 f'<div class="sec-hdr cid-hdr">↓ IDが出たスレ ({len(idres)}件)</div>']
+        parts.extend(_make_entry(e) for e in idres)
         return "".join(parts)
 
     if search_sections:
