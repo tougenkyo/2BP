@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.100"
+APP_VER = "0.9.108"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2110,7 +2110,7 @@ class BoardPane(QWidget):
     def _on_update(self):
         w = self._tabs.currentWidget()
         if isinstance(w, ThreadView):
-            w.reload_thread()
+            w.request_manual_reload()  # リーディングエッジ＋1秒クールダウン（連打抑制）
             # 自動更新に登録済みなら残り時間をリセット
             if self._main and w._thread:
                 self._main._ar_mgr.reset_remain_by_url(w._thread.url or "")
@@ -2838,6 +2838,7 @@ class ThreadView(QWidget):
         self._scroll_bottom_after_update = False  # 投稿後: 更新完了時に最下部へ送る
         self._prev_scroll_y   = 0   # 前回のスクロール位置 (前回のレス位置に移動 用)
         self._known_res_count = 0   # 差分更新: 前回表示済みレス数
+        self._manual_reload   = False  # 手動/スクロール更新か（新着なしトースト用）
         self._ng_enabled = True          # NG:使う/わない トグル
         self._del_showing = False        # 削除:見る/隠す 状態
         self._is_dead   = False     # True=404/スレ落ち確定（リロード不可）
@@ -3406,6 +3407,30 @@ class ThreadView(QWidget):
         self._pending_scroll = int(scroll_y)
         self.load_thread(self._board, self._thread_no)
 
+    def _show_no_new_toast(self):
+        """手動更新で新着レスが無かった時、ページ下部中央にトースト通知を出す。
+        ページ内JS（showDelMsg等）に依存しない自己完結スニペットを注入する。"""
+        js = (
+            "(function(){"
+            "var el=document.getElementById('_nonewmsg');"
+            "if(!el){el=document.createElement('div');el.id='_nonewmsg';"
+            "el.style.cssText='position:fixed;bottom:30px;left:50%;"
+            "transform:translateX(-50%);background:#ffc0cb;color:#000;"
+            "border:1px solid #000;"
+            "padding:7px 18px;border-radius:5px;z-index:99999;font-size:10pt;"
+            "pointer-events:none;opacity:0;transition:opacity 0.2s;';"
+            "document.body.appendChild(el);}"
+            "el.textContent='新着レスはありません';"
+            "if(el._t)clearTimeout(el._t);"
+            "el.style.opacity='1';"
+            "el._t=setTimeout(function(){el.style.opacity='0';},1800);"
+            "})();"
+        )
+        try:
+            self._view.page().runJavaScript(js)
+        except Exception:
+            pass
+
     def _fetch(self, board, no, my_seq: int):
         import time as _t
         _t0 = _t.time()
@@ -3517,6 +3542,9 @@ class ThreadView(QWidget):
                 return
 
         new_count = sum(1 for r in thread.res_list[1:] if r.is_new)  # OP(0レス目)は新着に数えない
+        # 手動更新フラグを消費（取得結果がどの経路でも1回で消費し自動更新に漏らさない）
+        _manual = self._manual_reload
+        self._manual_reload = False
 
         # ── 差分更新判定 ────────────────────────────────────────────────────
         # 条件: ① ページがすでにロード済み ② 同スレッドの更新 ③ エラーなし
@@ -3554,6 +3582,9 @@ class ThreadView(QWidget):
                 return
             elif new_len == self._known_res_count:
                 # レスが変わっていない or 削除で件数が同じ
+                # 手動更新で新着が無ければ下中央トーストで通知
+                if _manual and new_count == 0:
+                    self._show_no_new_toast()
                 # → 削除済みレスがあればDOMを書き換え、なければUIのみ更新
                 deleted_nos = [r.no for r in thread.res_list if r.is_deleted]
                 if deleted_nos and self._thread:
@@ -5248,18 +5279,26 @@ class ThreadView(QWidget):
         if ar_mgr:
             ar_mgr._speak_bouyomi(res_list)
 
-    def _schedule_scroll_reload(self):
-        """末尾/先頭スクロール検知時のリロードをデバウンスする。
-        連続発火しても単一タイマーを再起動するだけなので、リロードは1回に
-        集約される（旧実装は毎回 singleShot を積んでフルGETが重複していた）。"""
-        t = getattr(self, '_scroll_reload_timer', None)
+    def request_manual_reload(self):
+        """更新ボタン/スクロール更新の共通入口（リーディングエッジ＋1秒クールダウン）。
+        最初の要求で即更新し、その後1000msは追加発火を抑制する。これにより
+        更新ボタン連打・連続スクロールのどちらでもフルGETは最短1秒間隔に抑えられ、
+        新着なしトーストの初動も最速になる。"""
+        t = getattr(self, '_reload_cooldown', None)
         if t is None:
             t = QTimer(self)
             t.setSingleShot(True)
-            t.setInterval(1000)
-            t.timeout.connect(self.reload_thread)
-            self._scroll_reload_timer = t
-        t.start()  # 再起動: 既存カウントダウンを破棄して1秒からやり直し
+            t.setInterval(1000)   # クールダウン: 即更新後この間は追加発火を無視
+            self._reload_cooldown = t
+        if t.isActive():
+            return  # クールダウン中はスキップ（連打・連続スクロールを1秒に1回へ）
+        self._manual_reload = True  # 新着なし時の下中央トースト用
+        self.reload_thread()        # 即更新（リーディングエッジ）
+        t.start()                   # 1000msクールダウン開始
+
+    def _schedule_scroll_reload(self):
+        """末尾/先頭スクロール検知時のリロード（共通入口へ委譲）。"""
+        self.request_manual_reload()
 
     def _on_scroll_bottom(self):
         """末尾スクロール検知 → 1秒後にスレッドを更新（デバウンス）"""
@@ -6310,7 +6349,9 @@ class CatalogView(QWidget):
                     if (not e.is_red
                             and getattr(self._settings, 'treat_near_limit_as_expiring', False)):
                         pct = remaining / max_saved * 100
-                        e.is_quasi_red = (0 < pct <= 10)
+                        # 残保存数がマイナス（上限超過＝最も落ちかけ）でも赤枠を維持する
+                        # （旧 0 < pct の下限で remaining<=0 が弾かれ赤枠が消えていた）
+                        e.is_quasi_red = (pct <= 10)
                     else:
                         e.is_quasi_red = False
                 else:
