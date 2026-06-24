@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.110"
+APP_VER = "0.9.111"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -7332,6 +7332,30 @@ class AutoRefreshManager(QObject):
                         # メインスレッドで thread_dead を発火（BGスレッドから直接 QTimer は危険）
                         self._thread_dead_sig.emit(view, entry.url)
                     return
+
+                # 板容量によるスレ落ち検知（dielongが落ちないまま板から押し出された場合）。
+                # JSON diff API は容量落ちを is_dead/404 に反映しないことがあり、その場合
+                # HTMLページは404でもタブが残り続ける（手動更新のみフルGETで404検知できる）。
+                # 残保存数(no + max_saved - global_max)が0以下なら一度だけフルGETで404を
+                # 確認し、手動更新と同じく自動保存して閉じる。
+                if not getattr(entry, '_capacity_dead_checked', False):
+                    _o  = self._settings.global_max_no_by_board.get(board.base_url, 0)
+                    _ms = entry.max_saved
+                    if _ms > 0 and _o > 0 and (entry.no + _ms - _o) <= 0:
+                        entry._capacity_dead_checked = True  # 確認は1回だけ（生存時の連続フルGET防止）
+                        try:
+                            th_chk = self._fetcher.fetch_thread(board, no)
+                        except Exception:
+                            th_chk = None
+                        if th_chk is not None and (th_chk.error or "").split()[:1] == ["404"]:
+                            print(f'[AutoRefresh] 板容量落ち検知 No.{no}'
+                                  f'（残{entry.no + _ms - _o}/{_ms}）→ 削除・自動保存')
+                            if view:
+                                self._view_update.emit(view, th_chk, False, False)
+                            self._remove_later_url.emit(entry.url)
+                            if view:
+                                self._thread_dead_sig.emit(view, entry.url)
+                            return
 
                 # 1000レス到達検知（maxresフィールドが空でない）
                 if diff["is_full"]:
