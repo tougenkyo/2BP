@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.109"
+APP_VER = "0.9.110"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3415,8 +3415,8 @@ class ThreadView(QWidget):
             "var el=document.getElementById('_nonewmsg');"
             "if(!el){el=document.createElement('div');el.id='_nonewmsg';"
             "el.style.cssText='position:fixed;bottom:30px;left:50%;"
-            "transform:translateX(-50%);background:#ffc0cb;color:#000;"
-            "border:1px solid #000;"
+            "transform:translateX(-50%);background:rgba(255,192,203,0.7);color:#000;"
+            "border:1px solid rgba(0,0,0,0.6);"
             "padding:7px 18px;border-radius:5px;z-index:99999;font-size:10pt;"
             "pointer-events:none;opacity:0;transition:opacity 0.2s;';"
             "document.body.appendChild(el);}"
