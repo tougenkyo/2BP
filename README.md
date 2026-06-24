@@ -3,7 +3,7 @@
 
 # 2BP (futaba2b python版)
 
-ふたば☆ちゃんねる（2chan.net）専用ブラウザ — PySide6 / QtWebEngine 製の広告無し・完全無料のデスクトップアプリケーションです。
+ふたば☆ちゃんねる（2chan.net）専用ブラウザ — PySide6 / QtWebEngine 製の完全無料のデスクトップアプリケーションです。
 
 ![version](https://img.shields.io/badge/version-0.9.xx-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-green)
