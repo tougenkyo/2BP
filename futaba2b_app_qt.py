@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.99"
+APP_VER = "0.9.100"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -354,6 +354,7 @@ class WrapTabBar(QTabBar):
         self._tab_colors:   dict = {}   # idx → QColor（文字色: エラー赤・新着青）
         self._tab_bg_colors: dict = {}  # idx → QColor（背景色: 未読水色）
         self._tab_id_set:   set  = set()  # ID表示スレのタブindex（基底色=ピンク）
+        self._tab_quar_set: set  = set()  # 隔離スレのタブindex（基底色=オレンジ。ID併発時=#FF0099）
         self._tab_icons:    dict = {}   # idx → QPixmap（タブアイコン）
         self._tab_width_cache: dict = {}  # idx → ((text, has_icon), width)
         self._pinned_widgets: set = set()  # BoardPane._pinnedへの参照（描画用）
@@ -498,13 +499,19 @@ class WrapTabBar(QTabBar):
         self.update()
 
     def _refresh_base_color(self, idx: int):
-        """基底文字色を反映する。op-no-id スレ(_tab_id_set)は青より優先でピンク。
-        エラー赤は最優先で維持。op-no-id でない通常スレの新着青は維持する。"""
+        """基底文字色を反映する。
+        優先順位: エラー赤 > {ID+隔離=#FF0099, ID=ピンク, 隔離=オレンジ} > 新着青 > デフォルト。"""
         cur = self._tab_colors.get(idx)
         if cur is not None and cur == QColor(Qt.GlobalColor.red):
             return  # 赤(エラー)は最優先
-        if idx in self._tab_id_set:
+        _is_id   = idx in self._tab_id_set
+        _is_quar = idx in self._tab_quar_set
+        if _is_id and _is_quar:
+            self._tab_colors[idx] = QColor("#FF0099")  # ID+隔離（青より優先）
+        elif _is_id:
             self._tab_colors[idx] = QColor("#ff80c0")  # op-no-id=ピンク（青より優先）
+        elif _is_quar:
+            self._tab_colors[idx] = QColor("#ff8800")  # 隔離=オレンジ（青より優先）
         elif cur is not None and cur == QColor("#4488ff"):
             return  # 通常スレの新着青は維持
         elif cur is not None:
@@ -524,6 +531,8 @@ class WrapTabBar(QTabBar):
         # _tab_id_set も同様にシフト
         self._tab_id_set = {(k - 1 if k > idx else k)
                             for k in self._tab_id_set if k != idx}
+        self._tab_quar_set = {(k - 1 if k > idx else k)
+                              for k in self._tab_quar_set if k != idx}
 
     def tabInserted(self, idx: int):
         super().tabInserted(idx)
@@ -534,6 +543,7 @@ class WrapTabBar(QTabBar):
                 new_d[k + 1 if k >= idx else k] = v
             d.clear(); d.update(new_d)
         self._tab_id_set = {(k + 1 if k >= idx else k) for k in self._tab_id_set}
+        self._tab_quar_set = {(k + 1 if k >= idx else k) for k in self._tab_quar_set}
 
     def setTabText(self, idx: int, text: str):
         super().setTabText(idx, text)
@@ -5814,6 +5824,7 @@ class CatalogView(QWidget):
     _entries_ready = Signal(list)   # スレッド→UI の安全な橋渡し
     _hover_img_ready  = Signal(bytes, object)  # (img_data, cursor_pos) BGスレッド→UIスレッド
     error_band_changed = Signal(str)  # 通信エラー赤帯（text=詳細, ""=解除）をスレタブへ伝播
+    quar_nos_changed   = Signal(object)  # 隔離スレNo集合が更新された（スレタブのオレンジ色再評価用）
     _catalog_err_sig   = Signal(str)  # BGスレッド→UI: カタログfetch失敗の詳細
 
     def __init__(self, fetcher: FutabaFetcher, settings: AppSettings, parent=None):
@@ -5828,6 +5839,7 @@ class CatalogView(QWidget):
         self._email_cache: dict = {}            # {no: email} board_top取得済みemail（二重レンダリング防止）
         self._catalog_json_cache: dict = {}     # {no: {"email","id"}} mode=json取得済み
         self._catalog_json_nos: set = set()     # mode=json に存在したスレNo集合（隔離判定用）
+        self._quar_nos: set = set()             # 隔離スレNo集合（json∖cat。スレタブのオレンジ判定用）
         # 検索ボックスのビュー状態保存をデバウンス（キーストローク毎の全量設定保存を防止）
         self._view_state_save_timer = QTimer(self)
         self._view_state_save_timer.setSingleShot(True)
@@ -6247,6 +6259,8 @@ class CatalogView(QWidget):
                 if _em and not _e_ent.email:
                     _e_ent.email = _em
         # mode=json取得済み情報を先行適用（前回json基準）: email/id補完 + 隔離スレ合成
+        _prev_quar_nos = set(self._quar_nos)
+        self._quar_nos = set()
         if self._catalog_json_cache:
             for _e_ent in entries:
                 _ji = self._catalog_json_cache.get(_e_ent.no)
@@ -6254,6 +6268,11 @@ class CatalogView(QWidget):
                     if _ji.get("email"):
                         _e_ent.email = _ji["email"]
                     _e_ent.op_id = _ji.get("id", "")
+            # 隔離スレNo集合（json∖cat）を算出。タブのオレンジ判定用で、
+            # 「最下部にまとめる」表示設定(catalog_quarantine_bottom)とは独立に持つ。
+            if self._catalog_json_nos:
+                _real_cat_nos = {e.no for e in entries}  # この時点では実カタログのみ
+                self._quar_nos = self._catalog_json_nos - _real_cat_nos
             # 隔離スレ = json にあって cat に無い（隔離されるとカタログから消えてjsonに残る）
             if (self._catalog_json_nos
                     and getattr(self._settings, 'catalog_quarantine_bottom', True)):
@@ -6320,6 +6339,9 @@ class CatalogView(QWidget):
             threading.Thread(
                 target=self._fetch_board_info_bg,
                 args=(self._board,), daemon=True).start()
+        # 隔離スレNo集合が変化したら、開いているスレタブのオレンジ色を再評価させる
+        if self._quar_nos != _prev_quar_nos:
+            self.quar_nos_changed.emit(self._quar_nos)
 
 
 

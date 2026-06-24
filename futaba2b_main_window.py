@@ -601,6 +601,8 @@ class MainWindow(QMainWindow):
             lambda text, p=inner: self._broadcast_error_band(p, text))
         cat_view.catalog_new_arrivals.connect(
             lambda urls, _inner=inner: self._on_catalog_new_arrivals(_inner, urls))
+        cat_view.quar_nos_changed.connect(
+            lambda nos, _inner=inner, _cv=cat_view: self._recolor_quar_tabs(_inner, _cv))
         cat_view.auto_refresh_requested.connect(
             lambda v=cat_view: self._open_ar_dialog(v))
         inner.insertTab(0, cat_view, "カタログ"); inner.setCurrentIndex(0)
@@ -835,6 +837,45 @@ class MainWindow(QMainWindow):
         else:
             tb._tab_id_set.discard(idx)
 
+    def _update_tab_quar_flag(self, tb, cat_view, view, idx: int):
+        """隔離スレ(json∖cat)のオレンジ基底フラグを _tab_quar_set に反映する。
+        判定: 同ペイン CatalogView の隔離No集合(_quar_nos)に view のスレNoが含まれるか。"""
+        if not hasattr(tb, "_tab_quar_set") or not isinstance(view, ThreadView):
+            return
+        _quar = False
+        if getattr(self._settings, "tab_orange_quarantine", True) and cat_view is not None:
+            _th = getattr(view, "_thread", None)
+            _no = getattr(_th, "no", None) if _th else None
+            if _no is not None and _no in getattr(cat_view, "_quar_nos", set()):
+                _quar = True
+        if _quar:
+            tb._tab_quar_set.add(idx)
+        else:
+            tb._tab_quar_set.discard(idx)
+
+    def _pane_catalog_view(self, inner):
+        """インナータブ(QTabWidget)内の CatalogView を返す（無ければ None）。"""
+        try:
+            for i in range(inner.count()):
+                w = inner.widget(i)
+                if isinstance(w, CatalogView):
+                    return w
+        except Exception:
+            pass
+        return None
+
+    def _recolor_quar_tabs(self, inner, cat_view):
+        """隔離No集合の変化時、開いている全スレタブのオレンジ色を再評価する。"""
+        tb = inner.tabBar()
+        if not hasattr(tb, "_tab_quar_set"):
+            return
+        for i in range(inner.count()):
+            w = inner.widget(i)
+            if isinstance(w, ThreadView):
+                self._update_tab_quar_flag(tb, cat_view, w, i)
+                tb._refresh_base_color(i)
+        tb.update()
+
     def _update_thread_badge(self, inner: "BoardPane", view, no: int, new_count: int):
         """タブに未読レス数バッジを表示"""
         idx = inner.indexOf(view)
@@ -843,12 +884,17 @@ class MainWindow(QMainWindow):
         if hasattr(tb, "_tab_colors"):
             # ID表示スレのピンク基底色フラグを更新（全表示経路共通・赤/青より下位）
             self._update_tab_id_flag(tb, view, idx)
+            # 隔離スレのオレンジ基底色フラグを更新（同上）
+            self._update_tab_quar_flag(tb, self._pane_catalog_view(inner), view, idx)
             if new_count > 0:
                 # 新着あり → 色を決定（エラー赤は最優先で維持）
                 cur = tb._tab_colors.get(idx)
                 if cur != QColor(Qt.GlobalColor.red):
-                    if idx in tb._tab_id_set:
-                        tb._tab_colors[idx] = QColor("#ff80c0")   # op-no-id は常にピンク
+                    if idx in tb._tab_id_set or idx in tb._tab_quar_set:
+                        # ID/隔離/両方 は青より優先（#ff80c0 / #ff8800 / #FF0099）
+                        if cur and cur == QColor("#4488ff"):
+                            del tb._tab_colors[idx]
+                        tb._refresh_base_color(idx)
                     elif view.isVisible():
                         # 表示中（自分が見ている）タブ → 青にせず基底色（=既読扱い）
                         if cur and cur == QColor("#4488ff"):

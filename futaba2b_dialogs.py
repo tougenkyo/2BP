@@ -3588,6 +3588,12 @@ class AppSettingsDialog(QDialog):
         self._tab_pink_op_no_id.setToolTip(
             "メール欄にID表示の指定が無いのにIDが出ているスレのタブ文字をピンクにします")
         taf.addRow(self._tab_pink_op_no_id)
+        self._tab_orange_quarantine = QCheckBox("隔離されたスレのタブをオレンジ色にする")
+        self._tab_orange_quarantine.setToolTip(
+            "カタログから消えて隔離されたスレ(json∖cat)のタブ文字をオレンジにします。"
+            "IDと隔離が同時の場合は #FF0099。\n"
+            "※判定にはカタログのmode=json取得（メール欄/IDバッジ か 隔離まとめ表示）が必要です")
+        taf.addRow(self._tab_orange_quarantine)
 
         # 保持件数
         g_keep = QGroupBox("保持件数"); f0.addWidget(g_keep); kpf = QFormLayout(g_keep)
@@ -4173,6 +4179,7 @@ class AppSettingsDialog(QDialog):
         self._show_console.setChecked(getattr(s, "show_console", False))
         self._tab_max_width.setValue(getattr(s, "tab_max_width", 0))
         self._tab_pink_op_no_id.setChecked(getattr(s, "tab_pink_op_no_id", False))
+        self._tab_orange_quarantine.setChecked(getattr(s, "tab_orange_quarantine", True))
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
         self._recent_closed_max.setValue(getattr(s, "recent_closed_max", 30))
         self._recent_images_max.setValue(getattr(s, "recent_images_max", 30))
@@ -4311,6 +4318,7 @@ class AppSettingsDialog(QDialog):
         s.show_console            = self._show_console.isChecked()
         s.tab_max_width           = self._tab_max_width.value()
         s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
+        s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.recent_closed_max       = self._recent_closed_max.value()
         s.recent_images_max       = self._recent_images_max.value()
