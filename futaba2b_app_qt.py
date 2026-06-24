@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.97"
+APP_VER = "0.9.98"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1739,7 +1739,7 @@ class BoardPane(QWidget):
         save_menu.addAction("MHTMLとして保存(S)",    self._save_mht_current)
         save_menu.addAction("ZIPとして保存",         self._save_zip_current)
         self._btn_save.setMenu(save_menu)
-        self._btn_save.clicked.connect(self._save_mht_current)  # 左クリック = MHT保存
+        self._btn_save.clicked.connect(self._save_current_default)  # 左クリック = 前回の保存種類（初期値zip）
 
         self._btn_close = _itb("閉じる", _SP.SP_TitleBarCloseButton, "btn_close")
 
@@ -2166,15 +2166,34 @@ class BoardPane(QWidget):
 
     def _scroll_prev_bookmark(self): pass   # TODO: しおり機能
 
+    def _remember_save_format(self, fmt: str):
+        """保存ボタン左クリックの初期値として今回の保存種類を記憶する"""
+        if getattr(self._settings, "last_save_format", "zip") != fmt:
+            self._settings.last_save_format = fmt
+            try:
+                self._settings.save()
+            except Exception:
+                pass
+
+    def _save_current_default(self):
+        """保存ボタン左クリック: 前回選んだ保存種類で保存（初期値=zip）"""
+        fmt = getattr(self._settings, "last_save_format", "zip")
+        {"html": self._save_html_current,
+         "mht":  self._save_mht_current,
+         "zip":  self._save_zip_current}.get(fmt, self._save_zip_current)()
+
     def _save_mht_current(self):
+        self._remember_save_format("mht")
         w = self._tabs.currentWidget()
         if isinstance(w, ThreadView): w.save_as_mht()
 
     def _save_html_current(self):
+        self._remember_save_format("html")
         w = self._tabs.currentWidget()
         if isinstance(w, ThreadView): w.save_as_html()
 
     def _save_zip_current(self):
+        self._remember_save_format("zip")
         w = self._tabs.currentWidget()
         if isinstance(w, ThreadView): w.save_as_zip()
 

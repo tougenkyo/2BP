@@ -401,6 +401,8 @@ class AppSettings:
         self.image_save_folders: list = []   # 保存先フォルダリスト（先頭がデフォルト）
         self.image_save_btn_wrap: int = 3    # フォルダボタンの折り返し列数
         self.image_save_label_len: int = 0   # ボタンラベルの最大文字数（0=全表示）
+        # 保存ボタン左クリックの保存形式（前回選んだ種類を記憶。初期値=zip）
+        self.last_save_format: str = "zip"   # "html" | "mht" | "zip"
         # ログファイル命名テンプレート
         # 変数: {no}=スレ番号, {title}=OP1行目, {board}=板名,
         #        {date}=YYYYMMDD, {time}=HHMMSS, {datetime}=YYYYMMDD_HHMMSS,
@@ -774,6 +776,8 @@ class AppSettings:
             self.image_save_folders  = raw.get("image_save_folders",  [])
             self.image_save_btn_wrap = int(raw.get("image_save_btn_wrap", 3))
             self.image_save_label_len = int(raw.get("image_save_label_len", 0))
+            _lsf = str(raw.get("last_save_format", "zip")).lower()
+            self.last_save_format = _lsf if _lsf in ("html", "mht", "zip") else "zip"
             self.log_filename_template = raw.get("log_filename_template", "{date}/{date}_No.{no}_{title}")
             self.bouyomi_enabled = raw.get("bouyomi_enabled", False)
             self.bouyomi_host    = raw.get("bouyomi_host",    "localhost")
@@ -946,6 +950,7 @@ class AppSettings:
                         "image_save_folders":   self.image_save_folders,
                         "image_save_btn_wrap":  self.image_save_btn_wrap,
                         "image_save_label_len": self.image_save_label_len,
+                        "last_save_format":     self.last_save_format,
                         "log_filename_template": self.log_filename_template,
                         "bouyomi_enabled": self.bouyomi_enabled,
                         "bouyomi_host":    self.bouyomi_host,
