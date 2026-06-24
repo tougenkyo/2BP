@@ -2068,7 +2068,7 @@ def _make_scroll_bottom_js(n: int = 5, top_n: int = 0) -> str:
     n = int(n); top_n = int(top_n)
     return (
         f'(function(){{'
-        f'  var NEED={n},TOPNEED={top_n},THRESHOLD=80,COOLDOWN=0;'
+        f'  var NEED={n},TOPNEED={top_n},THRESHOLD=80,COOLDOWN=1000;'
         f'  var count=0,topCount=0,cooling=false,_indTimer=null;'
         f'  function _getInd(){{'
         f'    var el=document.getElementById("_scroll_ind");'
