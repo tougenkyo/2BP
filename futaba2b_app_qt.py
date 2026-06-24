@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.98"
+APP_VER = "0.9.99"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -678,6 +678,10 @@ class WrapTabBar(QTabBar):
             # 正確なインデックスを記録する（contextMenuEvent の e.pos() は精度に問題がある）
             self._ctx_idx = i
             return
+        # 左クリック: ダブルクリック時の index 解決用に reflow 前の確定 index を保持
+        # （1回目の押下で setCurrentIndex → アクティブ行が最下段へ移動し、2回目の
+        #   位置からは別タブに解決されてしまうのを防ぐ）
+        self._press_idx = i
         if i >= 0 and not self._close_rect(self._tab_rects().get(i, QRect())).contains(pos):
             self.setCurrentIndex(i)              # × 以外の左クリック→選択
             # D&D 開始準備
@@ -874,7 +878,12 @@ class WrapTabBar(QTabBar):
         self._drag_tip_order    = []
 
     def mouseDoubleClickEvent(self, e):
-        i = self._idx_at(e.position().toPoint())
+        # 1回目の押下で setCurrentIndex によりアクティブ行が最下段へ reflow し、
+        # このイベント（2回目）の位置からは別タブに解決されてしまう。
+        # reflow 前に mousePressEvent で確定した _press_idx を優先して使う。
+        i = getattr(self, '_press_idx', -1)
+        if i < 0:
+            i = self._idx_at(e.position().toPoint())
         if i >= 0: self.tabBarDoubleClicked.emit(i)
 
     def contextMenuEvent(self, e):
