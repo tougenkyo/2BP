@@ -2626,7 +2626,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[LOG] 原本html取得失敗: {e}")
         if not raw:
-            return self._build_log_html_rendered(cur, thread)
+            return self._set_log_title(self._build_log_html_rendered(cur, thread), thread)
         # 自動更新は差分APIのみで生htmキャッシュを更新しないため、フルGET失敗時に
         # 古いキャッシュ(=開いた時点の少ないレス数)へフォールバックすることがある。
         # 原本htmのレス数(OP1 + class=rtd) がモデルより少なければ、
@@ -2640,7 +2640,43 @@ class MainWindow(QMainWindow):
                 print(f"[LOG] 原本htmレス不足 raw≈{raw_n} < model={model_n} "
                       f"→ 不足レスを生htm形式で補完")
                 raw = self._append_missing_res_raw(raw, thread, raw_n)
-        return self._strip_futaba_ads(raw)
+        return self._set_log_title(self._strip_futaba_ads(raw), thread)
+
+    def _op_thread_name(self, thread) -> str:
+        """0レスめ(OP)のスレ名（ブラウザtitle用）。OPコメント先頭の有効行→題名→
+        thread.title の順でフォールバック。ファイル名生成と同じくOP先頭行を優先する。"""
+        import re as _re
+        try:
+            op = thread.res_list[0]
+        except Exception:
+            op = None
+        if op is not None:
+            for _l in (getattr(op, "comment_text", "") or "").splitlines():
+                _s = _l.strip()
+                if _s and not _re.match(r'^\[[\w.\-:]+\]$', _s):
+                    return _s[:80]
+            sub = (getattr(op, "subject", "") or "").strip()
+            if sub:
+                return sub[:80]
+        t = (getattr(thread, "title", "") or "").rsplit(" - ", 1)[0].strip()
+        return t[:80] or f"No.{getattr(thread, 'no', '')}"
+
+    def _set_log_title(self, html: str, thread) -> str:
+        """保存HTMLの<title>を0レスめのスレ名に置換する（無ければ</head>直前に挿入）。
+        原本futabaの切り詰め/汎用title・空titleのままだとブラウザのタブに
+        ファイル名(20260625_No…)が出てしまうのを防ぐ。"""
+        import re as _re, html as _hm
+        name = self._op_thread_name(thread)
+        if not name:
+            return html
+        tag = f"<title>{_hm.escape(name)}</title>"
+        if _re.search(r"<title>.*?</title>", html, _re.I | _re.S):
+            return _re.sub(r"<title>.*?</title>", lambda _m: tag, html,
+                           count=1, flags=_re.I | _re.S)
+        if _re.search(r"</head>", html, _re.I):
+            return _re.sub(r"</head>", lambda _m: tag + "</head>", html,
+                           count=1, flags=_re.I)
+        return html
 
     def _append_missing_res_raw(self, raw: str, thread, raw_n: int) -> str:
         """生futaba htm に、モデルの不足レス(res_list[raw_n:])を
@@ -2693,12 +2729,20 @@ class MainWindow(QMainWindow):
             fsz   = res.file_size_bytes or 0
             tw    = getattr(res, "thumb_w", 0) or 0
             th    = getattr(res, "thumb_h", 0) or 0
-            _wh   = f" width={tw} height={th}" if (tw > 0 and th > 0) else ""
+            if tw > 0 and th > 0:
+                _wh     = f" width={tw} height={th}"
+                _istyle = ""
+            else:
+                # サムネ寸法が無い差分追記レスは width/height が付かず、かつ /src/(原寸)を
+                # 参照するため外部ブラウザで等倍表示になる。CSSでサムネ相当(250px)に
+                # 上限を掛けて縮小する（アスペクト比はブラウザが維持）。
+                _wh     = ""
+                _istyle = " style=\"max-width:250px;max-height:250px;width:auto;height:auto\""
             img_part = (
                 f"<br> &nbsp; &nbsp; <a href=\"{iu}\" target='_blank'>{iname}</a>"
                 f"-({fsz} B) <br>"
                 f"<a href=\"{iu}\" target='_blank'>"
-                f"<img src='{tu}' border=0 align=left{_wh} hspace=20 "
+                f"<img src='{tu}' border=0 align=left{_wh}{_istyle} hspace=20 "
                 f"alt=\"{fsz} B\" loading=\"lazy\"></a>"
             )
             bq_style = ' style="margin-left:286px;"'
@@ -3598,6 +3642,13 @@ class MainWindow(QMainWindow):
         inner.setCurrentIndex(idx)
         self._refresh_tab_pane()
         view.load_log_thread(board, no, html, media_base_url, thread_url, media_map)
+        # 保存ログのタブ名はファイル名のままになるため、読み込み後に
+        # 0レスめ(OP)のスレ名へ更新する（通常スレの _pin_safe_set 相当）。
+        _th = getattr(view, '_thread', None)
+        if _th is not None:
+            _op = self._op_thread_name(_th)
+            if _op:
+                _pin_safe_set(inner, view, f"📄 {_op[:20]}")
 
     @staticmethod
     def _is_futaba_log(html: str) -> bool:

@@ -1231,16 +1231,40 @@ class FutabaFetcher:
 
         # サムネ取得（img板: thre内、may板: soup全体）
         ctx = thre if is_img_board else soup
-        ti = ctx.find("img", src=_THUMB_SRC_RE)
-        if ti:
+        ti = None
+        op_a = None
+        if is_img_board:
+            # OP自身のメディアは返信(td.rtd)の外にある。「サムネ保存しない」ログでは
+            # OPサムネが /thumb/ → /src/ に差し替わり、旧来の find(img, /thumb/) が
+            # OP画像を素通りして返信(動画)の /thumb/ サムネを誤取得し、OPに動画ファイル名が
+            # 混入していた。/thumb/・/src/ を問わず、form・td.rtd の外にある最初の
+            # 画像リンク(<a href=src><img></a>)をOP自身のメディアとして採用する。
+            for a in ctx.find_all("a", href=_SRC_HREF_RE):
+                if a.find_parent("form") or a.find_parent("td", class_="rtd"):
+                    continue
+                if a.find("img"):
+                    op_a = a
+                    break
+            if op_a is not None:
+                ti = op_a.find("img")
+        if op_a is not None and ti is not None:
             tu=urllib.parse.urljoin(board.base_url,ti.get("src",""))
             tw=int(ti.get("width",0) or 0); th=int(ti.get("height",0) or 0)
             m=re.match(r"(\d+)",ti.get("alt",""))
             if m: isz=int(m.group(1))
-            pa=ti.find_parent("a")
-            if pa:
-                full=pa.get("href",""); iu=urllib.parse.urljoin(board.base_url,full)
-                iname=full.split("/")[-1]
+            full=op_a.get("href",""); iu=urllib.parse.urljoin(board.base_url,full)
+            iname=full.split("/")[-1]
+        else:
+            ti = ctx.find("img", src=_THUMB_SRC_RE)
+            if ti:
+                tu=urllib.parse.urljoin(board.base_url,ti.get("src",""))
+                tw=int(ti.get("width",0) or 0); th=int(ti.get("height",0) or 0)
+                m=re.match(r"(\d+)",ti.get("alt",""))
+                if m: isz=int(m.group(1))
+                pa=ti.find_parent("a")
+                if pa:
+                    full=pa.get("href",""); iu=urllib.parse.urljoin(board.base_url,full)
+                    iname=full.split("/")[-1]
 
         # OP ファイルサイズ: "画像ファイル名：<a>name</a>-(N B)" 形式
         if iu:
