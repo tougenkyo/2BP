@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.115"
+APP_VER = "0.9.116"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3658,6 +3658,12 @@ class ThreadView(QWidget):
             self._error_banner_html = ""
         # 全体再描画でバナーの有無が確定する → エラー状態を記録
         # （次回更新が差分更新かどうかの判定に使う。復旧時は全体再描画を強制してバナーを消す）
+        # エラー(赤帯/赤タブ)→正常復旧時は、手動更新/スクロール更新でも自動更新と同様に
+        # タブのエラー赤を解除する（自動更新は _do_refresh 側で解除済み。この経路は
+        # thread_recovered を出していなかったため赤が残っていた）。上下赤帯は全体再描画で消える。
+        if _recovered_from_error:
+            self._has_error_band = False
+            self.thread_recovered.emit()
         self._was_error = _is_error
         self._last_html = html
         import time as _time
