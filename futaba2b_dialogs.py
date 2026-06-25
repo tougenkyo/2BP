@@ -4222,7 +4222,11 @@ class AppSettingsDialog(QDialog):
         _theme_idx = self._theme_combo.findText(_TM.name())
         if _theme_idx < 0:
             _theme_idx = self._theme_combo.findText(getattr(s, "theme", "dark"))
+        # 初期値セットでは _apply_theme_now を発火させない
+        # （発火すると設定を開く度に app.setStyleSheet で全体が再ポリッシュされ重くなる）
+        self._theme_combo.blockSignals(True)
         self._theme_combo.setCurrentIndex(max(0, _theme_idx))
+        self._theme_combo.blockSignals(False)
 
         # ログ保存
         self._log_dir.setText(getattr(s, "log_save_dir", ""))

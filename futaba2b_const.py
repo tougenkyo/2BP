@@ -54,6 +54,7 @@ class ThemeManager:
     """
     _data: dict = {}
     _name: str  = "dark"
+    _check_png_path: str = ""   # qt_stylesheet 用チェックPNGの固定パス（一度だけ生成）
 
     @classmethod
     def theme_dir(cls, name: str | None = None) -> "_Path":
@@ -105,21 +106,35 @@ class ThemeManager:
         def c(k, fb="#888"): return u.get(k, fb)
 
         # チェックマーク PNG を一時ファイルに書き出す（Qt styleSheet は data: URI 非対応）
+        # 毎回 NamedTemporaryFile(delete=False) で作ると %TEMP% に 2bp_chk_*.png が
+        # 無限に溜まり、長時間運用/再起動後に全 temp 操作が重くなる。
+        # → 固定パスへ一度だけ書き出して全呼び出し・全起動で再利用する。
         import base64, tempfile, os as _os
-        _CHECK_PNG_B64 = (
-            "iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAAS0lEQVR42mNgGAWj"
-            "YBSQAv4jAbpYQjOL/mMBo5bQxhJiNVHsE2I1UxxcxLiUanGCzyCqRz42w2iSwv4T"
-            "AWiafId2hqRriTwKBhQAAC5SdpiVDhmiAAAAAElFTkSuQmCC"
-        )
-        _check_png_path = ""
-        try:
-            _tmp = tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False, prefix="2bp_chk_")
-            _tmp.write(base64.b64decode(_CHECK_PNG_B64))
-            _tmp.close()
-            _check_png_path = _tmp.name.replace("\\", "/")
-        except Exception:
-            pass
+        _check_png_path = getattr(cls, "_check_png_path", "")
+        if not _check_png_path:
+            _CHECK_PNG_B64 = (
+                "iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAAS0lEQVR42mNgGAWj"
+                "YBSQAv4jAbpYQjOL/mMBo5bQxhJiNVHsE2I1UxxcxLiUanGCzyCqRz42w2iSwv4T"
+                "AWiafId2hqRriTwKBhQAAC5SdpiVDhmiAAAAAElFTkSuQmCC"
+            )
+            try:
+                _p = _os.path.join(tempfile.gettempdir(), "2bp_check.png")
+                if not _os.path.exists(_p):
+                    with open(_p, "wb") as _f:
+                        _f.write(base64.b64decode(_CHECK_PNG_B64))
+                _check_png_path = _p.replace("\\", "/")
+                cls._check_png_path = _check_png_path
+                # 旧版が残した 2bp_chk_*.png を一度だけ掃除（溜まると重くなる）
+                try:
+                    import glob as _glob
+                    for _old in _glob.glob(
+                            _os.path.join(tempfile.gettempdir(), "2bp_chk_*.png")):
+                        try: _os.unlink(_old)
+                        except Exception: pass
+                except Exception:
+                    pass
+            except Exception:
+                _check_png_path = ""
         _check_img = f'image: url("{_check_png_path}");' if _check_png_path else ""
 
         return f"""

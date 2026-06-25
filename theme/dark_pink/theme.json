@@ -1,48 +1,72 @@
 {
+  "_comment": "2BP ダークテーマ ピンク — 色を変えるだけでUIが変わります",
+
   "ui": {
-    "window_bg":        "#1e1318",
-    "panel_bg":         "#27181f",
-    "panel_bg2":        "#221520",
-    "panel_border":     "#5a3040",
-    "panel_header_bg":  "#3a2030",
-    "panel_header_fg":  "#f0b8cc",
-    "toolbar_bg":       "#2a1820",
-    "toolbar_border":   "#5a3040",
-    "statusbar_bg":     "#2a1820",
-    "statusbar_border": "#5a3040",
-    "statusbar_fg":     "#e8a0b8",
-    "text_primary":     "#f0d0dc",
-    "text_muted":       "#885060",
-    "btn_bg":           "#3d2030",
-    "btn_fg":           "#f0c0d0",
-    "btn_border":       "#6a3850",
-    "btn_hover_bg":     "#5a2840",
-    "btn_checked_bg":   "#c0507a",
-    "btn_checked_fg":   "#ffffff",
-    "input_bg":         "#2e1825",
-    "input_fg":         "#f0d0dc",
-    "input_border":     "#6a3850",
+    "window_bg":          "#1e1318",
+    "panel_bg":           "#27181f",
+    "panel_bg2":          "#221520",
+    "panel_header_bg":    "#3a2030",
+    "panel_header_fg":    "#f0b8cc",
+    "panel_border":       "#5a3040",
+
+    "text_primary":       "#f0d0dc",
+    "text_secondary":     "#aaaaaa",
+    "text_muted":         "#885060",
+    "text_danger":        "#f88888",
+
+    "btn_bg":             "#3d2030",
+    "btn_fg":             "#f0c0d0",
+    "btn_border":         "#6a3850",
+    "btn_hover_bg":       "#5a2840",
+    "btn_checked_bg":     "#c0507a",
+    "btn_checked_fg":     "#ffffff",
+
+    "toolbar_bg":         "#2a1820",
+    "toolbar_border":     "#5a3040",
+
+    "statusbar_bg":       "#2a1820",
+    "statusbar_fg":       "#e8a0b8",
+    "statusbar_border":   "#5a3040",
+
+    "tab_bg":             "#2d2d2d",
+    "tab_fg":             "#cccccc",
+    "tab_selected_bg":    "#3a3a3a",
+    "tab_selected_fg":    "#ffffff",
+    "tab_border":         "#555555",
+    "tab_error_fg":       "#ff0000",
+    "tab_new_fg":         "#4488ff",
+    "tab_unread_bg":      "#5000b4dc",
+    "tab_id_fg":          "#ff80c0",
+    "tab_quar_fg":        "#ff8800",
+    "tab_id_quar_fg":     "#ff0099",
+    "tab_pin_indicator":  "#4caf50",
+    "tab_pin_icon":       "#aaccff",
+
+    "scroll_bg":          "#251520",
+    "scroll_handle":      "#7a3858",
+
+    "separator_color":    "#555555",
+    "progress_chunk":     "#c0507a",
+    "progress_bg":        "#3a2030",
+
+    "input_bg":           "#2e1825",
+    "input_fg":           "#f0d0dc",
+    "input_border":       "#6a3850",
     "input_focus_border": "#e0709a",
-    "tab_bg":           "#2e1825",
-    "tab_fg":           "#e0a0b8",
-    "tab_border":       "#5a3040",
-    "tab_selected_bg":  "#5a2840",
-    "tab_selected_fg":  "#ffffff",
-    "scroll_bg":        "#251520",
-    "scroll_handle":    "#7a3858",
-    "progress_bg":      "#3a2030",
-    "progress_chunk":   "#c0507a",
-    "checkbox_border": "#5a3040",
-    "popup_bg":         "#2e1825",
-    "popup_border":     "#6a3850",
-    
+
+    "popup_bg":           "#2e1825",
+    "popup_border":       "#6a3850",
+
+    "checkbox_border":    "#5a3040",
+
     "new_res_unread":     "#4488ff",
     "new_res_tab_update": "#ff4444",
     "tab_bg_live":        "rgba(0,180,220,80)",
-    
+
     "countdown_fg":       "#FFFFEE",
-    "menu_separator": "#888"
+    "menu_separator":     "#888"
   },
+
   "thread": {
     "body_bg":            "#2a1520",
     "body_fg":            "#f0c0d0",

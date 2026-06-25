@@ -28,11 +28,19 @@
     "statusbar_fg":       "#333333",
     "statusbar_border":   "#cccccc",
 
-    "tab_bg":             "#e8e8e8",
-    "tab_fg":             "#444444",
-    "tab_selected_bg":    "#ffffff",
-    "tab_selected_fg":    "#111111",
-    "tab_border":         "#cccccc",
+    "tab_bg":             "#2d2d2d",
+    "tab_fg":             "#cccccc",
+    "tab_selected_bg":    "#3a3a3a",
+    "tab_selected_fg":    "#ffffff",
+    "tab_border":         "#555555",
+    "tab_error_fg":       "#ff0000",
+    "tab_new_fg":         "#4488ff",
+    "tab_unread_bg":      "#5000b4dc",
+    "tab_id_fg":          "#ff80c0",
+    "tab_quar_fg":        "#ff8800",
+    "tab_id_quar_fg":     "#ff0099",
+    "tab_pin_indicator":  "#4caf50",
+    "tab_pin_icon":       "#aaccff",
 
     "scroll_bg":          "#f0f0f0",
     "scroll_handle":      "#bbbbbb",
@@ -49,14 +57,14 @@
     "popup_bg":           "#ffffff",
     "popup_border":       "#bbbbbb",
     
-    "checkbox_border": "#cccccc",
+    "checkbox_border":    "#cccccc",
 
     "new_res_unread":     "#4488ff",
     "new_res_tab_update": "#ff4444",
     "tab_bg_live":        "rgba(0,180,220,80)",
     
     "countdown_fg":       "#5a1030",
-    "menu_separator": "#888"
+    "menu_separator":     "#888"
   },
 
   "thread": {

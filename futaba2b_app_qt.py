@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.116"
+APP_VER = "0.9.118"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -345,6 +345,25 @@ class WrapTabBar(QTabBar):
     @property
     def _C_BG(self):   return _TM.ui("window_bg",       "#1E1E1E")
 
+    # ── タブ状態色（theme由来・設定/比較の単一ソース） ──
+    # 既定値は従来のハードコード色そのまま。theme.json の ui で上書き可能。
+    @classmethod
+    def c_error(cls):     return QColor(_TM.ui("tab_error_fg",     "#ff0000"))  # エラー赤(文字)
+    @classmethod
+    def c_new(cls):       return QColor(_TM.ui("tab_new_fg",       "#4488ff"))  # 新着青(文字)
+    @classmethod
+    def c_unread_bg(cls): return QColor(_TM.ui("tab_unread_bg",    "#5000b4dc"))  # 未読背景(AARRGGBB)
+    @classmethod
+    def c_id(cls):        return QColor(_TM.ui("tab_id_fg",        "#ff80c0"))  # ID=ピンク(文字)
+    @classmethod
+    def c_quar(cls):      return QColor(_TM.ui("tab_quar_fg",      "#ff8800"))  # 隔離=オレンジ(文字)
+    @classmethod
+    def c_idquar(cls):    return QColor(_TM.ui("tab_id_quar_fg",   "#ff0099"))  # ID+隔離(文字)
+    @classmethod
+    def c_pin_ind(cls):   return QColor(_TM.ui("tab_pin_indicator","#4caf50"))  # ピン留め緑線
+    @classmethod
+    def c_pin_icon(cls):  return QColor(_TM.ui("tab_pin_icon",     "#aaccff"))  # ピンアイコン水色
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setExpanding(False)
@@ -502,17 +521,17 @@ class WrapTabBar(QTabBar):
         """基底文字色を反映する。
         優先順位: エラー赤 > {ID+隔離=#FF0099, ID=ピンク, 隔離=オレンジ} > 新着青 > デフォルト。"""
         cur = self._tab_colors.get(idx)
-        if cur is not None and cur == QColor(Qt.GlobalColor.red):
+        if cur is not None and cur == self.c_error():
             return  # 赤(エラー)は最優先
         _is_id   = idx in self._tab_id_set
         _is_quar = idx in self._tab_quar_set
         if _is_id and _is_quar:
-            self._tab_colors[idx] = QColor("#FF0099")  # ID+隔離（青より優先）
+            self._tab_colors[idx] = self.c_idquar()  # ID+隔離（青より優先）
         elif _is_id:
-            self._tab_colors[idx] = QColor("#ff80c0")  # op-no-id=ピンク（青より優先）
+            self._tab_colors[idx] = self.c_id()  # op-no-id=ピンク（青より優先）
         elif _is_quar:
-            self._tab_colors[idx] = QColor("#ff8800")  # 隔離=オレンジ（青より優先）
-        elif cur is not None and cur == QColor("#4488ff"):
+            self._tab_colors[idx] = self.c_quar()  # 隔離=オレンジ（青より優先）
+        elif cur is not None and cur == self.c_new():
             return  # 通常スレの新着青は維持
         elif cur is not None:
             del self._tab_colors[idx]
@@ -594,7 +613,7 @@ class WrapTabBar(QTabBar):
                 p.fillPath(path, QColor(self._C_SEL if sel else self._C_NRM))
             p.setPen(QPen(QColor(self._C_BRD), 1)); p.drawPath(path)
             if sel:
-                p.setPen(QPen(QColor("#4CAF50"), 3))
+                p.setPen(QPen(self.c_pin_ind(), 3))
                 p.drawLine(rect.left()+1, rect.bottom()+1, rect.right()-2, rect.bottom()+1)
             fnt.setBold(sel); p.setFont(fnt)
 
@@ -639,7 +658,7 @@ class WrapTabBar(QTabBar):
                     pin_fnt = QFont(self.font())
                     pin_fnt.setPixelSize(13)
                     p.setFont(pin_fnt)
-                    p.setPen(QColor("#aaccff"))
+                    p.setPen(self.c_pin_icon())
                     p.drawText(pin_rect, Qt.AlignmentFlag.AlignCenter, "📌")
 
             # ── テキスト領域 ──
@@ -652,7 +671,7 @@ class WrapTabBar(QTabBar):
 
             # _tab_colors で上書き色が指定されていればそれを使う（ただしアクティブタブは白優先）
             _ov = self._tab_colors.get(i)
-            if sel and _ov and _ov == QColor("#4488ff"):
+            if sel and _ov and _ov == self.c_new():
                 txt_color = QColor(self._C_STXT)  # アクティブタブの青は白に戻す
             else:
                 txt_color = _ov or QColor(self._C_STXT if sel else self._C_TXT)

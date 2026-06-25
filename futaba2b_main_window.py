@@ -730,7 +730,7 @@ class MainWindow(QMainWindow):
             # タブ名は変更せず色だけ赤にする（ERR表示しない）
             tb = _inner.tabBar()
             if hasattr(tb, "_tab_colors"):
-                tb._tab_colors[idx2] = QColor(Qt.GlobalColor.red)
+                tb._tab_colors[idx2] = WrapTabBar.c_error()
                 tb.update()
         view.thread_error.connect(_set_error_tab)
         # 復旧時にタブのエラー赤を解除する
@@ -741,7 +741,7 @@ class MainWindow(QMainWindow):
             tb = _inner.tabBar()
             if hasattr(tb, "_tab_colors"):
                 cur = tb._tab_colors.get(idx2)
-                if cur is not None and cur == QColor(Qt.GlobalColor.red):
+                if cur is not None and cur == WrapTabBar.c_error():
                     del tb._tab_colors[idx2]
                     tb._refresh_base_color(idx2)  # ID表示スレならピンクへ復帰
                     tb.update()
@@ -784,7 +784,7 @@ class MainWindow(QMainWindow):
                     tb_e = inner.tabBar()
                     if hasattr(tb_e, "_tab_colors"):
                         cur = tb_e._tab_colors.get(idx_e)
-                        if cur is not None and cur == QColor(Qt.GlobalColor.red):
+                        if cur is not None and cur == WrapTabBar.c_error():
                             del tb_e._tab_colors[idx_e]
                             tb_e._refresh_base_color(idx_e)  # ID表示スレならピンクへ復帰
                             tb_e.update()
@@ -889,23 +889,23 @@ class MainWindow(QMainWindow):
             if new_count > 0:
                 # 新着あり → 色を決定（エラー赤は最優先で維持）
                 cur = tb._tab_colors.get(idx)
-                if cur != QColor(Qt.GlobalColor.red):
+                if cur != WrapTabBar.c_error():
                     if idx in tb._tab_id_set or idx in tb._tab_quar_set:
                         # ID/隔離/両方 は青より優先（#ff80c0 / #ff8800 / #FF0099）
-                        if cur and cur == QColor("#4488ff"):
+                        if cur and cur == WrapTabBar.c_new():
                             del tb._tab_colors[idx]
                         tb._refresh_base_color(idx)
                     elif view.isVisible():
                         # 表示中（自分が見ている）タブ → 青にせず基底色（=既読扱い）
-                        if cur and cur == QColor("#4488ff"):
+                        if cur and cur == WrapTabBar.c_new():
                             del tb._tab_colors[idx]
                         tb._refresh_base_color(idx)
                     else:
-                        tb._tab_colors[idx] = QColor("#4488ff")   # 背景タブの新着 → 青
+                        tb._tab_colors[idx] = WrapTabBar.c_new()   # 背景タブの新着 → 青
             else:
                 # 新着なし → 青を解除し基底色（ピンク or デフォルト）を反映（エラー赤は維持）
                 cur = tb._tab_colors.get(idx)
-                if cur and cur == QColor("#4488ff"):
+                if cur and cur == WrapTabBar.c_new():
                     del tb._tab_colors[idx]
                 tb._refresh_base_color(idx)
             tb.update()
@@ -931,7 +931,7 @@ class MainWindow(QMainWindow):
         tb = pane._tabs.tabBar()
         if not hasattr(tb, "_tab_colors"): return
         cur = tb._tab_colors.get(idx)
-        if cur and cur == QColor("#4488ff"):
+        if cur and cur == WrapTabBar.c_new():
             del tb._tab_colors[idx]
             tb._refresh_base_color(idx)  # ID表示スレならピンクへ復帰
             tb.update()
@@ -1015,16 +1015,16 @@ class MainWindow(QMainWindow):
                 # op-no-idフラグを更新してから文字色を決定（赤は維持）
                 self._update_tab_id_flag(tb, w, ii)
                 cur = tb._tab_colors.get(ii)
-                if cur != QColor(Qt.GlobalColor.red):
+                if cur != WrapTabBar.c_error():
                     if ii in tb._tab_id_set:
-                        tb._tab_colors[ii] = QColor("#ff80c0")    # op-no-id は常にピンク
+                        tb._tab_colors[ii] = WrapTabBar.c_id()    # op-no-id は常にピンク
                     elif w.isVisible():
                         # 表示中タブ → 青にせず基底色（既読扱い）
-                        if cur and cur == QColor("#4488ff"):
+                        if cur and cur == WrapTabBar.c_new():
                             del tb._tab_colors[ii]
                         tb._refresh_base_color(ii)
                     else:
-                        tb._tab_colors[ii] = QColor("#4488ff")    # 背景タブ → 青
+                        tb._tab_colors[ii] = WrapTabBar.c_new()    # 背景タブ → 青
                 # 青背景（水色）
                 self._on_unread_state(inner, w, True)
         tb.update()
@@ -1036,7 +1036,7 @@ class MainWindow(QMainWindow):
         tb = inner.tabBar()
         if not hasattr(tb, "_tab_bg_colors"): return
         if has_unread:
-            tb._tab_bg_colors[idx] = QColor(0, 180, 220, 80)  # 水色・半透明
+            tb._tab_bg_colors[idx] = WrapTabBar.c_unread_bg()  # 水色・半透明
         else:
             tb._tab_bg_colors.pop(idx, None)
             # 末尾表示＝既読 → 青文字を解除し基底色（ピンク or デフォルト）を反映
@@ -1044,7 +1044,7 @@ class MainWindow(QMainWindow):
             if hasattr(tb, "_tab_colors"):
                 self._update_tab_id_flag(tb, view, idx)
                 cur = tb._tab_colors.get(idx)
-                if cur and cur == QColor("#4488ff"):
+                if cur and cur == WrapTabBar.c_new():
                     del tb._tab_colors[idx]
                 if hasattr(tb, "_refresh_base_color"):
                     tb._refresh_base_color(idx)
@@ -1275,7 +1275,7 @@ class MainWindow(QMainWindow):
             if idx2 < 0: return
             tb = _inner.tabBar()
             if hasattr(tb, "_tab_colors"):
-                tb._tab_colors[idx2] = QColor(Qt.GlobalColor.red)
+                tb._tab_colors[idx2] = WrapTabBar.c_error()
                 tb.update()
         view.thread_error.connect(_set_err_m)
         def _clear_err_m(_inner=inner, _view=view):
@@ -1284,7 +1284,7 @@ class MainWindow(QMainWindow):
             tb = _inner.tabBar()
             if hasattr(tb, "_tab_colors"):
                 cur = tb._tab_colors.get(idx2)
-                if cur is not None and cur == QColor(Qt.GlobalColor.red):
+                if cur is not None and cur == WrapTabBar.c_error():
                     del tb._tab_colors[idx2]
                     tb._refresh_base_color(idx2)
                     tb.update()
@@ -1392,7 +1392,7 @@ class MainWindow(QMainWindow):
             if idx2 < 0: return
             tb = _p.tabBar()
             if hasattr(tb, "_tab_colors"):
-                tb._tab_colors[idx2] = QColor(Qt.GlobalColor.red)
+                tb._tab_colors[idx2] = WrapTabBar.c_error()
                 tb.update()
         view.thread_error.connect(_set_err_bg)
         def _clear_err_bg(_p=pane, _v=view):
@@ -1401,7 +1401,7 @@ class MainWindow(QMainWindow):
             tb = _p.tabBar()
             if hasattr(tb, "_tab_colors"):
                 cur = tb._tab_colors.get(idx2)
-                if cur is not None and cur == QColor(Qt.GlobalColor.red):
+                if cur is not None and cur == WrapTabBar.c_error():
                     del tb._tab_colors[idx2]
                     tb._refresh_base_color(idx2)
                     tb.update()
