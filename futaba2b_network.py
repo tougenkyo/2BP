@@ -835,8 +835,6 @@ class FutabaFetcher:
             return None
         _t0 = _time.perf_counter()
         result = self._parse_catalog(html, board)
-        print(f"[Catalog] 大取得 mode=cat(cxyl=100x100, orig={_orig_cxyl}) "
-              f"板={board.name} → 取得スレ数={len(result)}")
         return result
 
     def _parse_catalog(self, html: str, board: BoardInfo) -> list[CatalogEntry]:

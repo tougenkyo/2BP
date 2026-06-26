@@ -1772,6 +1772,14 @@ document.addEventListener('keydown',function(e){{
     def _on_result(self, ok: bool, msg: str, new_thread_no: int = 0):
         self._btn_post.setEnabled(True)
         if ok:
+            # プレビュー（サンプル）ウインドウが開いていれば一緒に閉じる
+            _sw = getattr(self, "_sample_win", None)
+            if _sw is not None:
+                try:
+                    _sw.close()
+                except Exception:
+                    pass
+                self._sample_win = None
             if self._pin_btn.isChecked():
                 # ピンON: 閉じずにコメント・画像をクリアして次の書き込みを待機
                 self._comment.clear()

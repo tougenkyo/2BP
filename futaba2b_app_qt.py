@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.125"
+APP_VER = "0.9.129"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6318,7 +6318,6 @@ class CatalogView(QWidget):
         entries = self._fetcher.fetch_catalog(board, sort=sort, cxyl_base=_cxyl_base)
         if entries is None:
             _err = getattr(self._fetcher, "last_fetch_error", "") or "取得失敗"
-            print(f"[Catalog] fetch失敗: {_err} → 更新スキップ")
             self._catalog_err_sig.emit(_err)
             return
         self._entries_ready.emit(entries)
@@ -6507,9 +6506,6 @@ class CatalogView(QWidget):
             _json_cnt = len(jnos)
             _miss = _json_cnt - _cat_cnt
             _ok = (_json_cnt == 0) or (_cat_cnt >= _json_cnt * 0.9)
-            print(f"[Catalog] 大取得検証 板={getattr(self._board, 'name', '?')}: "
-                  f"cat={_cat_cnt} json={_json_cnt} 差(隔離候補)={_miss} → "
-                  f"{'OK(ほぼ一致)' if _ok else '警告: cat<<json 大取得が未反映の可能性'}")
         except Exception:
             pass
         changed = False
@@ -9236,15 +9232,49 @@ class ImageTabView(QWidget):
             click_js = click_js.replace(
                 "'__hover__:{}';",
                 f"'__hover__:{_hover_cmt}';")
+            import json as _json
+            # 読込完了時に適用するサイズ指定JS片（前回ズームを継承）
+            if _prev_zoom == "画面に合わせる":
+                _size_js = ("var s=Math.min(vw/nw,vh/nh);"
+                            "el.style.width=Math.round(nw*s)+'px';el.style.height='auto';"
+                            "el.classList.remove('actual');window._zoomState='fit';")
+            else:
+                try:
+                    _pct = int(_prev_zoom.rstrip('%'))
+                except ValueError:
+                    _pct = 100
+                if _pct == 100:
+                    _size_js = ("el.style.width=nw+'px';el.style.height='auto';"
+                                "el.classList.add('actual');window._zoomState='100';")
+                else:
+                    _size_js = (f"el.style.width=Math.round(nw*{_pct}/100)+'px';el.style.height='auto';"
+                                f"el.classList.remove('actual');window._zoomState='fit';")
             if self._img_page_ready:
-                import json as _json
                 _esc = _json.dumps(url)
-                self._view.page().runJavaScript(
-                    f"(function(){{var el=document.getElementById('img');"
-                    f"if(el){{el.src={_esc};el.style.visibility='hidden';"
-                    f"el.classList.remove('actual');}}}})()")
-                # src差し替え後にフィット・ズーム処理を適用
-                QTimer.singleShot(0, lambda: self._inject_fit_bridge(True))
+                # プリロード＋アトミック差し替え:
+                # 旧画像を表示したまま new Image() で新画像をデコードし、完了時に
+                # src・サイズ・可視を一括適用する。中間状態（原寸/空白）が描画されず
+                # ちらつかない。リモートURLのままなのでオリジン制約も無い。
+                swap_js = (
+                    "(function(){var el=document.getElementById('img');if(!el)return;"
+                    "var tmp=new Image();"
+                    "tmp.onload=function(){"
+                    "  var vw=window.innerWidth,vh=window.innerHeight;"
+                    "  var nw=tmp.naturalWidth||0,nh=tmp.naturalHeight||0;"
+                    "  el.src=tmp.src;"
+                    "  el.style.maxWidth='none';el.style.maxHeight='none';"
+                    "  el.style.display='block';el.style.margin='auto';"
+                    "  if(nw>0&&nh>0){" + _size_js + "}"
+                    "  el.style.visibility='visible';"
+                    "};"
+                    "tmp.onerror=function(){el.src=" + _esc + ";el.style.visibility='visible';};"
+                    "tmp.src=" + _esc + ";"
+                    "})()"
+                )
+                self._view.page().runJavaScript(swap_js)
+                # アトミック適用済みのため pending は不要
+                self._pending_fit = False
+                self._pending_zoom = None
             else:
                 self._img_page_ready = False
                 self._view.setHtml(
@@ -9252,15 +9282,15 @@ class ImageTabView(QWidget):
                     f'<script>{click_js}</script></head>'
                     f'<body><img id="img" src="{url}"></body></html>',
                     QUrl(url))
+                if _prev_zoom == "画面に合わせる":
+                    self._pending_fit = True
+                else:
+                    self._pending_fit = False
+                    self._pending_zoom = _prev_zoom  # loadFinished後に%適用
             # 前の拡大率を継承してコンボ設定
             self._zoom_combo.blockSignals(True)
             self._zoom_combo.setCurrentText(_prev_zoom)
             self._zoom_combo.blockSignals(False)
-            if _prev_zoom == "画面に合わせる":
-                self._pending_fit = True
-            else:
-                self._pending_fit = False
-                self._pending_zoom = _prev_zoom  # loadFinished後に%適用
 
 
     def _set_zoom_combo_value(self, pct):
