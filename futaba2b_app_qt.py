@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.129"
+APP_VER = "0.9.130"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8687,11 +8687,56 @@ class ImageTabView(QWidget):
         self._sig_save_status.connect(self._info.setText)
         self._sig_info_text.connect(self._info_overlay.setPlainText)
 
+        # ── 読込中インジケータ（砂時計オーバーレイ） ───────────────────────
+        # 前/次で画像をプリロードしている間だけ中央に表示し、表示完了で消す。
+        self._img_spinner = QLabel("⏳", self)
+        self._img_spinner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_spinner.setStyleSheet(
+            "QLabel{background:rgba(0,0,0,150);color:#fff;font-size:30pt;"
+            "border-radius:10px;padding:12px 16px;}")
+        self._img_spinner.hide()
+        # キャッシュ即読込時のチラ見え防止: 150ms 経過後に初めて表示
+        self._img_spinner_timer = QTimer(self)
+        self._img_spinner_timer.setSingleShot(True)
+        self._img_spinner_timer.timeout.connect(self._do_show_img_spinner)
+        # 取りこぼし時に出しっぱなしを防ぐ保険タイマー
+        self._img_spinner_safety = QTimer(self)
+        self._img_spinner_safety.setSingleShot(True)
+        self._img_spinner_safety.timeout.connect(self._hide_img_spinner)
+
         self._show_current()
+
+    # ── 砂時計オーバーレイ制御 ─────────────────────────────────────────────
+    def _show_img_spinner(self):
+        """読込開始: 150ms 後に砂時計を表示（即読込時はチラ見えさせない）。"""
+        self._img_spinner_timer.start(150)
+        self._img_spinner_safety.start(15000)
+
+    def _do_show_img_spinner(self):
+        if not self.isVisible():
+            return
+        self._position_img_spinner()
+        self._img_spinner.show()
+        self._img_spinner.raise_()
+
+    def _hide_img_spinner(self):
+        """読込完了/失敗: 砂時計を消す。"""
+        self._img_spinner_timer.stop()
+        self._img_spinner_safety.stop()
+        self._img_spinner.hide()
+
+    def _position_img_spinner(self):
+        self._img_spinner.adjustSize()
+        w = self._img_spinner.width()
+        h = self._img_spinner.height()
+        self._img_spinner.move(max(0, (self.width() - w) // 2),
+                               max(0, (self.height() - h) // 2))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_overlays()
+        if getattr(self, '_img_spinner', None) is not None and self._img_spinner.isVisible():
+            self._position_img_spinner()
         # フィットモード中はリサイズ後に再フィット（デバウンス80ms）。
         # BGタブ初回表示直後のレイアウト確定もこの経路で正しいサイズに収束する
         if getattr(self, '_img_page_ready', False) and self._fit_mode:
@@ -9110,10 +9155,12 @@ class ImageTabView(QWidget):
         if _ucss_b:
             base_css = base_css + _ucss_b
         if is_native_video:
+            self._hide_img_spinner()
             self._img_page_ready = False  # MP4→静止画切替でJS差し替え不可
             self._is_media_page  = True
             self._start_mp4(url)
         elif is_web_video:
+            self._hide_img_spinner()
             self._stop_mp4()
             self._img_page_ready = False  # 動画→静止画切替でJS差し替え不可
             self._is_media_page  = True   # 次ナビは必ずsetHtml（src差し替え不可）
@@ -9157,6 +9204,7 @@ class ImageTabView(QWidget):
             self._is_media_page = False
             self._stop_mp4()
             self._mp_ctr.hide(); self._view.show()
+            self._show_img_spinner()   # 読込完了(__imgloaded__/loadFinished)で消す
             _hover_cmt = info.get("comment", "").replace("\\", "\\\\").replace("'", "\\'")\
                              .replace("\n", " ").replace("\r", "")[:100]
             click_js = (
@@ -9266,8 +9314,10 @@ class ImageTabView(QWidget):
                     "  el.style.display='block';el.style.margin='auto';"
                     "  if(nw>0&&nh>0){" + _size_js + "}"
                     "  el.style.visibility='visible';"
+                    "  document.title='__imgloaded__';"
                     "};"
-                    "tmp.onerror=function(){el.src=" + _esc + ";el.style.visibility='visible';};"
+                    "tmp.onerror=function(){el.src=" + _esc + ";el.style.visibility='visible';"
+                    "document.title='__imgloaded__';};"
                     "tmp.src=" + _esc + ";"
                     "})()"
                 )
@@ -9392,6 +9442,8 @@ class ImageTabView(QWidget):
             return
         # 静止画ページが準備完了 → 次回ナビはJS src差し替えで白フラッシュ防止
         self._img_page_ready = True
+        # setHtml 経路（初回/動画→静止画）の読込完了 → 砂時計を消す
+        self._hide_img_spinner()
         if getattr(self, '_fit_title_connected', False):
             try:
                 self._view.page().titleChanged.disconnect(self._on_fit_title)
@@ -9460,6 +9512,10 @@ f"  el.style.visibility='visible';}}"
 
     def _on_fit_title(self, title: str):
         """titleを使ったJS→Python通知を受け取る"""
+        if title == "__imgloaded__":
+            self._hide_img_spinner()
+            self._view.page().runJavaScript("document.title='';")
+            return
         if title.startswith("__hover__:"):
             self._view.page().runJavaScript("document.title='';")
             return
