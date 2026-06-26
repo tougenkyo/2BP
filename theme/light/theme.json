@@ -1,5 +1,5 @@
-{
-  "_comment": "2BP ライトテーマ — 色を変えるだけでUIが変わります",
+{  
+  "_comment": "2BPライトテーマ—色を変えるだけでUIが変わります",
 
   "ui": {
     "window_bg":          "#f0f0f0",
@@ -9,7 +9,7 @@
     "panel_header_fg":    "#333333",
     "panel_border":       "#cccccc",
 
-    "text_primary":       "#222222",
+    "text_primary":       "#333333",
     "text_secondary":     "#555555",
     "text_muted":         "#888888",
     "text_danger":        "#cc0000",
@@ -19,20 +19,20 @@
     "btn_border":         "#bbbbbb",
     "btn_hover_bg":       "#d8d8d8",
     "btn_checked_bg":     "#5588cc",
-    "btn_checked_fg":     "#ffffff",
+    "btn_checked_fg":     "#333333",
 
     "toolbar_bg":         "#f0f0f0",
     "toolbar_border":     "#cccccc",
 
-    "statusbar_bg":       "#e8e8e8",
+    "statusbar_bg":       "#f0f0f0",
     "statusbar_fg":       "#333333",
-    "statusbar_border":   "#cccccc",
+    "statusbar_border":   "#bbbbbb",
 
-    "tab_bg":             "#2d2d2d",
-    "tab_fg":             "#cccccc",
-    "tab_selected_bg":    "#3a3a3a",
-    "tab_selected_fg":    "#ffffff",
-    "tab_border":         "#555555",
+    "tab_bg":             "#f0f0f0",
+    "tab_fg":             "#333333",
+    "tab_selected_bg":    "#e8e8e8",
+    "tab_selected_fg":    "#333333",
+    "tab_border":         "#bbbbbb",
     "tab_error_fg":       "#ff0000",
     "tab_new_fg":         "#4488ff",
     "tab_unread_bg":      "#5000b4dc",
@@ -42,31 +42,31 @@
     "tab_pin_indicator":  "#4caf50",
     "tab_pin_icon":       "#aaccff",
 
-    "scroll_bg":          "#f0f0f0",
+    "scroll_bg":          "#f5f5f5",
     "scroll_handle":      "#bbbbbb",
 
-    "separator_color":    "#cccccc",
+    "separator_color":    "#bbbbbb",
     "progress_chunk":     "#5588cc",
-    "progress_bg":        "#dddddd",
+    "progress_bg":        "#cccccc",
 
-    "input_bg":           "#ffffff",
+    "input_bg":           "#e0e0e0",
     "input_fg":           "#222222",
     "input_border":       "#bbbbbb",
     "input_focus_border": "#5588cc",
 
-    "popup_bg":           "#ffffff",
+    "popup_bg":           "#f0f0f0",
     "popup_border":       "#bbbbbb",
-    
-    "checkbox_border":    "#cccccc",
+
+    "checkbox_border":    "#bbbbbb",
 
     "new_res_unread":     "#4488ff",
     "new_res_tab_update": "#ff4444",
     "tab_bg_live":        "rgba(0,180,220,80)",
     
-    "countdown_fg":       "#5a1030",
+    "countdown_fg":       "#333333",
     "menu_separator":     "#888"
-  },
-
+  }, 
+  
   "thread": {
     "body_bg":            "#FFFFEE",
     "body_fg":            "#7B0004",
@@ -86,8 +86,8 @@
     "no_hover":           "#DD0000",
     "sod_color":          "#800000",
     "footer_color":       "#888888",
-    "footer_border":      "#dddddd",
-    "thumb_border":       "#aaaaaa",
+    "footer_border":      "#333333",
+    "thumb_border":       "#555555",
     "thumb_hover_border": "#800000",
     "expiry_color":       "#cc0000",
     "expiry_bg":          "#fff8f8",
@@ -97,4 +97,4 @@
     "id_popup_bg":        "#FFFFEE",
     "id_popup_border":    "#800000"
   }
-}
+}  

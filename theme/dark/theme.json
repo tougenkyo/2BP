@@ -62,7 +62,7 @@
     "new_res_unread":     "#4488ff",
     "new_res_tab_update": "#ff4444",
     "tab_bg_live":        "rgba(0,180,220,80)",
-
+    
     "countdown_fg":       "#FFFFEE",
     "menu_separator":     "#888"
   },

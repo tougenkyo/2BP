@@ -260,6 +260,17 @@ class FutabaFetcher:
     # cxyl カラム数テーブル: cx インデックス → 実際の列数
     _CX_VALS = [4, 6, 8, 10, 14, 18, 22, 28, 36]
 
+    def _clear_cxyl_cookies(self) -> None:
+        """セッション内の cxyl cookie を全ドメイン/パスから除去する。
+        大取得時のドメイン競合（.2chan.net と板ドメインの併存）を解消するため。"""
+        jar = self.session.cookies
+        for c in list(jar):
+            if c.name == "cxyl":
+                try:
+                    jar.clear(c.domain, c.path, c.name)
+                except Exception:
+                    pass
+
     def set_cxyl_cookie(self, cxyl: str, board_domain: str = "") -> None:
         """cxyl 設定をセッションクッキーに上書きする。
         board_domain を指定すると板固有ドメイン（例: may.2chan.net）のみ更新。
@@ -779,15 +790,49 @@ class FutabaFetcher:
 
     def fetch_catalog(self, board: BoardInfo, sort: int = 0) -> list[CatalogEntry] | None:
         """sort: 0=通常 1=新順 2=古順 3=多順 4=少順 6=勢順 7=見歴 8=そ順 9=履歴
-        取得失敗（404等）の場合は None を返す（空リストとの区別用）"""
+        取得失敗（404等）の場合は None を返す（空リストとの区別用）
+
+        大取得方式: 隔離(json∖cat)の誤判定を防ぐため、取得時のみ cxyl の
+        cols×rows を 100x100 に上書きして板の全生存スレを取得する。
+        表示側(CatalogView)が cols×rows 件に絞って「14×6+隔離」相当に振る舞う。
+        取得後はユーザ設定の cxyl に必ず復元する（描画やフォールバックの汚染防止）。"""
         import time as _time
         url = (board.base_url + f"futaba.php?mode=cat&sort={sort}"
                if sort > 0 else board.catalog_url)
-        html = self._get_html(url, referer=board.url)
+        # ── cxyl を 100x100 に一時上書き（chars/pos/img はユーザ値を維持） ──
+        # 注意: 起動時に .2chan.net 全体へ、板別に板ドメインへ、と複数ドメインに
+        # cxyl cookie が併存し得る。板ドメインだけ上書きすると .2chan.net 側の
+        # 旧値もサブドメイン一致で同時送信され、サーバがそちらを採用して 100x100 が
+        # 効かない。よって「全 cxyl cookie 除去 → 100x100 を単一設定 → GET →
+        # 元の cookie 群を完全復元」とする。
+        _orig_cxyl = self.get_cxyl()
+        _saved_cxyl = [(c.domain, c.path, c.value)
+                       for c in self.session.cookies if c.name == "cxyl"]
+        try:
+            _p = (_orig_cxyl or "14x6x6x0x0").split("x")
+            while len(_p) < 5:
+                _p.append("0")
+            _p[0] = "100"; _p[1] = "100"
+            self._clear_cxyl_cookies()
+            self.set_cxyl_cookie("x".join(_p[:5]))   # 板ドメイン無し=.2chan.net 全体に単一設定
+        except Exception:
+            pass
+        try:
+            html = self._get_html(url, referer=board.url)
+        finally:
+            # 元の cxyl cookie 群を完全復元（描画フォールバック/per-board設定の汚染防止）
+            try:
+                self._clear_cxyl_cookies()
+                for _dom, _path, _val in _saved_cxyl:
+                    self.session.cookies.set("cxyl", _val, domain=_dom, path=_path)
+            except Exception:
+                pass
         if html is None:
             return None
         _t0 = _time.perf_counter()
         result = self._parse_catalog(html, board)
+        print(f"[Catalog] 大取得 mode=cat(cxyl=100x100, orig={_orig_cxyl}) "
+              f"板={board.name} → 取得スレ数={len(result)}")
         return result
 
     def _parse_catalog(self, html: str, board: BoardInfo) -> list[CatalogEntry]:

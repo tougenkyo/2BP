@@ -1,5 +1,5 @@
 {
-  "_comment": "2BP ダークテーマ ピンク — 色を変えるだけでUIが変わります",
+  "_comment": "2BPダークテーマピンク—色を変えるだけでUIが変わります",
 
   "ui": {
     "window_bg":          "#1e1318",
@@ -10,12 +10,12 @@
     "panel_border":       "#5a3040",
 
     "text_primary":       "#f0d0dc",
-    "text_secondary":     "#aaaaaa",
+    "text_secondary":     "#7a4060",
     "text_muted":         "#885060",
     "text_danger":        "#f88888",
 
     "btn_bg":             "#3d2030",
-    "btn_fg":             "#f0c0d0",
+    "btn_fg":             "#e8a0b8",
     "btn_border":         "#6a3850",
     "btn_hover_bg":       "#5a2840",
     "btn_checked_bg":     "#c0507a",
@@ -26,13 +26,13 @@
 
     "statusbar_bg":       "#2a1820",
     "statusbar_fg":       "#e8a0b8",
-    "statusbar_border":   "#5a3040",
+    "statusbar_border":   "#6a3850",
 
-    "tab_bg":             "#2d2d2d",
-    "tab_fg":             "#cccccc",
-    "tab_selected_bg":    "#3a3a3a",
+    "tab_bg":             "#2a1820",
+    "tab_fg":             "#e8a0b8",
+    "tab_selected_bg":    "#3d2030",
     "tab_selected_fg":    "#ffffff",
-    "tab_border":         "#555555",
+    "tab_border":         "#6a3850",
     "tab_error_fg":       "#ff0000",
     "tab_new_fg":         "#4488ff",
     "tab_unread_bg":      "#5000b4dc",
@@ -43,30 +43,30 @@
     "tab_pin_icon":       "#aaccff",
 
     "scroll_bg":          "#251520",
-    "scroll_handle":      "#7a3858",
+    "scroll_handle":      "#6a3850",
 
-    "separator_color":    "#555555",
+    "separator_color":    "#6a3850",
     "progress_chunk":     "#c0507a",
-    "progress_bg":        "#3a2030",
+    "progress_bg":        "#5a3040",
 
     "input_bg":           "#2e1825",
     "input_fg":           "#f0d0dc",
     "input_border":       "#6a3850",
-    "input_focus_border": "#e0709a",
+    "input_focus_border": "#c0507a",
 
-    "popup_bg":           "#2e1825",
+    "popup_bg":           "#2a1820",
     "popup_border":       "#6a3850",
 
-    "checkbox_border":    "#5a3040",
+    "checkbox_border":    "#6a3850",
 
     "new_res_unread":     "#4488ff",
     "new_res_tab_update": "#ff4444",
     "tab_bg_live":        "rgba(0,180,220,80)",
-
-    "countdown_fg":       "#FFFFEE",
+    
+    "countdown_fg":       "#2a1520",
     "menu_separator":     "#888"
   },
-
+  
   "thread": {
     "body_bg":            "#2a1520",
     "body_fg":            "#f0c0d0",
@@ -84,17 +84,18 @@
     "date_color":         "#c08090",
     "no_color":           "#c08090",
     "no_hover":           "#ff60a0",
-    "sod_color":          "#c080a0",
+    "sod_color":          "#c08090",
     "footer_color":       "#906070",
-    "footer_border":      "#5a3040",
+    "footer_border":      "#f0b8cc",
     "thumb_border":       "#7a4060",
-    "thumb_hover_border": "#ff5090",
+    "thumb_hover_border": "#c08090",
     "expiry_color":       "#ff4070",
     "expiry_bg":          "#3a1830",
     "del_reason_color":   "#ff5090",
     "del_content_color":  "#c08090",
     "comment_color":      "#f0c0d0",
-    "id_popup_bg":        "#2e1825",
+    "id_popup_bg":        "#2a1520",
     "id_popup_border":    "#7a4060"
   }
 }
+

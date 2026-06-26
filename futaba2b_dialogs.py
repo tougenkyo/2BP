@@ -4908,9 +4908,9 @@ class BoardSettingsDialog(QDialog):
         w1 = QWidget(); f1 = QVBoxLayout(w1)
 
         g_cat = QGroupBox("カタログ表示"); f1.addWidget(g_cat); cf = QFormLayout(g_cat)
-        self._cat_cols  = _spin(1, 99999); cf.addRow("横スレ数 (初期値:14):", self._cat_cols)
-        self._cat_rows  = _spin(1, 99999); cf.addRow("縦スレ数 (初期値:6):",  self._cat_rows)
-        self._cat_chars = _spin(0, 99999); cf.addRow("文字数 (初期値:4):",    self._cat_chars)
+        self._cat_cols  = _spin(1, 100); cf.addRow("横スレ数 (初期値:14):", self._cat_cols)
+        self._cat_rows  = _spin(1, 100); cf.addRow("縦スレ数 (初期値:6):",  self._cat_rows)
+        self._cat_chars = _spin(0, 100); cf.addRow("文字数 (初期値:4):",    self._cat_chars)
 
         pos_w = QWidget(); pos_lay = QHBoxLayout(pos_w); pos_lay.setContentsMargins(0,0,0,0)
         self._pos_group = QButtonGroup(self)

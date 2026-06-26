@@ -818,7 +818,7 @@ class AppSettings:
                 ("catalog_image_turn", 14), ("catalog_turn_enabled", True),
                 ("catalog_turn_count", 14),
                 ("catalog_few_res_hide", False), ("catalog_few_res_count", 5), ("catalog_sort_type", 0),
-                ("catalog_sort_desc", False), ("theme", "dark"),
+                ("catalog_sort_desc", False),
                 ("img_overlay_res", False), ("img_overlay_info", False),
                 ("video_volume", 80),
                 ("image_resize_use", True), ("image_resize_size", 200),

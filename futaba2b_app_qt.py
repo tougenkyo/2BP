@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.118"
+APP_VER = "0.9.122"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6476,6 +6476,21 @@ class CatalogView(QWidget):
         # キャッシュ更新（次回 _on_entries_ready で先行適用）
         self._catalog_json_cache = jmap
         self._catalog_json_nos = jnos
+        # ── 大取得検証ログ: 実カタログ件数とjson件数の一致確認 ──
+        #   大取得(100x100)が効いていれば cat ≒ json（差は真の隔離数）。
+        #   cat << json の場合は cxyl上書きが効いていない可能性（要調査）。
+        try:
+            _real_now = [e for e in self._all_entries
+                         if not getattr(e, 'is_quarantine', False)]
+            _cat_cnt = len(_real_now)
+            _json_cnt = len(jnos)
+            _miss = _json_cnt - _cat_cnt
+            _ok = (_json_cnt == 0) or (_cat_cnt >= _json_cnt * 0.9)
+            print(f"[Catalog] 大取得検証 板={getattr(self._board, 'name', '?')}: "
+                  f"cat={_cat_cnt} json={_json_cnt} 差(隔離候補)={_miss} → "
+                  f"{'OK(ほぼ一致)' if _ok else '警告: cat<<json 大取得が未反映の可能性'}")
+        except Exception:
+            pass
         changed = False
         # 1) 実カタログ(非隔離)エントリに email/id を補完
         for e in self._all_entries:
@@ -6538,14 +6553,16 @@ class CatalogView(QWidget):
         ms = board.max_saved
         saved_str = f"保存上限 {ms}件" if ms > 0 else ""
         # 板別 global_max_no を取得
+        # 大取得方式: _all_entries は全生存スレ。表示は cols×rows 件に絞られるが、
+        # ステータスには板の生存スレ総数（非隔離）を表示する。
         entries = self._all_entries if hasattr(self, '_all_entries') else []
-        n_disp = len(entries)
+        n_live = len([e for e in entries if not getattr(e, 'is_quarantine', False)])
         self.status_info.emit({
             'viewers':  viewers_str,
             'expiry':   '',
             'saved':    saved_str,
             'momentum': '',
-            'rescount': f"{n_disp}スレ表示中" if n_disp else '',
+            'rescount': f"{n_live}スレ" if n_live else '',
             'log':      '',
             'view':     self,
         })
@@ -6563,6 +6580,22 @@ class CatalogView(QWidget):
         else:
             self._lbl_countdown.setText(f"更新まで {remaining_sec}s")
 
+    def _display_capacity(self) -> int:
+        """表示カタログの最大件数 = cols×rows（cxyl由来）。
+        大取得(100x100)した _all_entries を表示用に絞る上限。"""
+        cxyl = None
+        if self._board:
+            from futaba2b_settings import get_board_settings as _gbs
+            cxyl = _gbs(self._board.base_url).catalog_cxyl_str
+        if not cxyl:
+            cxyl = self._fetcher.get_cxyl()
+        try:
+            p = (cxyl or "14x6").split("x")
+            cap = int(p[0]) * int(p[1])
+            return cap if cap > 0 else 14 * 6
+        except Exception:
+            return 14 * 6
+
     def _re_render(self):
         """検索 + ローカルソート + レス数フィルタ + NGフィルタを適用してレンダリング"""
         import time as _time
@@ -6571,6 +6604,12 @@ class CatalogView(QWidget):
         # 過疎非表示(res=0)やローカルソートで消えたり並び替わるのを防ぎ、最後に最下部へ。
         _quar_entries = [e for e in entries if getattr(e, 'is_quarantine', False)]
         entries = [e for e in entries if not getattr(e, 'is_quarantine', False)]
+        # 大取得方式: _all_entries は板の全生存スレ。表示は cols×rows 件
+        # （サーバ順=取得順の先頭）に絞り「14×6+隔離」相当に振る舞う。
+        # あふれた分は隔離検出・read_counts追跡用に _all_entries 側に保持し表示からのみ除外。
+        _cap = self._display_capacity()
+        if _cap > 0 and len(entries) > _cap:
+            entries = entries[:_cap]
         # 1. 過疎スレ非表示（板設定優先、なければAppSettings）
         _few_hide = False
         _few_lim  = 5
@@ -6946,16 +6985,21 @@ class CatalogView(QWidget):
 
         # catalog_read_counts: 未登録スレのみ現在のレス数を基準値として登録する
         # （既登録スレは上書きしない → +N がリセットされない）
+        # 大取得方式: 表示は cols×rows 件に絞っているが、read_counts の追跡対象は
+        # 板の全生存スレ(_all_entries の非隔離)で行う。表示外(あふれ)スレの基準値が
+        # 毎描画で消える/再登録されて +N が壊れるのを防ぐ。
         rc  = self._settings.catalog_read_counts
         trc = self._settings.thread_read_counts
-        live_urls = {e.thread_url for e in entries if e.thread_url}
+        _live_real = [e for e in getattr(self, '_all_entries', [])
+                      if not getattr(e, 'is_quarantine', False)]
+        live_urls = {e.thread_url for e in _live_real if e.thread_url}
         if self._board:
             res_prefix = self._board.base_url + "res/"
             for key in [k for k in rc if k.startswith(res_prefix) and k not in live_urls]:
                 del rc[key]
             for key in [k for k in trc if k.startswith(res_prefix) and k not in live_urls]:
                 del trc[key]
-        for e in entries:
+        for e in _live_real:
             if e.thread_url and e.res_count > 0 and e.thread_url not in rc:
                 rc[e.thread_url] = e.res_count
         self._settings.save()

@@ -1,38 +1,38 @@
 {
-  "_comment": "2BP ライトテーマ ピンク — 色を変えるだけでUIが変わります",
+  "_comment": "2BPライトテーマピンク—色を変えるだけでUIが変わります",
 
   "ui": {
     "window_bg":          "#fff0f5",
     "panel_bg":           "#ffe4ee",
-    "panel_bg2":          "#ffd6e7",
+    "panel_bg2":          "#fce8f0",
     "panel_header_bg":    "#f8c0d4",
-    "panel_header_fg":    "#7a1840",
+    "panel_header_fg":    "#5a1030",
     "panel_border":       "#e8a0b8",
 
     "text_primary":       "#5a1030",
-    "text_secondary":     "#aaaaaa",
+    "text_secondary":     "#d890b0",
     "text_muted":         "#b06080",
     "text_danger":        "#f88888",
 
     "btn_bg":             "#f8c8dc",
-    "btn_fg":             "#6a1030",
+    "btn_fg":             "#5a1030",
     "btn_border":         "#d890b0",
     "btn_hover_bg":       "#f4a8c4",
     "btn_checked_bg":     "#d04070",
-    "btn_checked_fg":     "#ffffff",
+    "btn_checked_fg":     "#5a1030",
 
     "toolbar_bg":         "#fce8f0",
     "toolbar_border":     "#e8a0b8",
 
     "statusbar_bg":       "#fce8f0",
-    "statusbar_fg":       "#8a2040",
-    "statusbar_border":   "#e8a0b8",
+    "statusbar_fg":       "#5a1030",
+    "statusbar_border":   "#d890b0",
 
-    "tab_bg":             "#2d2d2d",
-    "tab_fg":             "#cccccc",
-    "tab_selected_bg":    "#3a3a3a",
-    "tab_selected_fg":    "#ffffff",
-    "tab_border":         "#555555",
+    "tab_bg":             "#fce8f0",
+    "tab_fg":             "#5a1030",
+    "tab_selected_bg":    "#f8c8dc",
+    "tab_selected_fg":    "#5a1030",
+    "tab_border":         "#d890b0",
     "tab_error_fg":       "#ff0000",
     "tab_new_fg":         "#4488ff",
     "tab_unread_bg":      "#5000b4dc",
@@ -45,36 +45,36 @@
     "scroll_bg":          "#fce8f0",
     "scroll_handle":      "#d890b0",
 
-    "separator_color":    "#555555",
+    "separator_color":    "#d890b0",
     "progress_chunk":     "#d04070",
-    "progress_bg":        "#f8c8dc",
+    "progress_bg":        "#e8a0b8",
 
-    "input_bg":           "#fff8fb",
+    "input_bg":           "#f8c0d4",
     "input_fg":           "#5a1030",
     "input_border":       "#d890b0",
     "input_focus_border": "#d04070",
 
-    "popup_bg":           "#fff8fb",
+    "popup_bg":           "#fce8f0",
     "popup_border":       "#d890b0",
 
-    "checkbox_border":    "#e8a0b8",
+    "checkbox_border":    "#d890b0",
 
     "new_res_unread":     "#4488ff",
     "new_res_tab_update": "#ff4444",
     "tab_bg_live":        "rgba(0,180,220,80)",
-
-    "countdown_fg":       "#5a1030",
+    
+    "countdown_fg":       "#fff8fb",
     "menu_separator":     "#888"
   },
-
+  
   "thread": {
     "body_bg":            "#fff8fb",
     "body_fg":            "#5a1030",
     "op_bg":              "#fff8fb",
     "reply_bg":           "#ffe4ee",
-    "new_res_border":     "#d04070",
+    "new_res_border":     "#cc0050",
     "self_res_border":    "#7040c0",
-    "new_res_divider_fg": "#d04070",
+    "new_res_divider_fg": "#cc0050",
     "new_res_divider_bg": "#ffe0ec",
     "link_color":         "#c03060",
     "link_hover":         "#e00050",
@@ -84,11 +84,11 @@
     "date_color":         "#8a3050",
     "no_color":           "#8a3050",
     "no_hover":           "#d00050",
-    "sod_color":          "#a04060",
+    "sod_color":          "#8a3050",
     "footer_color":       "#b07090",
-    "footer_border":      "#e8c0d0",
+    "footer_border":      "#7a1840",
     "thumb_border":       "#d890b0",
-    "thumb_hover_border": "#d04070",
+    "thumb_hover_border": "#8a3050",
     "expiry_color":       "#cc0030",
     "expiry_bg":          "#fff0f3",
     "del_reason_color":   "#cc0050",
