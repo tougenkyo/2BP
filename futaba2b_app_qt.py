@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.130"
+APP_VER = "0.9.131"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9242,7 +9242,9 @@ class ImageTabView(QWidget):
                 "    var vw=window.innerWidth,vh=window.innerHeight;"
                 "    var nw=el.naturalWidth||0,nh=el.naturalHeight||0;"
                 "    var s=(nw>0&&nh>0)?Math.min(vw/nw,vh/nh):1;"
-                "    var st=window._zoomState||((s>=1)?'100':'fit');"
+                # 表示状態の真実は actual クラス（window._zoomState は %適用等で
+                # 同期が崩れることがあり、stale だと初回クリックが空振りする）。
+                "    var st=el.classList.contains('actual')?'100':'fit';"
                 # 拡大前にクリックした画像内位置（0..1）を控える
                 "    var r1=el.getBoundingClientRect();"
                 "    var fx=r1.width? (e.clientX-r1.left)/r1.width : 0.5;"
