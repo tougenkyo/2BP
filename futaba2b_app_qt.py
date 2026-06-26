@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.123"
+APP_VER = "0.9.125"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2038,7 +2038,17 @@ class BoardPane(QWidget):
                 w._set_view_mode(_cur_mode_r)
             elif getattr(w, '_last_html', ""):
                 _url_r = (w._thread.url if w._thread else None) or 'https://www.2chan.net/'
-                w._load_html_via_tempfile(w._last_html, QUrl(_url_r))
+                # 全リロードで先頭に戻るのを防ぐため、再ロード前に現在の
+                # スクロール位置を読み取り _pending_scroll に渡す
+                # （_on_load_finished_scroll が読込完了後に復元する）。
+                _html_r = w._last_html
+                def _reload_keep_scroll(_y, _w=w, _h=_html_r, _u=_url_r):
+                    try:
+                        _w._pending_scroll = int(_y) if _y else 0
+                    except Exception:
+                        _w._pending_scroll = 0
+                    _w._load_html_via_tempfile(_h, QUrl(_u))
+                w._view.page().runJavaScript("window.scrollY", _reload_keep_scroll)
         # アクティブ化時に「末尾まで表示済みなら未読(青背景)を解除」を再評価する。
         # 背景でロードされ innerHeight=0 のまま初回判定が効かなかった画像モード等で、
         # 表示後に末尾が見えていれば青背景をデフォルトに戻す（少し遅延でレイアウト確定後）。
@@ -6014,7 +6024,8 @@ class CatalogView(QWidget):
         # 表示時に _ensure_hover_parent で親を設定し、_clamp_to_window で窓内に収める。
         self._hover_popup = QLabel()
         self._hover_popup.setWindowFlags(
-            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowTransparentForInput)
         self._hover_popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._hover_popup.setStyleSheet(
             f"QLabel{{background:{_TM.thread('id_popup_bg','#FFFFEE')};border:1px solid {_TM.thread('id_popup_border','#800000')};"
@@ -6023,7 +6034,8 @@ class CatalogView(QWidget):
         self._hover_popup.hide()
         self._hover_img_popup = QWidget()
         self._hover_img_popup.setWindowFlags(
-            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowTransparentForInput)
         self._hover_img_popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._hover_img_popup.setStyleSheet(
             f"QWidget{{background:{_TM.thread('id_popup_bg','#FFFFEE')};border:1px solid {_TM.thread('id_popup_border','#800000')};}}"
@@ -6063,7 +6075,8 @@ class CatalogView(QWidget):
     def _ensure_hover_parent(self):
         """ホバーポップアップの親をメインウインドウに設定（本ソフト前面・非システム最前面）。"""
         mw = self.window()
-        flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+        flags = (Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+                 | Qt.WindowType.WindowTransparentForInput)
         for w in (self._hover_popup, self._hover_img_popup):
             if w.parent() is not mw:
                 w.setParent(mw, flags)
@@ -6312,6 +6325,9 @@ class CatalogView(QWidget):
 
     def _on_entries_ready(self, entries: list):
         import time as _time
+        # カタログ再描画で旧DOM要素が差し替わると onmouseleave が発火せず
+        # ポップアップが取り残されるため、描画前に強制的に閉じておく。
+        self._on_cat_hover_leave()
         # カタログ取得成功 → 通信エラー赤帯を解除（自カタログ＋スレタブ）
         self._clear_error_band()
         self.error_band_changed.emit("")
