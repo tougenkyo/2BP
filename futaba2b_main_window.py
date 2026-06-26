@@ -846,7 +846,13 @@ class MainWindow(QMainWindow):
         if getattr(self._settings, "tab_orange_quarantine", True) and cat_view is not None:
             _th = getattr(view, "_thread", None)
             _no = getattr(_th, "no", None) if _th else None
-            if _no is not None and _no in getattr(cat_view, "_quar_nos", set()):
+            # スレ落ち確定(_is_dead)のタブはオレンジにしない。
+            # json∖cat には「隔離(生存・カタログ非表示)」だけでなく
+            # 「落ちた(消滅)」スレも一時的に混入するため、生死を知る
+            # ThreadView 側で除外する（隔離スレは生存中なので _is_dead=False）。
+            if (_no is not None
+                    and not getattr(view, "_is_dead", False)
+                    and _no in getattr(cat_view, "_quar_nos", set())):
                 _quar = True
         if _quar:
             tb._tab_quar_set.add(idx)
@@ -863,6 +869,28 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return None
+
+    def _clear_dead_tab_quar(self, view):
+        """スレ落ち確定 view のタブについて、隔離(オレンジ)基底色を再評価して解除する。
+        _update_tab_quar_flag が _is_dead を見て False を返すため、ここで再評価＋再描画する。"""
+        try:
+            for i in range(self._outer_tabs.count()):
+                pane = self._outer_tabs.widget(i)
+                if not isinstance(pane, BoardPane):
+                    continue
+                inner = pane._tabs
+                idx = inner.indexOf(view)
+                if idx < 0:
+                    continue
+                tb = inner.tabBar()
+                if not hasattr(tb, "_tab_quar_set"):
+                    return
+                self._update_tab_quar_flag(tb, self._pane_catalog_view(inner), view, idx)
+                tb._refresh_base_color(idx)
+                tb.update()
+                return
+        except Exception:
+            pass
 
     def _recolor_quar_tabs(self, inner, cat_view):
         """隔離No集合の変化時、開いている全スレタブのオレンジ色を再評価する。"""
@@ -1605,6 +1633,9 @@ class MainWindow(QMainWindow):
 
     def _on_thread_dead(self, url: str, view):
         """スレ落ち・1000レス検出: 自動更新から削除 + ステータスに表示 + 自動保存 + 自動クローズ"""
+        # スレ落ち確定 → このタブの隔離(オレンジ)基底色を即解除する。
+        # （json∖cat に落ちたスレが残っている間、次のカタログ更新を待たずに反映）
+        self._clear_dead_tab_quar(view)
         thread = (getattr(view, "_last_valid_thread", None)
                   or getattr(view, "_thread", None))
         is_full = bool(thread and getattr(thread, "is_full", False))
