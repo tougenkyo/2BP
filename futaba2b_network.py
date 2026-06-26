@@ -788,7 +788,8 @@ class FutabaFetcher:
 
     # ── カタログ ──
 
-    def fetch_catalog(self, board: BoardInfo, sort: int = 0) -> list[CatalogEntry] | None:
+    def fetch_catalog(self, board: BoardInfo, sort: int = 0,
+                      cxyl_base: str = "") -> list[CatalogEntry] | None:
         """sort: 0=通常 1=新順 2=古順 3=多順 4=少順 6=勢順 7=見歴 8=そ順 9=履歴
         取得失敗（404等）の場合は None を返す（空リストとの区別用）
 
@@ -805,7 +806,10 @@ class FutabaFetcher:
         # 旧値もサブドメイン一致で同時送信され、サーバがそちらを採用して 100x100 が
         # 効かない。よって「全 cxyl cookie 除去 → 100x100 を単一設定 → GET →
         # 元の cookie 群を完全復元」とする。
-        _orig_cxyl = self.get_cxyl()
+        # chars/pos/img は板別設定(catalog_cxyl_str)を正本とする。
+        # get_cxyl() は複数ドメインに併存する cxyl cookie の先頭1個を返すため、
+        # .2chan.net グローバル既定(chars=4 等)を拾って板別 chars を無視する不具合があった。
+        _orig_cxyl = cxyl_base or self.get_cxyl()
         _saved_cxyl = [(c.domain, c.path, c.value)
                        for c in self.session.cookies if c.name == "cxyl"]
         try:

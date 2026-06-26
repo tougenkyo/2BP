@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.122"
+APP_VER = "0.9.123"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6297,7 +6297,12 @@ class CatalogView(QWidget):
     def _fetch(self, board, sort):
         import time as _time
         _t0 = _time.perf_counter()
-        entries = self._fetcher.fetch_catalog(board, sort=sort)
+        try:
+            from futaba2b_settings import get_board_settings as _gbs
+            _cxyl_base = _gbs(board.base_url).catalog_cxyl_str
+        except Exception:
+            _cxyl_base = ""
+        entries = self._fetcher.fetch_catalog(board, sort=sort, cxyl_base=_cxyl_base)
         if entries is None:
             _err = getattr(self._fetcher, "last_fetch_error", "") or "取得失敗"
             print(f"[Catalog] fetch失敗: {_err} → 更新スキップ")
