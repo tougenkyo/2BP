@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.145"
+APP_VER = "0.9.146"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -151,8 +151,6 @@ def _dispose_tab_view(w):
     cleanup() + deleteLater() で破棄をメインイベントループに委ね、これを防ぐ。"""
     if w is None:
         return
-    print(f'[Dispose] _dispose_tab_view type={type(w).__name__} '
-          f'has_cleanup={hasattr(w, "cleanup")}', flush=True)
     try:
         if hasattr(w, 'cleanup'):
             w.cleanup()
@@ -171,7 +169,6 @@ def _make_prefetch_destroy_cb(fetcher, holder):
     def _cb(*_a):
         try:
             g = holder[0] if holder else ""
-            print(f'[Dispose] ThreadView destroyed (group={g})', flush=True)
             if g:
                 fetcher.cancel_prefetch(g)
         except Exception:
@@ -5664,20 +5661,6 @@ class ThreadView(QWidget):
                 self._thread_ready.emit(thread)
         _thr.Thread(target=_do, daemon=True).start()
 
-
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# カタログビュー
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _make_scroll_bottom_js(scroll_bottom_count: int = 5, scroll_top_count: int = 0) -> str:
-    """スクロール末尾/先頭検知JSをscript要素として返す（画像・引用モード用）。
-    ロジックは futaba2b_html._make_scroll_bottom_js に一本化し、<script>で包むだけ。"""
-    from futaba2b_html import _make_scroll_bottom_js as _mk
-    return f'<script>{_mk(scroll_bottom_count, scroll_top_count)}</script>'
-
-
     def eventFilter(self, obj, event):
         """WebEngineView のD&Dイベントを自身の dragEnter/dropEvent に転送する"""
         from PySide6.QtCore import QEvent
@@ -5724,7 +5707,6 @@ def _make_scroll_bottom_js(scroll_bottom_count: int = 5, scroll_top_count: int =
         page削除が間に合わず競合するため、page の destroyed シグナルに連動して
         profile を削除し、順序を確実に保証する。また widget 破棄カスケード
         （self→profile→page）との二重削除を避けるため親子関係を切っておく。"""
-        print('[Dispose] ThreadView.cleanup() called', flush=True)
         # このスレの未着手の先読みDLを中断（閉じたスレの画像を貯め続けないため）
         try:
             _turl = ""
@@ -5796,6 +5778,13 @@ def _make_scroll_bottom_js(scroll_bottom_count: int = 5, scroll_top_count: int =
                 _prof.deleteLater()
             except Exception:
                 pass
+
+
+def _make_scroll_bottom_js(scroll_bottom_count: int = 5, scroll_top_count: int = 0) -> str:
+    """スクロール末尾/先頭検知JSをscript要素として返す（画像・引用モード用）。
+    ロジックは futaba2b_html._make_scroll_bottom_js に一本化し、<script>で包むだけ。"""
+    from futaba2b_html import _make_scroll_bottom_js as _mk
+    return f'<script>{_mk(scroll_bottom_count, scroll_top_count)}</script>'
 
 
 # ── ページ内検索バー（ThreadView・CatalogView 共用） ──────────────────────
