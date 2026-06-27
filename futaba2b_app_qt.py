@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.134"
+APP_VER = "0.9.135"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -192,6 +192,18 @@ class _ImageWebView(QWebEngineView):
     """ImageTabView 用 QWebEngineView：右クリックメニューをカスタマイズする。"""
     copy_image_requested = Signal(str)   # 画像URLを親に通知
 
+    def _current_remote_url(self) -> str:
+        """表示中画像の元(リモート)URL。ローカルキャッシュ表示時はページ/メディアが
+        file:// になるため、親(ImageTabView)の img_list から元URLを取得する。"""
+        p = self.parent()
+        try:
+            il = getattr(p, "_img_list", None); ix = getattr(p, "_idx", -1)
+            if il and 0 <= ix < len(il):
+                return il[ix].get("url", "") or ""
+        except Exception:
+            pass
+        return ""
+
     def contextMenuEvent(self, event):
         from PySide6.QtWebEngineCore import QWebEngineContextMenuRequest
         from PySide6.QtWidgets import QMenu
@@ -226,7 +238,10 @@ class _ImageWebView(QWebEngineView):
         menu = QMenu(self)
         if on_image:
             # 画像上: 外部で開く → 画像を保存 → 画像をコピー → 画像アドレスをコピー の順
-            img_url = req.mediaUrl().toString() if req else ""
+            # ローカルキャッシュ表示時はページ/メディアが file:// になるため、
+            # 各操作は親の img_list から得た元(リモート)URLを優先して使う。
+            remote_url = self._current_remote_url()
+            img_url = remote_url or (req.mediaUrl().toString() if req else "")
             act_ext = menu.addAction("外部で開く")
             act_ext.triggered.connect(lambda: __import__('webbrowser').open(img_url))
             menu.addSeparator()
@@ -235,10 +250,12 @@ class _ImageWebView(QWebEngineView):
                 menu.addAction(save_image_act)
             copy_act = menu.addAction("画像をコピー")
             copy_act.triggered.connect(
-                lambda: self.copy_image_requested.emit(self.url().toString()))
-            if copy_img_addr_act:
-                copy_img_addr_act.setText("画像アドレスをコピー")
-                menu.addAction(copy_img_addr_act)
+                lambda: self.copy_image_requested.emit(img_url))
+            def _copy_addr(_u=img_url):
+                from PySide6.QtWidgets import QApplication
+                QApplication.clipboard().setText(_u)
+            addr_act = menu.addAction("画像アドレスをコピー")
+            addr_act.triggered.connect(_copy_addr)
             if keep:
                 menu.addSeparator()
                 for act in keep:
@@ -8552,6 +8569,7 @@ class ImageTabView(QWidget):
     _sig_mp4_progress = Signal(str)   # 進捗テキスト
     _sig_save_status  = Signal(str)   # 保存完了/失敗メッセージ
     _sig_info_text    = Signal(str)   # 情報オーバーレイ更新（BGスレッド→UI）
+    _media_dl_done    = Signal(int, str, str, bool, str)  # (seq,url,kind,ok,prev_zoom) 優先DL完了
     open_settings         = Signal()             # 設定ボタン → MainWindowが接続
     image_navigated       = Signal(str, list, int)  # 前へ/次へ → MainWindowがrecord_recent_imageに接続
     open_image_tab_bg     = Signal(str, list, int)  # 中クリック → 非アクティブで画像タブを開く
@@ -8561,6 +8579,8 @@ class ImageTabView(QWidget):
         super().__init__(parent)
         self._img_list = img_list; self._idx = idx; self._fetcher = fetcher
         self._src_thread_view = None  # 開いたThreadView（img_list更新追跡用）
+        self._media_seq = 0     # 表示/優先DLのシーケンス（前へ次への古いDL破棄用）
+        self._media_failed: set[str] = set()  # 優先DLに失敗しリモート表示にフォールバックしたURL
         self._fit_mode = True   # True=全体表示 False=等倍
         self._zoom_last_pct = 100  # 「画面に合わせる」↔%トグル用
         # インライン MP4 プレーヤー
@@ -8650,9 +8670,16 @@ class ImageTabView(QWidget):
         # ── WebEngine ビュー（画像・WebM 用）────────────────────────────
         profile = QWebEngineProfile(self)  # off-the-record: ディスクキャッシュなし
         profile.setHttpUserAgent(UA); profile.setUrlRequestInterceptor(Interceptor())
+        # ローカルキャッシュ(file://)からの画像/webm表示と、リモートURLフォールバックの
+        # 両方を許可する（ページのベースURLを file:// にするため両属性が必要）。
+        profile.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+        profile.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         self._view = _ImageWebView(_DebugPage(profile, profile), self)
         self._view.setZoomFactor(_default_zoom())
         self._view.loadFinished.connect(self._inject_fit_bridge)
+        self._media_dl_done.connect(self._on_media_dl_done)
         self._view.copy_image_requested.connect(self._copy_image_to_clipboard)
         lay.addWidget(self._view, 1)
 
@@ -9148,6 +9175,8 @@ class ImageTabView(QWidget):
             return
         if not (0 <= self._idx < len(self._img_list)):
             return
+        # 表示シーケンスを進める（実行中の優先DLは古いものとして破棄される）
+        self._media_seq += 1
         info = self._img_list[self._idx]
         # 情報オーバーレイが表示中なら更新
         if getattr(self, '_info_overlay_visible', False):
@@ -9174,6 +9203,12 @@ class ImageTabView(QWidget):
                 if i >= 0:
                     short = name[:14] if name else "画像"
                     tw.setTabText(i, f"🖼 {short}")
+        # ローカルキャッシュ(data/img・video_cache)があれば file:// で表示し再DLを避ける。
+        # 無ければ優先DL→保存→完了後に再描画（DL中はNoneを返しspinner表示）。
+        disp = self._resolve_or_download(url, self._media_seq)
+        if disp is None:
+            return
+        url = disp
         _lo = url.lower()
         if _lo.startswith('data:'):
             # ログ(MHT)の data:URI は拡張子が無いので MIME で判定する
@@ -9250,7 +9285,7 @@ class ImageTabView(QWidget):
                 f'<script>{_vid_js}</script></head>'
                 f'<body><video src="{url}" controls autoplay loop>'
                 f'お使いのブラウザは動画に対応していません</video></body></html>',
-                QUrl(url))
+                self._html_base())
             # フィットはインラインJSで処理するため pending は立てない
             self._pending_fit  = False
             self._pending_zoom = None
@@ -9387,7 +9422,7 @@ class ImageTabView(QWidget):
                     f'<html><head><style>{base_css}</style>'
                     f'<script>{click_js}</script></head>'
                     f'<body><img id="img" src="{url}"></body></html>',
-                    QUrl(url))
+                    self._html_base())
                 if _prev_zoom == "画面に合わせる":
                     self._pending_fit = True
                 else:
@@ -9398,6 +9433,117 @@ class ImageTabView(QWidget):
             self._zoom_combo.setCurrentText(_prev_zoom)
             self._zoom_combo.blockSignals(False)
 
+
+    # ── ローカルキャッシュ表示（②③）──────────────────────────────────────────
+    def _html_base(self):
+        """画像タブページの固定ベースURL（file:// オリジン）。
+        file:// ローカル画像も https リモート画像も同一ページで読めるようにし、
+        前へ/次への new Image() アトミック差し替えがクロススキームで失敗しないようにする。"""
+        from pathlib import Path as _P
+        return QUrl.fromLocalFile(str(_P("data/img").resolve()) + "/")
+
+    def _media_cache_path(self, url: str, kind: str):
+        """表示用ローカルキャッシュのパスを返す。img=data/img、webm=video_cache。"""
+        try:
+            if kind == 'img':
+                return self._fetcher._img_disk_path(url)
+            if kind == 'webm':
+                return VideoPlayerWindow._cache_path(url)
+        except Exception:
+            pass
+        return None
+
+    def _resolve_or_download(self, url: str, seq: int):
+        """表示すべき src を解決する。
+        ・data:/file:/その他スキーム、mp4 はそのまま（mp4 は _start_mp4 が別途キャッシュ）
+        ・http(s) の画像/webm はローカルキャッシュがあれば file:// を返す
+        ・無ければ優先DLを開始し None を返す（完了後 _on_media_dl_done が再描画）
+        ・DL失敗済みURLはリモートURLのまま返す（再DLループ防止）"""
+        lo = (url or "").lower()
+        if not lo.startswith(("http://", "https://")):
+            return url
+        base = lo.split("?", 1)[0]
+        if base.endswith((".mp4", ".mov", ".m4v", ".avi", ".mkv")):
+            return url   # ネイティブ動画は _start_mp4 がキャッシュ管理
+        kind = 'webm' if base.endswith(".webm") else 'img'
+        if url in self._media_failed:
+            return url   # 取得失敗済み → リモート表示にフォールバック
+        path = self._media_cache_path(url, kind)
+        if path is not None and path.exists():
+            return QUrl.fromLocalFile(str(path)).toString()
+        # 未キャッシュ → 優先DL（先読みプールとは別スレッド・並列可）
+        # DL中はネイティブ動画プレーヤーを止めてWebビュー＋砂時計を前面化する
+        self._stop_mp4()
+        try:
+            self._mp_ctr.hide()
+        except Exception:
+            pass
+        self._view.show()
+        self._show_img_spinner()
+        import threading as _th
+        def _dl(_seq=seq, _url=url, _kind=kind, _path=path):
+            ok = False
+            try:
+                if _kind == 'img':
+                    ok = bool(self._fetcher.fetch_image_bytes(_url, retry_404=True))
+                else:
+                    ok = self._download_media_file(_url, _path)
+            except Exception:
+                ok = False
+            self._media_dl_done.emit(_seq, _url, _kind, ok, "")
+        _th.Thread(target=_dl, daemon=True).start()
+        return None
+
+    def _on_media_dl_done(self, seq: int, url: str, kind: str, ok: bool, _pz: str):
+        """優先DL完了 → 最新表示なら再描画（成功=file://表示、失敗=リモート表示）。"""
+        if seq != self._media_seq:
+            return   # 既に別の画像へ移動済み
+        if ok:
+            # 成功扱いでも実ファイルが無ければ失敗とみなす（再DLループ防止）
+            p = self._media_cache_path(url, kind)
+            if not (p is not None and p.exists()):
+                ok = False
+        if not ok:
+            self._media_failed.add(url)
+        self._show_current()
+
+    def _download_media_file(self, url: str, path) -> bool:
+        """webm 等を requests でストリーミング取得し video_cache へ保存。成功で True。"""
+        if path is None:
+            return False
+        import os as _os
+        from urllib.parse import urlparse as _up
+        tmp = str(path) + ".part"
+        try:
+            pu = _up(url)
+            segs = [s for s in pu.path.split("/") if s]
+            referer = f"{pu.scheme}://{pu.hostname}/"
+            if segs:
+                referer += segs[0] + "/"
+            hdr = {
+                "Referer": referer,
+                "Accept": "*/*",
+                "Sec-Fetch-Dest": "video",
+                "Sec-Fetch-Mode": "no-cors",
+                "Sec-Fetch-Site": "same-origin",
+            }
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with self._fetcher.session.get(url, headers=hdr, stream=True,
+                                           timeout=self._fetcher.timeout) as r:
+                if not r.ok:
+                    return False
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_content(65536):
+                        if chunk:
+                            f.write(chunk)
+            _os.replace(tmp, str(path))
+            return True
+        except Exception:
+            try:
+                _os.unlink(tmp)
+            except OSError:
+                pass
+            return False
 
     def _set_zoom_combo_value(self, pct):
         """コンボに倍率をセット（既存項目になければ追加）"""
@@ -9702,16 +9848,40 @@ f"  el.style.visibility='visible';}}"
             self._settings_ref.save()
 
     def _copy_image_to_clipboard(self, url: str):
-        """画像URLをダウンロードしてクリップボードに画像としてコピーする"""
+        """画像をクリップボードへコピー。ローカルキャッシュ優先→file://→data:→リモート。"""
         import threading
-        def _fetch():
-            try:
+        def _read_bytes() -> bytes | None:
+            lo = (url or "").lower()
+            # ローカルキャッシュ（data/img）があれば優先
+            if lo.startswith(("http://", "https://")):
+                try:
+                    p = self._media_cache_path(url, 'img')
+                    if p is not None and p.exists():
+                        return p.read_bytes()
+                except Exception:
+                    pass
                 r = self._fetcher.session.get(url, timeout=(10, 30))
                 r.raise_for_status()
-                from PySide6.QtGui import QImage, QClipboard
+                return r.content
+            if lo.startswith("file:"):
+                from urllib.parse import urlparse, unquote
+                pth = unquote(urlparse(url).path)
+                if pth.startswith("/") and len(pth) > 2 and pth[2] == ":":
+                    pth = pth[1:]   # Windows: /C:/... → C:/...
+                with open(pth, "rb") as f:
+                    return f.read()
+            if lo.startswith("data:"):
+                import base64
+                head, _, b64 = url.partition(",")
+                return base64.b64decode(b64) if ";base64" in head else b64.encode()
+            return None
+        def _fetch():
+            try:
+                data = _read_bytes()
+                from PySide6.QtGui import QImage
                 from PySide6.QtWidgets import QApplication
                 img = QImage()
-                if img.loadFromData(r.content):
+                if data and img.loadFromData(data):
                     QApplication.clipboard().setImage(img)
                 else:
                     print(f"[IMG_COPY] QImage.loadFromData 失敗: {url}")

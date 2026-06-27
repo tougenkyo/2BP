@@ -1772,7 +1772,7 @@ class FutabaFetcher:
         if self._prefetch_pool is None:
             from concurrent.futures import ThreadPoolExecutor
             self._prefetch_pool = ThreadPoolExecutor(
-                max_workers=2, thread_name_prefix="imgprefetch")
+                max_workers=1, thread_name_prefix="imgprefetch")
         return self._prefetch_pool
 
     def _prefetch_one(self, url: str) -> None:
