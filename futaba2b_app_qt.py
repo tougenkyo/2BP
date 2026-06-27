@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.133"
+APP_VER = "0.9.134"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2829,6 +2829,7 @@ class ThreadView(QWidget):
     open_thread_url_requested = Signal(str)      # ふたばスレURLをタブで開く
     ng_added          = Signal(str)
     _thread_ready     = Signal(object)  # スレッド→UI の安全な橋渡し
+    _reload_again     = Signal()        # 実行中フェッチ完了後の保留再取得（BG→UI）
     _sodane_signal    = Signal(int, int) # (no, count) そうだね更新
     status_info       = Signal(object)  # ステータスバー更新用
     _del_result       = Signal(bool, str)  # 削除結果
@@ -2856,8 +2857,10 @@ class ThreadView(QWidget):
         self._thread_no: int = 0
         self._fetch_seq: int = 0       # 古いfetch結果を破棄するためのシーケンス番号
         self._fetch_inflight_no = None  # フルGET実行中のスレNo（重複起動スキップ用）
+        self._reload_pending = False    # 実行中フェッチに重なった更新要求の保留フラグ
         self._tmp_html_path: str = ""  # 大容量HTML用の一時ファイルパス
         self._thread_ready.connect(self._show)
+        self._reload_again.connect(self._on_reload_again)
         self._sodane_signal.connect(self._apply_sodane_js)
         self._del_result.connect(self._on_del_result)
         self._pending_scroll  = 0
@@ -3205,10 +3208,15 @@ class ThreadView(QWidget):
         # 近接して発火すると同じスレを並行フルGETして帯域/CPUを浪費するため、
         # 実行中の取得が最新状態を返すのに任せる（open_mode指定の明示オープンは通す）。
         if not open_mode and self._fetch_inflight_no == thread_no:
+            # 実行中のフルGETに更新要求が重なった → 黙って捨てず、完了後に
+            # 1回だけ再取得を予約する。これにより更新ボタン/スクロール更新が
+            # 実行中フェッチと衝突して空振りするのを防ぐ。
+            self._reload_pending = True
             return
         # 別スレッドを開く場合は差分更新カウントをリセット
         if thread_no != self._thread_no:
             self._known_res_count = 0
+            self._reload_pending = False   # 別スレへ移動 → 保留再取得は破棄
         self._board = board; self._thread_no = thread_no
         self._pending_open_mode = open_mode  # ロード完了後に適用するモード
         self._lbl_count.setText("読み込み中…")
@@ -3384,6 +3392,12 @@ class ThreadView(QWidget):
         else:
             self._lbl_countdown.setText(f"更新まで {remaining_sec}s")
 
+    def _on_reload_again(self):
+        """実行中フェッチに重なって保留された更新要求を、完了後にメインスレッドで実行。"""
+        if self._is_log or self._board is None or not self._thread_no:
+            return
+        self.reload_thread()
+
     def reload_thread(self):
         # 保存ログのオフライン表示はネット更新しない
         if self._is_log:
@@ -3489,6 +3503,11 @@ class ThreadView(QWidget):
             return
         # 取得完了かつ自分が最新 → in-flight 解除（同一スレの次回更新を許可）
         self._fetch_inflight_no = None
+        # 実行中に重なった更新要求があれば、完了後に1回だけ再取得する。
+        # （フラグはここで消費し、再取得はメインスレッドで安全に行う）
+        if self._reload_pending:
+            self._reload_pending = False
+            self._reload_again.emit()
         if thread:
             res_n = len(thread.res_list)
             self._thread = thread
