@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.148"
+APP_VER = "0.9.149"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8703,6 +8703,14 @@ class ImageTabView(QWidget):
         self._zoom_combo.setToolTip("拡大率 (Ctrl+ホイール・Ctrl++/−)")
         self._zoom_combo.currentTextChanged.connect(self._on_zoom_combo)
         ctrl_lay.addWidget(self._zoom_combo)
+        # ── 拡大縮小 −/＋ ボタン（コンボの選択を上下させて反映）──
+        _zoom_minus = QPushButton("−"); _zoom_minus.setFixedWidth(26)
+        _zoom_minus.setToolTip("拡大率を下げる")
+        _zoom_minus.clicked.connect(lambda: self._zoom_combo_step(-1))
+        _zoom_plus = QPushButton("＋"); _zoom_plus.setFixedWidth(26)
+        _zoom_plus.setToolTip("拡大率を上げる")
+        _zoom_plus.clicked.connect(lambda: self._zoom_combo_step(1))
+        ctrl_lay.addWidget(_zoom_minus); ctrl_lay.addWidget(_zoom_plus)
         ext_btn = QPushButton("外部ブラウザ"); ext_btn.setFixedWidth(100)
         ext_btn.clicked.connect(lambda: _open_url(
             self._img_list[self._idx]["url"]) if self._img_list else None)
@@ -9399,35 +9407,11 @@ class ImageTabView(QWidget):
                 "  });"
                 "  el.addEventListener('click',function(e){"
                 "    if(_dragMoved){_dragMoved=false;return;}"  # ドラッグ後はクリック無視
-                # 状態トグル: '100'(等倍) ⇔ 'fit'(画面フィット・上限なし)
-                # 小さい画像: 100% → クリックで拡大フィット → クリックで100%…
-                # 大きい画像: 縮小フィット → クリックで100% → クリックで縮小フィット…
-                "    var vw=window.innerWidth,vh=window.innerHeight;"
-                "    var nw=el.naturalWidth||0,nh=el.naturalHeight||0;"
-                "    var s=(nw>0&&nh>0)?Math.min(vw/nw,vh/nh):1;"
-                # 表示状態の真実は actual クラス（window._zoomState は %適用等で
-                # 同期が崩れることがあり、stale だと初回クリックが空振りする）。
-                "    var st=el.classList.contains('actual')?'100':'fit';"
-                # 拡大前にクリックした画像内位置（0..1）を控える
-                "    var r1=el.getBoundingClientRect();"
-                "    var fx=r1.width? (e.clientX-r1.left)/r1.width : 0.5;"
-                "    var fy=r1.height?(e.clientY-r1.top)/r1.height : 0.5;"
-                "    fx=Math.max(0,Math.min(1,fx));fy=Math.max(0,Math.min(1,fy));"
-                "    if(st==='100'){"
-                "      el.classList.remove('actual');"
-                "      if(nw>0){el.style.width=Math.round(nw*s)+'px';el.style.height='auto';}"
-                "      window._zoomState='fit';"
-                "      document.title='__fit__';"
-                "    } else {"
-                "      el.classList.add('actual');"
-                "      window._zoomState='100';"
-                "      document.title='__actual__';"
-                # クリック位置を拡大の中心に: 該当点をカーソル直下へスクロール
-                "      var r2=el.getBoundingClientRect();"
-                "      var dl=r2.left+window.scrollX, dt=r2.top+window.scrollY;"
-                "      var tx=dl+fx*el.offsetWidth, ty=dt+fy*el.offsetHeight;"
-                "      window.scrollTo(tx-e.clientX, ty-e.clientY);"
-                "    }"
+                # 拡大率トグルは Python 側(_on_fit_title)で判定する。JS側で
+                # fit/%/100% の3状態を持つと取り違えて空振り・ちらつきが起きるため、
+                # クリックは通知のみ行い、Python が現在の _fit_mode に基づき
+                # 「画面に合わせる ↔ 直近%」を切り替える。
+                "    document.title='__imgclick__';"
                 "  });"
                 "  el.addEventListener('mouseenter',function(){"
                 "    document.title='__hover__:{}';"
@@ -9684,8 +9668,22 @@ class ImageTabView(QWidget):
         cb.setCurrentIndex(idx)
         cb.blockSignals(False)
 
+    def _zoom_combo_step(self, direction: int):
+        """−/＋ボタン: コンボの選択を1つ上/下へ移動して拡大率を反映する。
+        （リストボックスの並び順そのままにインデックスを±1。両端でクランプ）"""
+        cb = self._zoom_combo
+        n = cb.count()
+        if n == 0:
+            return
+        idx = cb.currentIndex()
+        new_idx = max(0, min(n - 1, idx + direction))
+        if new_idx != idx:
+            cb.setCurrentIndex(new_idx)   # currentTextChanged → _on_zoom_combo で反映
+
     def _on_zoom_combo(self, text: str):
         """コンボ選択→zoomFactor適用。「画面に合わせる」は画面フィット、%値は固定サイズ"""
+        # クリックトグルの判定に使う表示状態を確実に同期する
+        self._fit_mode = (text == "画面に合わせる")
         if text == "画面に合わせる":
             # 画像・動画をビューポートにフィット（上限なし＝画面より小さい画像も拡大）
             js = (
@@ -9845,6 +9843,22 @@ f"  el.style.visibility='visible';}}"
             info = self._img_list[self._idx] if self._img_list and 0 <= self._idx < len(self._img_list) else None
             if info:
                 self.open_image_tab_bg.emit(info.get("url", ""), self._img_list, self._idx)
+            return
+        if title == "__imgclick__":
+            # 画像クリック: 現在の表示状態に応じて「画面に合わせる ↔ 直近%」をトグル
+            self._view.page().runJavaScript("document.title='';")
+            if getattr(self, "_fit_mode", True):
+                # フィット中 → 直近の% へ
+                pct = getattr(self, "_zoom_last_pct", 100) or 100
+                self._set_zoom_combo_value(pct)
+                self._on_zoom_combo(f"{pct}%")
+            else:
+                # %表示中 → 画面に合わせる
+                cb = self._zoom_combo
+                cb.blockSignals(True)
+                cb.setCurrentText("画面に合わせる")
+                cb.blockSignals(False)
+                self._on_zoom_combo("画面に合わせる")
             return
         if title == "__fit__":
             self._fit_mode = True
