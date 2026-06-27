@@ -1769,29 +1769,22 @@ class FutabaFetcher:
                 ev = threading.Event()
                 self._prefetch_cancel[group] = ev
         pool = self._get_prefetch_pool()
-        _submitted = 0
         for url in urls:
             if not url or url in self._prefetch_seen or url in self._img_cache:
                 continue
             self._prefetch_seen.add(url)
             try:
                 pool.submit(self._prefetch_one, url, ev)
-                _submitted += 1
             except Exception:
                 pass
-        print(f'[Prefetch] submit group={group!r} ev={id(ev) if ev else None} '
-              f'n={_submitted}/{len(urls)}', flush=True)
 
     def cancel_prefetch(self, group: str) -> None:
         """指定グループ（スレURL等）の先読みを中断する。
-        キュー待ちの未着手タスクは _prefetch_one 冒頭でスキップされる
-        （実行中の1件はそのまま完了）。タブを閉じた時などに呼ぶ。"""
+        キュー待ちの未着手タスクは _prefetch_one 冒頭でスキップされ、実行中の1件も
+        チャンク間で中断される。タブを閉じた時などに呼ぶ。"""
         if not group:
-            print('[Prefetch] CANCEL ignored (empty group)', flush=True)
             return
         ev = self._prefetch_cancel.pop(group, None)
-        print(f'[Prefetch] CANCEL group={group!r} ev={id(ev) if ev else None} '
-              f'found={ev is not None} keys={list(self._prefetch_cancel.keys())}', flush=True)
         if ev is not None:
             ev.set()
 
@@ -1808,14 +1801,11 @@ class FutabaFetcher:
         # 投入済みセットから外し、再表示時に再投入できるようにする。
         if cancel is not None and cancel.is_set():
             self._prefetch_seen.discard(url)
-            print(f'[Prefetch] skip(queued-cancelled) {url.rsplit("/",1)[-1]}', flush=True)
             return
         try:
             p = self._img_disk_path(url)
             if p.exists():
                 return
-            print(f'[Prefetch] GET ev={id(cancel) if cancel else None} '
-                  f'set={cancel.is_set() if cancel else "?"} {url.rsplit("/",1)[-1]}', flush=True)
             parsed  = urllib.parse.urlparse(url)
             segs    = [s for s in parsed.path.split("/") if s]
             referer = f"{parsed.scheme}://{parsed.hostname}/"
@@ -1849,7 +1839,6 @@ class FutabaFetcher:
                 try: tmp.unlink(missing_ok=True)
                 except OSError: pass
                 self._prefetch_seen.discard(url)   # 再表示で再投入可能に
-                print(f'[Prefetch] ABORT(mid) {url.rsplit("/",1)[-1]}', flush=True)
                 return
             tmp.replace(p)   # 完了後にアトミックに本パスへ
         except Exception:
