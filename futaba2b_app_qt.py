@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.153"
+APP_VER = "0.9.154"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9982,14 +9982,30 @@ f"  el.style.visibility='visible';}}"
         super().keyPressEvent(event)
 
     def _nav(self, delta: int):
-        if self._img_list:
-            self._stop_mp4()
-            self._idx = (self._idx + delta) % len(self._img_list)
-            print(f'[Nav] click delta={delta} -> idx={self._idx}', flush=True)
-            self._show_current()
-            self.image_navigated.emit(
-                self._img_list[self._idx].get("url", ""),
-                self._img_list, self._idx)
+        if not self._img_list:
+            return
+        # idx は即更新（連打分を積算）。実際の表示は最後のクリックから少し待って
+        # 1回だけ行う（中間画像の高速 src 差し替えで QtWebEngine が古いフレームを
+        # 描画する問題を回避するための集約＝デバウンス）。
+        self._idx = (self._idx + delta) % len(self._img_list)
+        print(f'[Nav] click delta={delta} -> idx={self._idx} (debounced)', flush=True)
+        t = getattr(self, '_nav_debounce', None)
+        if t is None:
+            t = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(self._do_nav_show)
+            self._nav_debounce = t
+        t.start(90)
+
+    def _do_nav_show(self):
+        """デバウンス後の実表示（最後に選ばれた idx を1回だけ表示）。"""
+        if not self._img_list or not (0 <= self._idx < len(self._img_list)):
+            return
+        self._stop_mp4()
+        self._show_current()
+        self.image_navigated.emit(
+            self._img_list[self._idx].get("url", ""),
+            self._img_list, self._idx)
 
     def load_image(self, url: str, img_list: list, idx: int):
         """ウインドウ再利用時などに、表示中の画像を別の画像に差し替える。"""
