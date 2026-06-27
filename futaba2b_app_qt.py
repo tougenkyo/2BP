@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.154"
+APP_VER = "0.9.155"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8945,6 +8945,19 @@ class ImageTabView(QWidget):
         # レイアウト確定を待ってからフィット適用（即時だとviewportが極小）
         QTimer.singleShot(120, self._apply_fit_js)
 
+    def _force_recomposite(self):
+        """QtWebEngine の強制再コンポジット（1px resizeジグル）。
+        file:// 画像を <img>.src 差し替えで表示した際、DOM/src は更新されても
+        コンポジタが描画を更新せず古いフレームが残る（ウインドウ移動でしか直らない）
+        問題への対処。黒画面対策の _refit_on_show と同じ手法。"""
+        try:
+            if self._view.isVisible():
+                sz = self._view.size()
+                self._view.resize(sz.width(), sz.height() + 1)
+                self._view.resize(sz)
+        except Exception:
+            pass
+
     def _apply_fit_js(self):
         """現在のviewportサイズでフィットを適用するJSを実行"""
         if not getattr(self, '_img_page_ready', False) or not self._fit_mode:
@@ -9465,16 +9478,19 @@ class ImageTabView(QWidget):
                     "  if(window._imgSeq!==_sq)return;"  # 古いナビ → 破棄
                     "  var vw=window.innerWidth,vh=window.innerHeight;"
                     "  var nw=tmp.naturalWidth||0,nh=tmp.naturalHeight||0;"
+                    # el が新画像をロード完了した時点で通知（Python側で強制再コンポジット）。
+                    # file:// は el の再ロードが走り、完了前に通知すると古いフレームのまま
+                    # コンポジットされない（ウインドウ移動でしか直らない）問題への対処。
+                    "  el.onload=function(){if(window._imgSeq!==_sq)return;document.title='__imgloaded__:'+_sq;};"
                     "  el.src=tmp.src;"
                     "  el.style.maxWidth='none';el.style.maxHeight='none';"
                     "  el.style.display='block';el.style.margin='auto';"
                     "  if(nw>0&&nh>0){" + _size_js + "}"
                     "  el.style.visibility='visible';"
-                    "  document.title='__imgloaded__:'+_sq;"
                     "};"
                     "tmp.onerror=function(){if(window._imgSeq!==_sq)return;"
-                    "el.src=" + _esc + ";el.style.visibility='visible';"
-                    "document.title='__imgloaded__';};"
+                    "el.onload=function(){document.title='__imgloaded__:'+_sq;};"
+                    "el.src=" + _esc + ";el.style.visibility='visible';};"
                     "tmp.src=" + _esc + ";"
                     "})()"
                 )
@@ -9882,6 +9898,7 @@ f"  el.style.visibility='visible';}}"
             _shown = title.split(":", 1)[1] if ":" in title else "?"
             print(f'[Nav] SHOWN seq={_shown} (cur={self._media_seq}) idx={self._idx}', flush=True)
             self._hide_img_spinner()
+            self._force_recomposite()   # 新画像ロード完了 → 強制再描画でフレーム残留を防ぐ
             self._view.page().runJavaScript("document.title='';")
             return
         if title.startswith("__hover__:"):
