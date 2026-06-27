@@ -7,7 +7,17 @@ import html as _html
 import re
 import urllib.parse
 import datetime as _dt
+import warnings
 from typing import TYPE_CHECKING
+
+# レス本文が ">>1782546435472.jpg" 等のファイル名風だけの場合、BeautifulSoup が
+# 「HTMLよりファイル名に見える」と推測して MarkupResemblesLocatorWarning を出す。
+# パース自体は正常で実害が無いため抑止する（ログ汚染防止）。
+try:
+    from bs4 import MarkupResemblesLocatorWarning as _MRLW
+    warnings.filterwarnings("ignore", category=_MRLW)
+except Exception:
+    pass
 
 if TYPE_CHECKING:
     from futaba2b_models import ResData, ThreadData, CatalogEntry
