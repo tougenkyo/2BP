@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.135"
+APP_VER = "0.9.136"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -7482,13 +7482,19 @@ class AutoRefreshManager(QObject):
                 # 板容量によるスレ落ち検知（dielongが落ちないまま板から押し出された場合）。
                 # JSON diff API は容量落ちを is_dead/404 に反映しないことがあり、その場合
                 # HTMLページは404でもタブが残り続ける（手動更新のみフルGETで404検知できる）。
-                # 残保存数(no + max_saved - global_max)が0以下なら一度だけフルGETで404を
-                # 確認し、手動更新と同じく自動保存して閉じる。
-                if not getattr(entry, '_capacity_dead_checked', False):
-                    _o  = self._settings.global_max_no_by_board.get(board.base_url, 0)
-                    _ms = entry.max_saved
-                    if _ms > 0 and _o > 0 and (entry.no + _ms - _o) <= 0:
-                        entry._capacity_dead_checked = True  # 確認は1回だけ（生存時の連続フルGET防止）
+                # 残保存数(no + max_saved - global_max)が0以下の間は、一定間隔(60s)ごとに
+                # フルGETで404を確認し続ける。
+                # （旧実装は確認を一度きりにしていたため、容量超過に達した瞬間にまだ生存
+                #   していると以後二度と確認されず、実際に404になっても自動更新で落ちなかった。
+                #   手動更新のフルGETでのみ404検知できる状態になっていた）
+                _o  = self._settings.global_max_no_by_board.get(board.base_url, 0)
+                _ms = entry.max_saved
+                if _ms > 0 and _o > 0 and (entry.no + _ms - _o) <= 0:
+                    import time as _tmod
+                    _now = _tmod.monotonic()
+                    # 連続フルGET防止: 容量超過中は最短60s間隔で再確認する
+                    if (_now - getattr(entry, '_capacity_check_at', 0.0)) >= 60.0:
+                        entry._capacity_check_at = _now
                         try:
                             th_chk = self._fetcher.fetch_thread(board, no)
                         except Exception:
