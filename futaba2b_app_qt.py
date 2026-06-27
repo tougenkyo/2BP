@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.138"
+APP_VER = "0.9.139"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3589,7 +3589,7 @@ class ThreadView(QWidget):
             urls.append(u)
         if urls:
             try:
-                self._fetcher.prefetch_images(urls)
+                self._fetcher.prefetch_images(urls, group=thread.url or "")
             except Exception:
                 pass
 
@@ -5701,6 +5701,18 @@ def _make_scroll_bottom_js(scroll_bottom_count: int = 5, scroll_top_count: int =
         page削除が間に合わず競合するため、page の destroyed シグナルに連動して
         profile を削除し、順序を確実に保証する。また widget 破棄カスケード
         （self→profile→page）との二重削除を避けるため親子関係を切っておく。"""
+        # このスレの未着手の先読みDLを中断（閉じたスレの画像を貯め続けないため）
+        try:
+            _turl = ""
+            if getattr(self, '_thread', None) is not None:
+                _turl = self._thread.url or ""
+            if not _turl and self._board is not None and self._thread_no:
+                _turl = self._board.base_url + f"res/{self._thread_no}.htm"
+            if _turl:
+                self._fetcher.cancel_prefetch(_turl)
+        except Exception:
+            pass
+
         # 一時HTMLファイルを削除
         if getattr(self, '_tmp_html_path', ''):
             _cleanup_tmp(self._tmp_html_path)
@@ -7568,7 +7580,7 @@ class AutoRefreshManager(QObject):
                                        .rsplit('?', 1)[0].endswith(_vx)]
                             if _pf:
                                 try:
-                                    self._fetcher.prefetch_images(_pf)
+                                    self._fetcher.prefetch_images(_pf, group=entry.url)
                                 except Exception:
                                     pass
                     # スレ落ち自動保存用に最新状態を同期

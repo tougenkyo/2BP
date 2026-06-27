@@ -228,6 +228,7 @@ class FutabaFetcher:
         self._img_cache: dict[str, bytes] = {}  # url→bytes メモリキャッシュ
         self._prefetch_seen: set[str] = set()   # 先読み済み/投入済みURL（重複投入防止）
         self._prefetch_pool = None              # 本画像先読み用の小プール（遅延生成）
+        self._prefetch_cancel: dict = {}        # group(スレURL)→Event（タブ閉じ時の一括中断）
         # CURL と同一のヘッダーセット (Edge 148)
         self.session.headers.update({
             "User-Agent":          UA,
@@ -1749,24 +1750,43 @@ class FutabaFetcher:
     # スレ表示中に本画像(/src/)をディスクキャッシュへ先読みしておく。これにより、
     # スレ落ち時の自動保存で「未閲覧の画像が既にサーバから消えて404」になる欠落を防ぐ。
     # （スレ落ち時点でふたばは画像ファイルも削除するため、保存時のDLでは間に合わない）
-    def prefetch_images(self, urls) -> None:
+    def prefetch_images(self, urls, group: str = "") -> None:
         """本画像URLのリストを低優先・低並列で先読みしてディスクへ保存する。
         ・既にメモリ/ディスクにある画像、投入済みURLはスキップ
-        ・取得失敗は黙殺（先読みのためログを汚さない）"""
+        ・取得失敗は黙殺（先読みのためログを汚さない）
+        ・group（スレURL等）を渡すと cancel_prefetch(group) で未着手分を一括中断できる"""
         if not urls:
             return
         # 投入済みセットが肥大化しすぎたらクリア（長時間運用の保険）
         if len(self._prefetch_seen) > 20000:
             self._prefetch_seen.clear()
+        # グループのキャンセルトークン（イベント）。既存が無い/既にセット済み
+        # （前回キャンセル済み）なら作り直して新規バッチを有効化する。
+        ev = None
+        if group:
+            ev = self._prefetch_cancel.get(group)
+            if ev is None or ev.is_set():
+                ev = threading.Event()
+                self._prefetch_cancel[group] = ev
         pool = self._get_prefetch_pool()
         for url in urls:
             if not url or url in self._prefetch_seen or url in self._img_cache:
                 continue
             self._prefetch_seen.add(url)
             try:
-                pool.submit(self._prefetch_one, url)
+                pool.submit(self._prefetch_one, url, ev)
             except Exception:
                 pass
+
+    def cancel_prefetch(self, group: str) -> None:
+        """指定グループ（スレURL等）の先読みを中断する。
+        キュー待ちの未着手タスクは _prefetch_one 冒頭でスキップされる
+        （実行中の1件はそのまま完了）。タブを閉じた時などに呼ぶ。"""
+        if not group:
+            return
+        ev = self._prefetch_cancel.pop(group, None)
+        if ev is not None:
+            ev.set()
 
     def _get_prefetch_pool(self):
         if self._prefetch_pool is None:
@@ -1775,8 +1795,13 @@ class FutabaFetcher:
                 max_workers=1, thread_name_prefix="imgprefetch")
         return self._prefetch_pool
 
-    def _prefetch_one(self, url: str) -> None:
+    def _prefetch_one(self, url: str, cancel=None) -> None:
         """1枚を先読みしてディスクへ保存（メモリキャッシュは汚さない）。失敗は黙殺。"""
+        # キャンセル済み（タブを閉じた等）なら取得せずにスキップ。
+        # 投入済みセットから外し、再表示時に再投入できるようにする。
+        if cancel is not None and cancel.is_set():
+            self._prefetch_seen.discard(url)
+            return
         try:
             p = self._img_disk_path(url)
             if p.exists():
