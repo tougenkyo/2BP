@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.151"
+APP_VER = "0.9.152"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9454,8 +9454,12 @@ class ImageTabView(QWidget):
                 # ちらつかない。リモートURLのままなのでオリジン制約も無い。
                 swap_js = (
                     "(function(){var el=document.getElementById('img');if(!el)return;"
+                    # 連打対策: このswapのシーケンス番号を記録。デコード完了が
+                    # ナビ順と前後しても、最新(window._imgSeq)以外は適用しない。
+                    f"var _sq={self._media_seq};window._imgSeq={self._media_seq};"
                     "var tmp=new Image();"
                     "tmp.onload=function(){"
+                    "  if(window._imgSeq!==_sq)return;"  # 古いナビ → 破棄
                     "  var vw=window.innerWidth,vh=window.innerHeight;"
                     "  var nw=tmp.naturalWidth||0,nh=tmp.naturalHeight||0;"
                     "  el.src=tmp.src;"
@@ -9465,7 +9469,8 @@ class ImageTabView(QWidget):
                     "  el.style.visibility='visible';"
                     "  document.title='__imgloaded__';"
                     "};"
-                    "tmp.onerror=function(){el.src=" + _esc + ";el.style.visibility='visible';"
+                    "tmp.onerror=function(){if(window._imgSeq!==_sq)return;"
+                    "el.src=" + _esc + ";el.style.visibility='visible';"
                     "document.title='__imgloaded__';};"
                     "tmp.src=" + _esc + ";"
                     "})()"
