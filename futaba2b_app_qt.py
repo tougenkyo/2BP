@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.136"
+APP_VER = "0.9.137"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9449,12 +9449,14 @@ class ImageTabView(QWidget):
         return QUrl.fromLocalFile(str(_P("data/img").resolve()) + "/")
 
     def _media_cache_path(self, url: str, kind: str):
-        """表示用ローカルキャッシュのパスを返す。img=data/img、webm=video_cache。"""
+        """表示用ローカルキャッシュのパスを返す。img=data/img、webm=video_cache。
+        QUrl.fromLocalFile は絶対パス必須のため必ず絶対パス化して返す
+        （IMAGE_CACHE_DIR は相対パスなので resolve しないと file:// が不正になる）。"""
         try:
             if kind == 'img':
-                return self._fetcher._img_disk_path(url)
+                return self._fetcher._img_disk_path(url).resolve()
             if kind == 'webm':
-                return VideoPlayerWindow._cache_path(url)
+                return VideoPlayerWindow._cache_path(url).resolve()
         except Exception:
             pass
         return None
