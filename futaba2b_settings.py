@@ -318,6 +318,8 @@ class AppSettings:
         self.log_auto_save_html: bool = True   # HTML を保存
         self.log_auto_save_mht:  bool = True   # MHT を保存
         self.log_auto_save_zip:  bool = True   # ZIP を保存
+        # 開いているスレの本画像を表示中に先読みキャッシュ（スレ落ち保存の画像欠落防止）
+        self.prefetch_open_thread_images: bool = True
         # クリップボード貼付け画像の形式 ("jpg" / "png")
         self.post_img_format:  str = "jpg"
         # JPEG 圧縮率 (1-100, 初期値 80)
@@ -799,6 +801,7 @@ class AppSettings:
             self.log_auto_save_html = raw.get("log_auto_save_html", True)
             self.log_auto_save_mht  = raw.get("log_auto_save_mht",  True)
             self.log_auto_save_zip  = raw.get("log_auto_save_zip",  True)
+            self.prefetch_open_thread_images = raw.get("prefetch_open_thread_images", True)
 
             # NijiAppConfig 相当設定の読み込み
             cfg = raw.get("app_config", {})
@@ -973,6 +976,7 @@ class AppSettings:
                         "log_auto_save_html": self.log_auto_save_html,
                         "log_auto_save_mht":  self.log_auto_save_mht,
                         "log_auto_save_zip":  self.log_auto_save_zip,
+                        "prefetch_open_thread_images": self.prefetch_open_thread_images,
                         "app_config": self._dump_app_config(),
                         "img_overlay_res":  self.img_overlay_res,
                         "img_overlay_info": self.img_overlay_info,

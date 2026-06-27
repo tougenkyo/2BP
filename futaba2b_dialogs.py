@@ -3769,6 +3769,9 @@ class AppSettingsDialog(QDialog):
         af.addLayout(fmt_row)
         self._log_auto_full = QCheckBox("1000レス到達時も自動保存する（スレ落ち・1000レス到達のどちらか先で1回）")
         af.addWidget(self._log_auto_full)
+        self._prefetch_images = QCheckBox(
+            "開いているスレの本画像を先読みする（スレ落ち保存時の画像欠落を防止／通信量増）")
+        af.addWidget(self._prefetch_images)
         def _toggle_auto(checked):
             for w in (self._log_auto_html, self._log_auto_mht, self._log_auto_zip):
                 w.setEnabled(checked)
@@ -4249,6 +4252,7 @@ class AppSettingsDialog(QDialog):
         self._log_auto_mht.setChecked(getattr(s,  "log_auto_save_mht",  True))
         self._log_auto_zip.setChecked(getattr(s,  "log_auto_save_zip",  True))
         self._log_auto_full.setChecked(getattr(s, "log_auto_save_full", False))
+        self._prefetch_images.setChecked(getattr(s, "prefetch_open_thread_images", True))
         for w in (self._log_auto_html, self._log_auto_mht, self._log_auto_zip):
             w.setEnabled(auto)
         close_en = getattr(s, "auto_close_dead_tab", False)
@@ -4382,6 +4386,7 @@ class AppSettingsDialog(QDialog):
         s.log_auto_save_mht       = self._log_auto_mht.isChecked()
         s.log_auto_save_zip       = self._log_auto_zip.isChecked()
         s.log_auto_save_full      = self._log_auto_full.isChecked()
+        s.prefetch_open_thread_images = self._prefetch_images.isChecked()
         s.auto_close_dead_tab     = self._auto_close.isChecked()
         s.auto_close_full_tab     = self._auto_close_full.isChecked()
         s.auto_close_skip_pinned  = self._auto_close_skip_pinned.isChecked()

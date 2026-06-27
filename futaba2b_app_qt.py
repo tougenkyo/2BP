@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.132"
+APP_VER = "0.9.133"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3534,9 +3534,33 @@ class ThreadView(QWidget):
             thread.error = f"表示エラー: {e}"
             self._show_error(thread)
 
+    _PREFETCH_VID_EXT = ('.mp4', '.webm', '.mov', '.avi', '.mkv')
+
+    def _maybe_prefetch_images(self, thread):
+        """表示中スレの本画像を先読みキャッシュへ投入（設定ON時）。
+        スレ落ち自動保存で未閲覧画像が404欠落するのを防ぐ。動画は対象外。"""
+        if not getattr(self._settings, 'prefetch_open_thread_images', True):
+            return
+        if self._is_log or not thread or not thread.res_list:
+            return
+        urls = []
+        for r in thread.res_list:
+            u = r.image_url
+            if not u:
+                continue
+            if u.lower().rsplit('?', 1)[0].endswith(self._PREFETCH_VID_EXT):
+                continue   # 動画は巨大なので先読みしない
+            urls.append(u)
+        if urls:
+            try:
+                self._fetcher.prefetch_images(urls)
+            except Exception:
+                pass
+
     def _show_impl(self, thread):
         import time as _t
         _t0 = _t.time()
+        self._maybe_prefetch_images(thread)
         _ucss = _load_user_css(self._settings)
         _ul   = getattr(self._settings, "uploader_links", [])
         _ng   = self._settings.ng_filter if self._ng_enabled else None
@@ -7494,6 +7518,17 @@ class AutoRefreshManager(QObject):
                         self._settings_dirty = True   # 保存は_tick(メインスレッド)で5秒間隔フラッシュ
                         # data/logキャッシュにも反映（キャッシュフォールバック時の末尾欠落防止）
                         self._fetcher.append_diff_to_cache(entry.url, added)
+                        # 新着画像を先読みキャッシュ（非表示タブでもスレ落ち保存の欠落を防ぐ）
+                        if getattr(self._settings, 'prefetch_open_thread_images', True):
+                            _vx = ('.mp4', '.webm', '.mov', '.avi', '.mkv')
+                            _pf = [r.image_url for r in added
+                                   if r.image_url and not r.image_url.lower()
+                                       .rsplit('?', 1)[0].endswith(_vx)]
+                            if _pf:
+                                try:
+                                    self._fetcher.prefetch_images(_pf)
+                                except Exception:
+                                    pass
                     # スレ落ち自動保存用に最新状態を同期
                     view._last_valid_thread = th_cur
                     th = th_cur

@@ -226,6 +226,8 @@ class FutabaFetcher:
         self._settings = settings
         self.session = requests.Session()
         self._img_cache: dict[str, bytes] = {}  # url→bytes メモリキャッシュ
+        self._prefetch_seen: set[str] = set()   # 先読み済み/投入済みURL（重複投入防止）
+        self._prefetch_pool = None              # 本画像先読み用の小プール（遅延生成）
         # CURL と同一のヘッダーセット (Edge 148)
         self.session.headers.update({
             "User-Agent":          UA,
@@ -1742,6 +1744,63 @@ class FutabaFetcher:
                 break
         print(f"[Fetch] 画像エラー [{url}]: {last_err}")
         return None
+
+    # ── 本画像の先読みキャッシュ ──────────────────────────────────────────────
+    # スレ表示中に本画像(/src/)をディスクキャッシュへ先読みしておく。これにより、
+    # スレ落ち時の自動保存で「未閲覧の画像が既にサーバから消えて404」になる欠落を防ぐ。
+    # （スレ落ち時点でふたばは画像ファイルも削除するため、保存時のDLでは間に合わない）
+    def prefetch_images(self, urls) -> None:
+        """本画像URLのリストを低優先・低並列で先読みしてディスクへ保存する。
+        ・既にメモリ/ディスクにある画像、投入済みURLはスキップ
+        ・取得失敗は黙殺（先読みのためログを汚さない）"""
+        if not urls:
+            return
+        # 投入済みセットが肥大化しすぎたらクリア（長時間運用の保険）
+        if len(self._prefetch_seen) > 20000:
+            self._prefetch_seen.clear()
+        pool = self._get_prefetch_pool()
+        for url in urls:
+            if not url or url in self._prefetch_seen or url in self._img_cache:
+                continue
+            self._prefetch_seen.add(url)
+            try:
+                pool.submit(self._prefetch_one, url)
+            except Exception:
+                pass
+
+    def _get_prefetch_pool(self):
+        if self._prefetch_pool is None:
+            from concurrent.futures import ThreadPoolExecutor
+            self._prefetch_pool = ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="imgprefetch")
+        return self._prefetch_pool
+
+    def _prefetch_one(self, url: str) -> None:
+        """1枚を先読みしてディスクへ保存（メモリキャッシュは汚さない）。失敗は黙殺。"""
+        try:
+            p = self._img_disk_path(url)
+            if p.exists():
+                return
+            parsed  = urllib.parse.urlparse(url)
+            segs    = [s for s in parsed.path.split("/") if s]
+            referer = f"{parsed.scheme}://{parsed.hostname}/"
+            if segs:
+                referer += segs[0] + "/"
+            hdr = {
+                "Referer":        referer,
+                "Accept":         "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "Sec-Fetch-Dest": "image",
+                "Sec-Fetch-Mode": "no-cors",
+                "Sec-Fetch-Site": "same-origin",
+                "Upgrade-Insecure-Requests": None,
+            }
+            r = self.session.get(url, headers=hdr, timeout=self.timeout)
+            if not r.ok:
+                return
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(r.content)
+        except Exception:
+            pass
 
     def _img_disk_path(self, url: str) -> Path:
         parsed = urllib.parse.urlparse(url)
