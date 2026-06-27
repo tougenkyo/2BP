@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.137"
+APP_VER = "0.9.138"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8576,6 +8576,7 @@ class ImageTabView(QWidget):
     _sig_save_status  = Signal(str)   # 保存完了/失敗メッセージ
     _sig_info_text    = Signal(str)   # 情報オーバーレイ更新（BGスレッド→UI）
     _media_dl_done    = Signal(int, str, str, bool, str)  # (seq,url,kind,ok,prev_zoom) 優先DL完了
+    _media_dl_progress = Signal(int, int, int)            # (seq, downloaded, total) 優先DL進捗
     open_settings         = Signal()             # 設定ボタン → MainWindowが接続
     image_navigated       = Signal(str, list, int)  # 前へ/次へ → MainWindowがrecord_recent_imageに接続
     open_image_tab_bg     = Signal(str, list, int)  # 中クリック → 非アクティブで画像タブを開く
@@ -8791,6 +8792,18 @@ class ImageTabView(QWidget):
         self._img_spinner_safety.setSingleShot(True)
         self._img_spinner_safety.timeout.connect(self._hide_img_spinner)
 
+        # ── ダウンロード進捗バー（大きい画像・動画の優先DL中に中央表示） ────────
+        from PySide6.QtWidgets import QProgressBar as _QPB
+        self._dl_bar = _QPB(self)
+        self._dl_bar.setFixedWidth(260)
+        self._dl_bar.setTextVisible(True)
+        self._dl_bar.setStyleSheet(
+            "QProgressBar{background:rgba(0,0,0,170);color:#fff;border:1px solid #555;"
+            "border-radius:6px;height:22px;text-align:center;font-size:9pt;}"
+            "QProgressBar::chunk{background:#3a7bd5;border-radius:5px;}")
+        self._dl_bar.hide()
+        self._media_dl_progress.connect(self._on_media_dl_progress)
+
         self._show_current()
 
     # ── 砂時計オーバーレイ制御 ─────────────────────────────────────────────
@@ -8824,6 +8837,8 @@ class ImageTabView(QWidget):
         self._reposition_overlays()
         if getattr(self, '_img_spinner', None) is not None and self._img_spinner.isVisible():
             self._position_img_spinner()
+        if getattr(self, '_dl_bar', None) is not None and self._dl_bar.isVisible():
+            self._position_dl_bar()
         # フィットモード中はリサイズ後に再フィット（デバウンス80ms）。
         # BGタブ初回表示直後のレイアウト確定もこの経路で正しいサイズに収束する
         if getattr(self, '_img_page_ready', False) and self._fit_mode:
@@ -8942,6 +8957,7 @@ class ImageTabView(QWidget):
         self._mp_ctr.show()
 
         cp = VideoPlayerWindow._cache_path(url)
+        _mp_seq = self._media_seq   # 進捗バーのシーケンス（前へ/次へで古い進捗を破棄）
 
         def _download():
             import os as _os
@@ -8993,6 +9009,7 @@ class ImageTabView(QWidget):
                                 self._sig_mp4_progress.emit(
                                     f"⏳ ダウンロード中... {pct}% "
                                     f"({downloaded//1048576}/{total//1048576} MB)")
+                                self._media_dl_progress.emit(_mp_seq, downloaded, total)
                 _os.replace(tmp, cp)   # 完了後にアトミックに本パスへ
                 self._sig_mp4_ready.emit(str(cp))
             except Exception as e:
@@ -9005,6 +9022,8 @@ class ImageTabView(QWidget):
 
     def _on_mp4_ready(self, path: str):
         """ダウンロード完了 → QMediaPlayer で再生"""
+        if getattr(self, '_dl_bar', None) is not None:
+            self._dl_bar.hide()   # DL完了 → 進捗バーを消す
         # 既に別画像/動画へ切り替え済みの場合、古い完了シグナルは無視
         _cur_url = getattr(self, '_mp_cur_url', None)
         if not _cur_url:
@@ -9183,6 +9202,8 @@ class ImageTabView(QWidget):
             return
         # 表示シーケンスを進める（実行中の優先DLは古いものとして破棄される）
         self._media_seq += 1
+        if getattr(self, '_dl_bar', None) is not None:
+            self._dl_bar.hide()   # 前画像の進捗バーが残らないよう毎回隠す
         info = self._img_list[self._idx]
         # 情報オーバーレイが表示中なら更新
         if getattr(self, '_info_overlay_visible', False):
@@ -9490,22 +9511,47 @@ class ImageTabView(QWidget):
         self._show_img_spinner()
         import threading as _th
         def _dl(_seq=seq, _url=url, _kind=kind, _path=path):
+            # 画像・webm ともストリーミングDLして進捗バーを出しつつキャッシュへ保存。
+            # （画像も _img_disk_path と同一パスへ保存するので先読み/保存と整合する）
             ok = False
             try:
-                if _kind == 'img':
-                    ok = bool(self._fetcher.fetch_image_bytes(_url, retry_404=True))
-                else:
-                    ok = self._download_media_file(_url, _path)
+                ok = self._download_media_file(_url, _path, _kind, _seq)
             except Exception:
                 ok = False
             self._media_dl_done.emit(_seq, _url, _kind, ok, "")
         _th.Thread(target=_dl, daemon=True).start()
         return None
 
+    def _on_media_dl_progress(self, seq: int, downloaded: int, total: int):
+        """優先DLの進捗をプログレスバーに反映（総量不明時は砂時計のまま）。"""
+        if seq != self._media_seq:
+            return
+        if total < 1048576:
+            return   # 総量不明 or 1MB未満の小ファイル → バーは出さず砂時計のまま
+        self._hide_img_spinner()   # 砂時計を消してバーに切り替え
+        pct = min(100, downloaded * 100 // total) if total else 0
+        self._dl_bar.setRange(0, 100)
+        self._dl_bar.setValue(pct)
+        if total >= 1048576:
+            self._dl_bar.setFormat(f"%p%  ({downloaded//1048576}/{total//1048576} MB)")
+        else:
+            self._dl_bar.setFormat("%p%")
+        self._position_dl_bar()
+        self._dl_bar.show()
+        self._dl_bar.raise_()
+
+    def _position_dl_bar(self):
+        self._dl_bar.adjustSize()
+        self._dl_bar.setFixedWidth(260)
+        w = self._dl_bar.width(); h = self._dl_bar.height()
+        self._dl_bar.move(max(0, (self.width() - w) // 2),
+                          max(0, (self.height() - h) // 2))
+
     def _on_media_dl_done(self, seq: int, url: str, kind: str, ok: bool, _pz: str):
         """優先DL完了 → 最新表示なら再描画（成功=file://表示、失敗=リモート表示）。"""
         if seq != self._media_seq:
             return   # 既に別の画像へ移動済み
+        self._dl_bar.hide()
         if ok:
             # 成功扱いでも実ファイルが無ければ失敗とみなす（再DLループ防止）
             p = self._media_cache_path(url, kind)
@@ -9515,13 +9561,15 @@ class ImageTabView(QWidget):
             self._media_failed.add(url)
         self._show_current()
 
-    def _download_media_file(self, url: str, path) -> bool:
-        """webm 等を requests でストリーミング取得し video_cache へ保存。成功で True。"""
+    def _download_media_file(self, url: str, path, kind: str = 'img',
+                             seq: int = -1) -> bool:
+        """画像/webm を requests でストリーミング取得しキャッシュへ保存。成功で True。
+        Content-Length が取れればチャンクごとに進捗(_media_dl_progress)を発火する。"""
         if path is None:
             return False
         import os as _os
         from urllib.parse import urlparse as _up
-        tmp = str(path) + ".part"
+        tmp = str(path) + f".{__import__('threading').get_ident()}.part"
         try:
             pu = _up(url)
             segs = [s for s in pu.path.split("/") if s]
@@ -9530,8 +9578,9 @@ class ImageTabView(QWidget):
                 referer += segs[0] + "/"
             hdr = {
                 "Referer": referer,
-                "Accept": "*/*",
-                "Sec-Fetch-Dest": "video",
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+                          if kind == 'img' else "*/*",
+                "Sec-Fetch-Dest": "image" if kind == 'img' else "video",
                 "Sec-Fetch-Mode": "no-cors",
                 "Sec-Fetch-Site": "same-origin",
             }
@@ -9540,10 +9589,22 @@ class ImageTabView(QWidget):
                                            timeout=self._fetcher.timeout) as r:
                 if not r.ok:
                     return False
+                total = int(r.headers.get("content-length", 0) or 0)
+                downloaded = 0
+                last_emit = 0
+                if seq >= 0:
+                    self._media_dl_progress.emit(seq, 0, total)
                 with open(tmp, "wb") as f:
                     for chunk in r.iter_content(65536):
-                        if chunk:
-                            f.write(chunk)
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        # 進捗発火を間引く（256KBごと、または完了時）
+                        if seq >= 0 and (downloaded - last_emit >= 262144
+                                         or (total and downloaded >= total)):
+                            last_emit = downloaded
+                            self._media_dl_progress.emit(seq, downloaded, total)
             _os.replace(tmp, str(path))
             return True
         except Exception:
