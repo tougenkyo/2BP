@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.142"
+APP_VER = "0.9.143"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -160,6 +160,21 @@ def _dispose_tab_view(w):
         w.deleteLater()
     except Exception:
         pass
+
+
+def _make_prefetch_destroy_cb(fetcher, holder):
+    """ビュー破棄(destroyed)時に、そのスレの未着手先読みを中断するコールバックを返す。
+    self を捕捉しないこと（破棄中オブジェクト参照を避ける）。fetcher と holder のみ捕捉する。
+    cleanup() を通らない破棄経路（widget/GCカスケード）でも確実に発火させるための保険。"""
+    def _cb(*_a):
+        try:
+            g = holder[0] if holder else ""
+            if g:
+                print(f'[Prefetch] destroyed->cancel {g}', flush=True)
+                fetcher.cancel_prefetch(g)
+        except Exception:
+            pass
+    return _cb
 
 
 def _cleanup_tmp(path: str):
@@ -2866,6 +2881,10 @@ class ThreadView(QWidget):
         super().__init__(parent)
         self._fetcher   = fetcher
         self._settings  = settings
+        # 表示中スレのURL保持（先読みキャンセルのグループキー）。破棄時に必ず
+        # 中断できるよう destroyed シグナルへ接続（cleanup 未呼出の破棄経路の保険）。
+        self._pf_group_holder = [""]
+        self.destroyed.connect(_make_prefetch_destroy_cb(fetcher, self._pf_group_holder))
         self._thread    = None
         self._last_valid_thread = None   # 最後にres_listが有効だったスレ（スレ落ち保存用）
         self._img_list: list = []
@@ -3588,8 +3607,10 @@ class ThreadView(QWidget):
                 continue   # 動画は巨大なので先読みしない
             urls.append(u)
         if urls:
+            _grp = thread.url or ""
+            self._pf_group_holder[0] = _grp   # destroyed時のキャンセル対象を記録
             try:
-                self._fetcher.prefetch_images(urls, group=thread.url or "")
+                self._fetcher.prefetch_images(urls, group=_grp)
             except Exception:
                 pass
 
