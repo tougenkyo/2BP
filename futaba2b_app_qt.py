@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.149"
+APP_VER = "0.9.150"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9669,16 +9669,44 @@ class ImageTabView(QWidget):
         cb.blockSignals(False)
 
     def _zoom_combo_step(self, direction: int):
-        """−/＋ボタン: コンボの選択を1つ上/下へ移動して拡大率を反映する。
-        （リストボックスの並び順そのままにインデックスを±1。両端でクランプ）"""
+        """−/＋ボタン: 拡大率を1段階上/下へ。
+        ・%表示中: コンボのインデックスを±1（並び順どおり、両端クランプ）
+        ・「画面に合わせる」中: 実表示倍率を取得し、その隣の段階%へ移動する。
+          （フィットの隣＝25% に飛んで急に小さくなるのを防ぐ）"""
         cb = self._zoom_combo
         n = cb.count()
         if n == 0:
+            return
+        if getattr(self, "_fit_mode", False):
+            # フィットの実表示倍率(表示幅÷画像実寸)を取得して隣の段階へ
+            self._view.page().runJavaScript(
+                "(function(){var el=document.querySelector('img,video');"
+                "if(!el)return 0;"
+                "var nw=el.naturalWidth||el.videoWidth||0;"
+                "if(!nw)return 0;"
+                "return Math.round((el.offsetWidth/nw)*100);})()",
+                lambda cur, d=direction: self._apply_step_from_scale(cur or 0, d))
             return
         idx = cb.currentIndex()
         new_idx = max(0, min(n - 1, idx + direction))
         if new_idx != idx:
             cb.setCurrentIndex(new_idx)   # currentTextChanged → _on_zoom_combo で反映
+
+    def _apply_step_from_scale(self, cur_pct: int, direction: int):
+        """フィット実倍率 cur_pct(%) を基準に、隣の段階%を適用する。"""
+        steps = self._ZOOM_STEPS
+        if not cur_pct or cur_pct <= 0:
+            # 実倍率取得失敗 → 従来どおりインデックス移動でフォールバック
+            cb = self._zoom_combo
+            idx = cb.currentIndex()
+            cb.setCurrentIndex(max(0, min(cb.count() - 1, idx + direction)))
+            return
+        if direction > 0:
+            nxt = next((s for s in steps if s > cur_pct), steps[-1])
+        else:
+            nxt = next((s for s in reversed(steps) if s < cur_pct), steps[0])
+        self._set_zoom_combo_value(nxt)
+        self._on_zoom_combo(f"{nxt}%")
 
     def _on_zoom_combo(self, text: str):
         """コンボ選択→zoomFactor適用。「画面に合わせる」は画面フィット、%値は固定サイズ"""
