@@ -40,6 +40,7 @@ from futaba2b_app_qt import (
     AutoRefreshManager, AutoRefreshDialog,
     _compute_interval_sec,
     _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
+    _schedule_gc,
     _JapaneseLineEdit,
 )
 from futaba2b_dialogs import (
@@ -1621,6 +1622,7 @@ class MainWindow(QMainWindow):
             pane.deleteLater()
         except Exception:
             pass
+        _schedule_gc()   # 板タブ破棄後に遅延GCで回収
 
     def _on_scroll_count_updated(self, remaining: int):
         """末尾スクロール残回数をステータスバーに表示"""

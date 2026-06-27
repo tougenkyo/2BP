@@ -72,7 +72,8 @@ import os as _os
 VIDEO_CACHE_DIR  = Path(              # 動画キャッシュ保存先（app_qt と同一パス）
     _os.environ.get("LOCALAPPDATA", _os.path.expanduser("~"))
 ) / "2BP" / "video_cache"
-IMAGE_CACHE_MAX  = 200                # メモリキャッシュ最大件数
+IMAGE_CACHE_MAX  = 120                # メモリキャッシュ最大件数（上限・副次）
+IMAGE_CACHE_MAX_BYTES = 48 * 1024 * 1024  # メモリキャッシュ最大バイト数（主・48MB）
 COOKIES_FILE   = Path("futaba2b_cookies.json")  # セッションクッキー永続化
 
 
@@ -226,6 +227,7 @@ class FutabaFetcher:
         self._settings = settings
         self.session = requests.Session()
         self._img_cache: dict[str, bytes] = {}  # url→bytes メモリキャッシュ
+        self._img_cache_bytes: int = 0          # _img_cache の合計バイト数（上限管理用）
         self._prefetch_seen: set[str] = set()   # 先読み済み/投入済みURL（重複投入防止）
         self._prefetch_pool = None              # 本画像先読み用の小プール（遅延生成）
         self._prefetch_cancel: dict = {}        # group(スレURL)→Event（タブ閉じ時の一括中断）
@@ -1850,9 +1852,19 @@ class FutabaFetcher:
         return IMAGE_CACHE_DIR / (parsed.hostname or "unknown") / parsed.path.lstrip("/")
 
     def _store_img_cache(self, url: str, data: bytes) -> None:
-        if len(self._img_cache) >= IMAGE_CACHE_MAX:
-            del self._img_cache[next(iter(self._img_cache))]
+        # バイト数主体のLRU（件数上限は副次）。フルサイズ画像を大量に抱えて
+        # RSSが膨らむのを防ぐため、合計バイト数で上限を設ける。
+        old = self._img_cache.pop(url, None)
+        if old is not None:
+            self._img_cache_bytes -= len(old)
         self._img_cache[url] = data
+        self._img_cache_bytes += len(data)
+        while self._img_cache and (
+                len(self._img_cache) > IMAGE_CACHE_MAX
+                or self._img_cache_bytes > IMAGE_CACHE_MAX_BYTES):
+            _k, _v = next(iter(self._img_cache.items()))
+            del self._img_cache[_k]
+            self._img_cache_bytes -= len(_v)
 
     def _save_img_cache(self, url: str, data: bytes) -> None:
         self._store_img_cache(url, data)

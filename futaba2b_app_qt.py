@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.147"
+APP_VER = "0.9.148"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -158,6 +158,28 @@ def _dispose_tab_view(w):
         pass
     try:
         w.deleteLater()
+    except Exception:
+        pass
+    _schedule_gc()   # 破棄後に遅延GCで循環参照(BS4/Qt)を回収しRSSを下げる
+
+
+_gc_debounce_timer = None
+def _schedule_gc(delay_ms: int = 4000):
+    """タブ破棄後、最後の呼び出しから delay_ms 後に1回だけ gc.collect() する。
+    BeautifulSoup/Qt の循環参照を回収して RSS を下げる。閉じる操作中の同期GC負荷を
+    避けるため遅延＋デバウンス（連続クローズでも1回）。profile の遅延削除(3秒)後に
+    回収できるよう既定4秒。"""
+    global _gc_debounce_timer
+    try:
+        from PySide6.QtCore import QTimer
+        if _gc_debounce_timer is None:
+            _gc_debounce_timer = QTimer()
+            _gc_debounce_timer.setSingleShot(True)
+            def _do_gc():
+                import gc as _gc
+                _gc.collect()
+            _gc_debounce_timer.timeout.connect(_do_gc)
+        _gc_debounce_timer.start(delay_ms)
     except Exception:
         pass
 
