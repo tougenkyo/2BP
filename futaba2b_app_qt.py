@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.150"
+APP_VER = "0.9.151"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9490,6 +9490,17 @@ class ImageTabView(QWidget):
             self._zoom_combo.blockSignals(True)
             self._zoom_combo.setCurrentText(_prev_zoom)
             self._zoom_combo.blockSignals(False)
+            # ナビ(前へ/次へ)後、継承した%が確実に表示へ反映されるよう少し遅れて
+            # 再適用する。swap/setHtml/file://プリロードの経路差で稀に反映漏れし、
+            # 画面に合わせる相当に戻ることがあるための保証（フィット時は対象外）。
+            if _prev_zoom and _prev_zoom != "画面に合わせる":
+                _rz_seq = self._media_seq
+                def _reassert_zoom(_z=_prev_zoom, _s=_rz_seq):
+                    if _s != self._media_seq:
+                        return   # 連打で別画像へ移動済み
+                    if self._zoom_combo.currentText() == _z:
+                        self._on_zoom_combo(_z)
+                QTimer.singleShot(220, _reassert_zoom)
 
 
     # ── ローカルキャッシュ表示（②③）──────────────────────────────────────────
