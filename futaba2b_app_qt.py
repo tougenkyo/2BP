@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.141"
+APP_VER = "0.9.142"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5709,11 +5709,12 @@ def _make_scroll_bottom_js(scroll_bottom_count: int = 5, scroll_top_count: int =
             if not _turl and self._board is not None and self._thread_no:
                 _turl = self._board.base_url + f"res/{self._thread_no}.htm"
             print(f'[Prefetch] cleanup() turl={_turl!r} '
-                  f'thread={getattr(self,"_thread",None) is not None} no={self._thread_no}')
+                  f'thread={getattr(self,"_thread",None) is not None} no={self._thread_no}',
+                  flush=True)
             if _turl:
                 self._fetcher.cancel_prefetch(_turl)
         except Exception as _e:
-            print(f'[Prefetch] cleanup cancel error: {_e}')
+            print(f'[Prefetch] cleanup cancel error: {_e}', flush=True)
 
         # 一時HTMLファイルを削除
         if getattr(self, '_tmp_html_path', ''):
