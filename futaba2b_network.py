@@ -1819,13 +1819,31 @@ class FutabaFetcher:
                 "Sec-Fetch-Site": "same-origin",
                 "Upgrade-Insecure-Requests": None,
             }
-            r = self.session.get(url, headers=hdr, timeout=self.timeout)
-            if not r.ok:
-                return
+            # ストリーミング取得し、チャンク間でキャンセルを確認して即中断する
+            # （閉じた瞬間に実行中の大きな画像DLも止める）。
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(r.content)
+            tmp = p.with_name(p.name + f".{threading.get_ident()}.part")
+            cancelled = False
+            with self.session.get(url, headers=hdr, stream=True,
+                                  timeout=self.timeout) as r:
+                if not r.ok:
+                    return
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_content(65536):
+                        if cancel is not None and cancel.is_set():
+                            cancelled = True
+                            break
+                        if chunk:
+                            f.write(chunk)
+            if cancelled:
+                try: tmp.unlink(missing_ok=True)
+                except OSError: pass
+                self._prefetch_seen.discard(url)   # 再表示で再投入可能に
+                return
+            tmp.replace(p)   # 完了後にアトミックに本パスへ
         except Exception:
-            pass
+            try: tmp.unlink(missing_ok=True)
+            except (OSError, NameError, UnboundLocalError): pass
 
     def _img_disk_path(self, url: str) -> Path:
         parsed = urllib.parse.urlparse(url)
