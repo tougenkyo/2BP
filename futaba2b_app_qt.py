@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.152"
+APP_VER = "0.9.153"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9257,6 +9257,7 @@ class ImageTabView(QWidget):
             return
         # 表示シーケンスを進める（実行中の優先DLは古いものとして破棄される）
         self._media_seq += 1
+        print(f'[Nav] show seq={self._media_seq} idx={self._idx} ready={getattr(self,"_img_page_ready",False)}', flush=True)
         if getattr(self, '_dl_bar', None) is not None:
             self._dl_bar.hide()   # 前画像の進捗バーが残らないよう毎回隠す
         info = self._img_list[self._idx]
@@ -9289,6 +9290,7 @@ class ImageTabView(QWidget):
         # 無ければ優先DL→保存→完了後に再描画（DL中はNoneを返しspinner表示）。
         disp = self._resolve_or_download(url, self._media_seq)
         if disp is None:
+            print(f'[Nav] -> download(early return) seq={self._media_seq} idx={self._idx}', flush=True)
             return
         url = disp
         _lo = url.lower()
@@ -9447,6 +9449,7 @@ class ImageTabView(QWidget):
                     _size_js = (f"el.style.width=Math.round(nw*{_pct}/100)+'px';el.style.height='auto';"
                                 f"el.classList.remove('actual');window._zoomState='fit';")
             if self._img_page_ready:
+                print(f'[Nav] -> swap seq={self._media_seq} idx={self._idx} zoom={_prev_zoom}', flush=True)
                 _esc = _json.dumps(url)
                 # プリロード＋アトミック差し替え:
                 # 旧画像を表示したまま new Image() で新画像をデコードし、完了時に
@@ -9467,7 +9470,7 @@ class ImageTabView(QWidget):
                     "  el.style.display='block';el.style.margin='auto';"
                     "  if(nw>0&&nh>0){" + _size_js + "}"
                     "  el.style.visibility='visible';"
-                    "  document.title='__imgloaded__';"
+                    "  document.title='__imgloaded__:'+_sq;"
                     "};"
                     "tmp.onerror=function(){if(window._imgSeq!==_sq)return;"
                     "el.src=" + _esc + ";el.style.visibility='visible';"
@@ -9480,6 +9483,7 @@ class ImageTabView(QWidget):
                 self._pending_fit = False
                 self._pending_zoom = None
             else:
+                print(f'[Nav] -> setHtml seq={self._media_seq} idx={self._idx} zoom={_prev_zoom}', flush=True)
                 self._img_page_ready = False
                 self._view.setHtml(
                     f'<html><head><style>{base_css}</style>'
@@ -9596,6 +9600,7 @@ class ImageTabView(QWidget):
 
     def _on_media_dl_done(self, seq: int, url: str, kind: str, ok: bool, _pz: str):
         """優先DL完了 → 最新表示なら再描画（成功=file://表示、失敗=リモート表示）。"""
+        print(f'[Nav] dl_done seq={seq} cur={self._media_seq} ok={ok} match={seq==self._media_seq}', flush=True)
         if seq != self._media_seq:
             return   # 既に別の画像へ移動済み
         self._dl_bar.hide()
@@ -9791,6 +9796,7 @@ class ImageTabView(QWidget):
 
     def _inject_fit_bridge(self, ok: bool):
         """loadFinished後にtitleChangedをfit通知として接続（初回のみ）"""
+        print(f'[Nav] loadFinished ok={ok} seq={self._media_seq} idx={self._idx} media_page={getattr(self,"_is_media_page",False)}', flush=True)
         if not ok:
             return
         # 動画ページは #img 用のJS差し替え・フィット対象外。可視化は専用の
@@ -9872,7 +9878,9 @@ f"  el.style.visibility='visible';}}"
 
     def _on_fit_title(self, title: str):
         """titleを使ったJS→Python通知を受け取る"""
-        if title == "__imgloaded__":
+        if title == "__imgloaded__" or title.startswith("__imgloaded__:"):
+            _shown = title.split(":", 1)[1] if ":" in title else "?"
+            print(f'[Nav] SHOWN seq={_shown} (cur={self._media_seq}) idx={self._idx}', flush=True)
             self._hide_img_spinner()
             self._view.page().runJavaScript("document.title='';")
             return
@@ -9977,6 +9985,7 @@ f"  el.style.visibility='visible';}}"
         if self._img_list:
             self._stop_mp4()
             self._idx = (self._idx + delta) % len(self._img_list)
+            print(f'[Nav] click delta={delta} -> idx={self._idx}', flush=True)
             self._show_current()
             self.image_navigated.emit(
                 self._img_list[self._idx].get("url", ""),
