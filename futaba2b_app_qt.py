@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.156"
+APP_VER = "0.9.157"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -7196,7 +7196,13 @@ def _compute_interval_sec(adaptive_intervals: list, pct_remaining: float) -> int
             return 3600
     else:
         best = min(matching, key=lambda r: r.get("pct", 100))
-    return _to_sec(best)
+    _sec = _to_sec(best)
+    # 容量逼迫(残り割合が極小)のスレは、段階更新の設定に関わらず最短60sを下限にする。
+    # json が落ちても生存を返し続けるスレを容量チェックのフルGET404で速やかに
+    # 検知するため（落ちたのに長時間閉じない/自動更新を無視する症状の対策）。
+    if pct_remaining <= 2.0 and _sec > 60:
+        _sec = 60
+    return _sec
 
 
 class AutoRefreshManager(QObject):
@@ -7552,9 +7558,19 @@ class AutoRefreshManager(QObject):
                 #   手動更新のフルGETでのみ404検知できる状態になっていた）
                 _o  = self._settings.global_max_no_by_board.get(board.base_url, 0)
                 _ms = entry.max_saved
-                _over = (_ms > 0 and _o > 0 and (entry.no + _ms - _o) <= 0)
+                _remaining = (entry.no + _ms - _o) if (_ms > 0 and _o > 0) else None
+                _over = (_remaining is not None and _remaining <= 0)
+                # 容量が近い/超過したスレは更新間隔を強制的に短縮（60s）する。
+                # json が落ちても「生存」を返し続ける(dielong不発)スレは容量チェックの
+                # フルGET404が唯一の検知手段だが、間隔が10分〜1時間だと「落ちたのに
+                # 長時間閉じない／自動更新を無視しているように見える」。容量到達前から
+                # 高頻度化しておくことで、超過直後(最大~60s)に404確認できるようにする。
+                if _remaining is not None and _remaining <= 1000 and entry.interval_sec > 60:
+                    entry.interval_sec = 60
+                    if 0 <= idx < len(self._remain):
+                        self._remain[idx] = min(self._remain[idx], 60)
                 print(f'[ARDBG] capacity No={no} over={_over} '
-                      f'max_saved={_ms} global_max={_o} remaining={entry.no + _ms - _o if (_ms and _o) else None}', flush=True)
+                      f'max_saved={_ms} global_max={_o} remaining={_remaining} interval={entry.interval_sec}', flush=True)
                 if _over:
                     import time as _tmod
                     _now = _tmod.monotonic()
