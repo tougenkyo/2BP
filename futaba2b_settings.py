@@ -1071,10 +1071,17 @@ class AppSettings:
     # ── 履歴・お気に入り ──────────────────────────────────────────────────────
 
     def add_history(self, board_name: str, no: int, title: str, board_url: str = "") -> None:
+        # 既存エントリの「最後に書き込んだ日時」を引き継ぐ（再オープンで消さない）
+        _prev_posted = ""
+        for h in self.thread_history:
+            if h.get("board") == board_name and h.get("no") == no:
+                _prev_posted = h.get("posted", "")
+                break
         entry = {
             "board": board_name, "no": no, "title": title,
             "time": time.strftime("%Y/%m/%d %H:%M:%S"),
             "url":  board_url,
+            "posted": _prev_posted,
         }
         self.thread_history = [
             h for h in self.thread_history
@@ -1082,6 +1089,16 @@ class AppSettings:
         ]
         self.thread_history.insert(0, entry)
         self.thread_history = self.thread_history[:500]
+
+    def mark_history_posted(self, board_name: str, no: int) -> bool:
+        """スレッド履歴の該当エントリに「最後に書き込んだ日時」を記録する。
+        投稿成功時に呼ぶ。該当エントリが無ければ False。"""
+        ts = time.strftime("%Y/%m/%d %H:%M:%S")
+        for h in self.thread_history:
+            if h.get("board") == board_name and h.get("no") == no:
+                h["posted"] = ts
+                return True
+        return False
 
     def add_favorite(self, name: str, url: str) -> None:
         if any(f["url"] == url for f in self.favorites):

@@ -172,8 +172,8 @@ class ThreadHistoryPane(QWidget):
         h_lay.addWidget(close_btn); lay.addWidget(hdr)
 
         # テーブル
-        self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(["板", "スレッド", "最後に更新した時間"])
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["板", "スレッド", "最後に更新した時間", "最後に書き込んだ日付"])
         _th = self._table.horizontalHeader()
         _th.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         _th.setSortIndicatorShown(True)
@@ -192,6 +192,7 @@ class ThreadHistoryPane(QWidget):
         self._table.setColumnWidth(0, 70)
         self._table.setColumnWidth(1, 200)
         self._table.setColumnWidth(2, 120)
+        self._table.setColumnWidth(3, 120)
         _restore_col_widths(self._table, self._settings, "table_col_widths_history")
         lay.addWidget(self._table)
         self.refresh()
@@ -203,6 +204,7 @@ class ThreadHistoryPane(QWidget):
             self._table.setItem(row, 0, QTableWidgetItem(h.get("board", "")))
             self._table.setItem(row, 1, QTableWidgetItem(h.get("title", "")))
             self._table.setItem(row, 2, QTableWidgetItem(h.get("time", "")))
+            self._table.setItem(row, 3, QTableWidgetItem(h.get("posted", "")))
 
     def _on_double(self, row: int, _col: int):
         if row < len(self._settings.thread_history):
@@ -215,7 +217,7 @@ class ThreadHistoryPane(QWidget):
         else:
             self._sort_col = col
             self._sort_asc = True
-        key_map = {0: "board", 1: "title", 2: "time"}
+        key_map = {0: "board", 1: "title", 2: "time", 3: "posted"}
         key_name = key_map.get(col, "time")
         self._settings.thread_history.sort(
             key=lambda h: str(h.get(key_name, "")).lower(),

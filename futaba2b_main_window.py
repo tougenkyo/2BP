@@ -2255,7 +2255,12 @@ class MainWindow(QMainWindow):
                 nos = self._settings.my_post_nos.setdefault(thread_url, [])
                 if new_no not in nos:
                     nos.append(new_no)
-                self._settings.save()
+            # スレッド履歴に「最後に書き込んだ日時」を記録
+            self._settings.mark_history_posted(board.name, resto)
+            self._settings.save()
+            if getattr(self, "_hist_pane", None) is not None:
+                try: self._hist_pane.refresh()
+                except Exception: pass
             for i in range(inner.count()):
                 w = inner.widget(i)
                 if isinstance(w, ThreadView) and w._thread_no == resto:
@@ -2326,6 +2331,14 @@ class MainWindow(QMainWindow):
                 # 新スレはレス1件のみのため、画像/引用モード設定だと空表示に
                 # なってしまう → 通常モードを強制して開く
                 self._open_thread(board, new_no, open_mode_override='')
+                # 新スレ作成も「書き込み」として履歴に記録（エントリが未作成なら作る）
+                if not self._settings.mark_history_posted(board.name, new_no):
+                    self._settings.add_history(board.name, new_no, f"No.{new_no}", board.url)
+                    self._settings.mark_history_posted(board.name, new_no)
+                self._settings.save()
+                if getattr(self, "_hist_pane", None) is not None:
+                    try: self._hist_pane.refresh()
+                    except Exception: pass
                 # PostDialog等の背後に隠れないようメインウィンドウを前面化
                 self.raise_()
                 self.activateWindow()
