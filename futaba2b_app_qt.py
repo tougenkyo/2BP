@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.159"
+APP_VER = "0.9.160"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -7415,6 +7415,23 @@ class AutoRefreshManager(QObject):
                 if now.time() >= stop:
                     entry.enabled = False
                     continue
+            # 段階的更新間隔を毎ティック再計算し、短くなっていたらカウントダウンを詰める。
+            # （従来は更新時にしか再計算せず、長い間隔(例3600s)で開始したスレは容量が
+            #  逼迫しても次の更新まで間隔が縮まらず「残り8分」等のまま落ち検知が遅れた）
+            try:
+                if getattr(entry, 'adaptive_intervals', None) and entry.max_saved > 0:
+                    _bk = entry.url.rsplit("/res/", 1)[0] + "/"
+                    _o = self._settings.global_max_no_by_board.get(_bk, 0)
+                    if _o > 0:
+                        _rem = entry.no + entry.max_saved - _o
+                        _pct = max(0.0, _rem / entry.max_saved * 100)
+                        _isec = _compute_interval_sec(entry.adaptive_intervals, _pct)
+                        if _isec != entry.interval_sec:
+                            entry.interval_sec = _isec
+                        if entry.interval_sec < self._remain[i]:
+                            self._remain[i] = entry.interval_sec
+            except Exception:
+                pass
             self._remain[i] -= 1
             if self._remain[i] <= 0:
                 self._remain[i] = entry.interval_sec
