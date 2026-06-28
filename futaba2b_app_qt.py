@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.155"
+APP_VER = "0.9.156"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -7294,6 +7294,7 @@ class AutoRefreshManager(QObject):
         # 同じURLの重複登録を防止
         for e in self._entries:
             if e.url == entry.url:
+                print(f'[ARDBG] add SKIP(dup) No={getattr(entry,"no","?")} url={entry.url}', flush=True)
                 return
         self._entries.append(entry)
         self._views.append(_wr.ref(view) if view else None)
@@ -7303,6 +7304,9 @@ class AutoRefreshManager(QObject):
         if not self._timer.isActive():
             self._timer.start()
         self.entry_added.emit()
+        print(f'[ARDBG] add No={getattr(entry,"no","?")} enabled={entry.enabled} '
+              f'interval={entry.interval_sec} max_saved={getattr(entry,"max_saved","?")} '
+              f'count={len(self._entries)} view={view is not None}', flush=True)
 
     def has_url(self, url: str) -> bool:
         return any(e.url == url for e in self._entries)
@@ -7469,6 +7473,18 @@ class AutoRefreshManager(QObject):
                     print(f'[AutoRefresh] diff fetch error No.{no}: {e}')
                     return
 
+                # ── 診断: 差分の生結果と容量計算値を出力 ──
+                try:
+                    _o_dbg = self._settings.global_max_no_by_board.get(board.base_url, 0)
+                    _ms_dbg = entry.max_saved
+                    _rem_dbg = (entry.no + _ms_dbg - _o_dbg) if (_ms_dbg and _o_dbg) else None
+                    print(f'[ARDBG] diff No={no} is_dead={diff.get("is_dead")} '
+                          f'die={diff.get("die","")!r} is_full={diff.get("is_full")} '
+                          f'err={diff.get("error","")!r} new={len(diff.get("new_res") or [])} '
+                          f'max_saved={_ms_dbg} global_max={_o_dbg} remaining={_rem_dbg}', flush=True)
+                except Exception:
+                    pass
+
                 if diff["error"]:
                     _code = diff["error"].split()[0] if diff["error"].split() else ''
                     if _code == "404":
@@ -7536,7 +7552,10 @@ class AutoRefreshManager(QObject):
                 #   手動更新のフルGETでのみ404検知できる状態になっていた）
                 _o  = self._settings.global_max_no_by_board.get(board.base_url, 0)
                 _ms = entry.max_saved
-                if _ms > 0 and _o > 0 and (entry.no + _ms - _o) <= 0:
+                _over = (_ms > 0 and _o > 0 and (entry.no + _ms - _o) <= 0)
+                print(f'[ARDBG] capacity No={no} over={_over} '
+                      f'max_saved={_ms} global_max={_o} remaining={entry.no + _ms - _o if (_ms and _o) else None}', flush=True)
+                if _over:
                     import time as _tmod
                     _now = _tmod.monotonic()
                     # 連続フルGET防止: 容量超過中は最短60s間隔で再確認する
@@ -7546,6 +7565,8 @@ class AutoRefreshManager(QObject):
                             th_chk = self._fetcher.fetch_thread(board, no)
                         except Exception:
                             th_chk = None
+                        print(f'[ARDBG] capacity fullGET No={no} '
+                              f'err={(th_chk.error if th_chk else "None")!r}', flush=True)
                         if th_chk is not None and (th_chk.error or "").split()[:1] == ["404"]:
                             print(f'[AutoRefresh] 板容量落ち検知 No.{no}'
                                   f'（残{entry.no + _ms - _o}/{_ms}）→ 削除・自動保存')
