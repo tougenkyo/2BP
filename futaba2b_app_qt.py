@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.160"
+APP_VER = "0.9.161"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -7214,7 +7214,7 @@ class AutoRefreshManager(QObject):
     _sd_apply     = Signal(object, object)               # view, {no: count} そうだね反映
     _remove_later_url = Signal(str)          # URLベースの削除要求（スレッドセーフ）
     _catalog_reload   = Signal(object)       # カタログビュー更新要求（スレッドセーフ）
-    _fetching_done    = Signal(int)            # BGスレッドからfetching完了通知
+    _fetching_done    = Signal(str)            # BGスレッドからfetching完了通知（URLキー）
     _thread_dead_sig  = Signal(object, str)  # thread_dead をメインスレッドで発火（view, url）
     _thread_full_sig  = Signal(object, str)  # 1000レス到達専用（_is_deadを立てない）
     _errband_sig      = Signal(object, str)  # 通信エラー赤帯（view, text; ""=解除）。帯＋タブ赤化
@@ -7228,7 +7228,7 @@ class AutoRefreshManager(QObject):
         self._remain:  list[int]          = []
         self._new_cnt: list[int]          = []
         self._res_cnt: list[int]          = []
-        self._fetching: set[int]          = set()  # フェッチ中のエントリインデックス
+        self._fetching: set[str]          = set()  # フェッチ中エントリのURL（位置indexだと削除でズレる）
         self._settings_dirty = False       # 設定保存の遅延フラグ（BGスレッドからの全量save防止）
         self._last_settings_save = 0.0     # 最終保存時刻 (time.monotonic)
         self._fetch_pool = _FETCH_POOL  # グローバルプールを共用
@@ -7239,7 +7239,7 @@ class AutoRefreshManager(QObject):
         self._sd_apply.connect(self._apply_sd_to_view)
         self._remove_later_url.connect(self.remove_by_url)
         self._catalog_reload.connect(self._do_catalog_reload)
-        self._fetching_done.connect(lambda i: self._fetching.discard(i))
+        self._fetching_done.connect(lambda u: self._fetching.discard(u))
         def _on_thread_dead_sig(v, u):
             if not v:
                 return
@@ -7344,9 +7344,7 @@ class AutoRefreshManager(QObject):
             self._remain.pop(idx)
             self._new_cnt.pop(idx)
             self._res_cnt.pop(idx)
-            # _fetching のインデックスを更新（削除後ずれを補正）
-            self._fetching = {i if i < idx else i - 1
-                              for i in self._fetching if i != idx}
+            # _fetching はURLキーなので削除によるindexズレの補正は不要
             self.entry_removed.emit(idx)
         if not self._entries:
             self._timer.stop()
@@ -7448,11 +7446,13 @@ class AutoRefreshManager(QObject):
 
     def _do_refresh(self, idx: int):
         import threading
-        # 同一エントリが既にフェッチ中なら投入しない
-        if idx in self._fetching:
-            return
-        self._fetching.add(idx)
         entry = self._entries[idx]
+        # 同一エントリが既にフェッチ中なら投入しない（URLキー: BG実行中に他エントリが
+        # remove()されてもindexがズレず、完了通知の取りこぼしが起きない）
+        _url = entry.url
+        if _url in self._fetching:
+            return
+        self._fetching.add(_url)
         # entry と同時に表示先ビュー参照を捕捉する（メインスレッド）。
         # BG実行時に self._views[idx] を再読みすると、投入〜実行の間に
         # remove() で並列リストが前詰めシフトした場合 idx が別エントリの
@@ -7461,14 +7461,14 @@ class AutoRefreshManager(QObject):
 
         # ── カタログエントリの場合は reload シグナルを発火するだけ ────────
         if getattr(entry, 'is_catalog', False):
-            def _catalog_fetch(_ref=ref_v, _idx=idx):
+            def _catalog_fetch(_ref=ref_v, _idx=idx, _u=_url):
                 try:
                     entry.last_update_str = _dt.now().strftime("%y/%m/%d %H:%M:%S")
                     view = _ref() if _ref else None
                     self._catalog_reload.emit(view)
                     self.updated.emit(_idx)
                 finally:
-                    self._fetching_done.emit(_idx)
+                    self._fetching_done.emit(_u)
             threading.Thread(target=_catalog_fetch, daemon=True).start()
             return
 
@@ -7771,7 +7771,7 @@ class AutoRefreshManager(QObject):
             except Exception as e:
                 print(f'[AutoRefresh] _fetch error No.{entry.no}: {e}')
             finally:
-                self._fetching_done.emit(idx)
+                self._fetching_done.emit(_url)
 
         _FETCH_POOL.submit(_fetch)
 
