@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.158"
+APP_VER = "0.9.159"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -7560,18 +7560,31 @@ class AutoRefreshManager(QObject):
                 _ms = entry.max_saved
                 _remaining = (entry.no + _ms - _o) if (_ms > 0 and _o > 0) else None
                 _over = (_remaining is not None and _remaining <= 0)
-                # 容量が近い/超過したスレは更新間隔を強制的に短縮（60s）する。
-                # json が落ちても「生存」を返し続ける(dielong不発)スレは容量チェックの
-                # フルGET404が唯一の検知手段だが、間隔が10分〜1時間だと「落ちたのに
-                # 長時間閉じない／自動更新を無視しているように見える」。容量到達前から
-                # 高頻度化しておくことで、超過直後(最大~60s)に404確認できるようにする。
-                if _remaining is not None and _remaining <= 1000 and entry.interval_sec > 60:
+                # 落ち予定時刻(dielong)がサーバー現在時刻(nowtime)を過ぎたか。
+                # ふたばの落下は作成No順ではなく最終バンプ順のため、低活性スレは
+                # 容量(no+max_saved-global_max)に余裕があっても早期に落ちる。その場合
+                # is_dead(=dielongがepoch)も容量超過も発火しないが、dielong<=nowtime
+                # （落ち予定時刻の到達）は捉えられる。これを404確認の追加トリガにする。
+                _die_passed = False
+                try:
+                    _dl = diff.get("dielong", ""); _nt = diff.get("nowtime", 0)
+                    if _dl and _nt:
+                        from email.utils import parsedate_to_datetime as _pdt
+                        _de = _pdt(_dl).timestamp()
+                        if _de > 0 and _de <= float(_nt):
+                            _die_passed = True
+                except Exception:
+                    pass
+                # 落ちが近い/予定時刻到達のスレは更新間隔を強制的に短縮（60s）し、
+                # 落ちた直後(最大~60s)に404確認できるようにする。
+                if ((_die_passed or (_remaining is not None and _remaining <= 1000))
+                        and entry.interval_sec > 60):
                     entry.interval_sec = 60
                     if 0 <= idx < len(self._remain):
                         self._remain[idx] = min(self._remain[idx], 60)
-                print(f'[ARDBG] capacity No={no} over={_over} '
+                print(f'[ARDBG] capacity No={no} over={_over} die_passed={_die_passed} '
                       f'max_saved={_ms} global_max={_o} remaining={_remaining} interval={entry.interval_sec}', flush=True)
-                if _over:
+                if _over or _die_passed:
                     import time as _tmod
                     _now = _tmod.monotonic()
                     # 連続フルGET防止: 容量超過中は最短60s間隔で再確認する
@@ -7584,8 +7597,9 @@ class AutoRefreshManager(QObject):
                         print(f'[ARDBG] capacity fullGET No={no} '
                               f'err={(th_chk.error if th_chk else "None")!r}', flush=True)
                         if th_chk is not None and (th_chk.error or "").split()[:1] == ["404"]:
-                            print(f'[AutoRefresh] 板容量落ち検知 No.{no}'
-                                  f'（残{entry.no + _ms - _o}/{_ms}）→ 削除・自動保存')
+                            print(f'[AutoRefresh] 落ち検知(404) No.{no} '
+                                  f'over={_over} die_passed={_die_passed} '
+                                  f'残{_remaining} → 削除・自動保存')
                             if view:
                                 self._view_update.emit(view, th_chk, False, False)
                             self._remove_later_url.emit(entry.url)
