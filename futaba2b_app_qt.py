@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.162"
+APP_VER = "0.9.163"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6870,18 +6870,6 @@ class CatalogView(QWidget):
 
         # 開く前にURLを全件登録して重複防止・設定保存
         _rev_list = self._settings._ng_reverse_opened_list
-        # ── 診断ログ: NGスレが開かれる事象の特定用（原因確定後に削除） ──
-        _ng_f = ng_filter or self._settings.ng_filter
-        _pri = getattr(self._settings, "ng_priority_word_idx", 0)
-        _tc = self._reverse_ng_title_chars()
-        for e in targets:
-            try:
-                _is_ng, _is_rev = _ng_f._classify_ng_catalog_1pass(e, _tc)
-                print(f"[REV_OPEN] No.{e.no} title={e.title!r} chars={_tc} "
-                      f"is_ng={_is_ng} is_rev={_is_rev} priority={'NG優先' if _pri == 0 else '逆NG優先'} "
-                      f"cls={_ng_f.classify_catalog(e, title_chars=_tc)} url={e.thread_url}")
-            except Exception:
-                pass
         for e in targets:
             if e.thread_url not in opened:
                 opened.add(e.thread_url)
@@ -7329,7 +7317,6 @@ class AutoRefreshManager(QObject):
         # 同じURLの重複登録を防止
         for e in self._entries:
             if e.url == entry.url:
-                print(f'[ARDBG] add SKIP(dup) No={getattr(entry,"no","?")} url={entry.url}', flush=True)
                 return
         self._entries.append(entry)
         self._views.append(_wr.ref(view) if view else None)
@@ -7339,9 +7326,6 @@ class AutoRefreshManager(QObject):
         if not self._timer.isActive():
             self._timer.start()
         self.entry_added.emit()
-        print(f'[ARDBG] add No={getattr(entry,"no","?")} enabled={entry.enabled} '
-              f'interval={entry.interval_sec} max_saved={getattr(entry,"max_saved","?")} '
-              f'count={len(self._entries)} view={view is not None}', flush=True)
 
     def has_url(self, url: str) -> bool:
         return any(e.url == url for e in self._entries)
@@ -7525,18 +7509,6 @@ class AutoRefreshManager(QObject):
                     print(f'[AutoRefresh] diff fetch error No.{no}: {e}')
                     return
 
-                # ── 診断: 差分の生結果と容量計算値を出力 ──
-                try:
-                    _o_dbg = self._settings.global_max_no_by_board.get(board.base_url, 0)
-                    _ms_dbg = entry.max_saved
-                    _rem_dbg = (entry.no + _ms_dbg - _o_dbg) if (_ms_dbg and _o_dbg) else None
-                    print(f'[ARDBG] diff No={no} is_dead={diff.get("is_dead")} '
-                          f'die={diff.get("die","")!r} is_full={diff.get("is_full")} '
-                          f'err={diff.get("error","")!r} new={len(diff.get("new_res") or [])} '
-                          f'max_saved={_ms_dbg} global_max={_o_dbg} remaining={_rem_dbg}', flush=True)
-                except Exception:
-                    pass
-
                 if diff["error"]:
                     _code = diff["error"].split()[0] if diff["error"].split() else ''
                     if _code == "404":
@@ -7628,8 +7600,6 @@ class AutoRefreshManager(QObject):
                     entry.interval_sec = 60
                     if 0 <= idx < len(self._remain):
                         self._remain[idx] = min(self._remain[idx], 60)
-                print(f'[ARDBG] capacity No={no} over={_over} die_passed={_die_passed} '
-                      f'max_saved={_ms} global_max={_o} remaining={_remaining} interval={entry.interval_sec}', flush=True)
                 if _over or _die_passed:
                     import time as _tmod
                     _now = _tmod.monotonic()
@@ -7640,8 +7610,6 @@ class AutoRefreshManager(QObject):
                             th_chk = self._fetcher.fetch_thread(board, no)
                         except Exception:
                             th_chk = None
-                        print(f'[ARDBG] capacity fullGET No={no} '
-                              f'err={(th_chk.error if th_chk else "None")!r}', flush=True)
                         if th_chk is not None and (th_chk.error or "").split()[:1] == ["404"]:
                             print(f'[AutoRefresh] 落ち検知(404) No.{no} '
                                   f'over={_over} die_passed={_die_passed} '
@@ -9367,7 +9335,6 @@ class ImageTabView(QWidget):
             return
         # 表示シーケンスを進める（実行中の優先DLは古いものとして破棄される）
         self._media_seq += 1
-        print(f'[Nav] show seq={self._media_seq} idx={self._idx} ready={getattr(self,"_img_page_ready",False)}', flush=True)
         if getattr(self, '_dl_bar', None) is not None:
             self._dl_bar.hide()   # 前画像の進捗バーが残らないよう毎回隠す
         info = self._img_list[self._idx]
@@ -9400,7 +9367,6 @@ class ImageTabView(QWidget):
         # 無ければ優先DL→保存→完了後に再描画（DL中はNoneを返しspinner表示）。
         disp = self._resolve_or_download(url, self._media_seq)
         if disp is None:
-            print(f'[Nav] -> download(early return) seq={self._media_seq} idx={self._idx}', flush=True)
             return
         url = disp
         _lo = url.lower()
@@ -9559,7 +9525,6 @@ class ImageTabView(QWidget):
                     _size_js = (f"el.style.width=Math.round(nw*{_pct}/100)+'px';el.style.height='auto';"
                                 f"el.classList.remove('actual');window._zoomState='fit';")
             if self._img_page_ready:
-                print(f'[Nav] -> swap seq={self._media_seq} idx={self._idx} zoom={_prev_zoom}', flush=True)
                 _esc = _json.dumps(url)
                 # プリロード＋アトミック差し替え:
                 # 旧画像を表示したまま new Image() で新画像をデコードし、完了時に
@@ -9596,7 +9561,6 @@ class ImageTabView(QWidget):
                 self._pending_fit = False
                 self._pending_zoom = None
             else:
-                print(f'[Nav] -> setHtml seq={self._media_seq} idx={self._idx} zoom={_prev_zoom}', flush=True)
                 self._img_page_ready = False
                 self._view.setHtml(
                     f'<html><head><style>{base_css}</style>'
@@ -9713,7 +9677,6 @@ class ImageTabView(QWidget):
 
     def _on_media_dl_done(self, seq: int, url: str, kind: str, ok: bool, _pz: str):
         """優先DL完了 → 最新表示なら再描画（成功=file://表示、失敗=リモート表示）。"""
-        print(f'[Nav] dl_done seq={seq} cur={self._media_seq} ok={ok} match={seq==self._media_seq}', flush=True)
         if seq != self._media_seq:
             return   # 既に別の画像へ移動済み
         self._dl_bar.hide()
@@ -9909,7 +9872,6 @@ class ImageTabView(QWidget):
 
     def _inject_fit_bridge(self, ok: bool):
         """loadFinished後にtitleChangedをfit通知として接続（初回のみ）"""
-        print(f'[Nav] loadFinished ok={ok} seq={self._media_seq} idx={self._idx} media_page={getattr(self,"_is_media_page",False)}', flush=True)
         if not ok:
             return
         # 動画ページは #img 用のJS差し替え・フィット対象外。可視化は専用の
@@ -9992,8 +9954,6 @@ f"  el.style.visibility='visible';}}"
     def _on_fit_title(self, title: str):
         """titleを使ったJS→Python通知を受け取る"""
         if title == "__imgloaded__" or title.startswith("__imgloaded__:"):
-            _shown = title.split(":", 1)[1] if ":" in title else "?"
-            print(f'[Nav] SHOWN seq={_shown} (cur={self._media_seq}) idx={self._idx}', flush=True)
             self._hide_img_spinner()
             self._force_recomposite()   # 新画像ロード完了 → 強制再描画でフレーム残留を防ぐ
             self._view.page().runJavaScript("document.title='';")
@@ -10102,7 +10062,6 @@ f"  el.style.visibility='visible';}}"
         # 1回だけ行う（中間画像の高速 src 差し替えで QtWebEngine が古いフレームを
         # 描画する問題を回避するための集約＝デバウンス）。
         self._idx = (self._idx + delta) % len(self._img_list)
-        print(f'[Nav] click delta={delta} -> idx={self._idx} (debounced)', flush=True)
         t = getattr(self, '_nav_debounce', None)
         if t is None:
             t = QTimer(self)
