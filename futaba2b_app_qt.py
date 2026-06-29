@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.168"
+APP_VER = "0.9.169"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5851,7 +5851,12 @@ class ThreadView(QWidget):
         except Exception:
             pass
 
-        # channel / bridge を先に削除
+        # webChannel を切り離してから channel / bridge を削除
+        try:
+            if _page is not None:
+                _page.setWebChannel(None)
+        except Exception:
+            pass
         for obj in (_chan, _bridge):
             if obj is not None:
                 try:
@@ -5859,26 +5864,36 @@ class ThreadView(QWidget):
                 except Exception:
                     pass
 
-        # page を削除し、page が完全に破棄された後に profile を削除する。
-        # destroyed シグナルで順序を保証（profileはそれまでlambdaのクロージャで生存）。
+        # ── 重いDOM(1000レス等)を抱えたpageの破棄でGUIが数秒固まるのを防ぐ ──
+        # page をそのまま deleteLater すると、Chromium の WebContents/DOM 解体が
+        # GUIスレッド上で同期実行され、レス数が多いスレでは数秒フリーズする。
+        # 先に about:blank へ遷移させて巨大DOMをレンダラ側で解放させ、その完了後
+        # （保険で最大1.5s後）に page を破棄すると、破棄時のDOMが空同然になり軽い。
+        # profile は従来どおり page 破棄(destroyed)後さらに3秒待って解放し、
+        # "Release of profile ..." 警告と早期解放クラッシュを回避する。
         if _page is not None:
-            if _prof is not None:
+            _torn = {"done": False}
+            def _teardown_page(*_a, _p=_page, _pr=_prof, _flag=_torn):
+                if _flag["done"]:
+                    return
+                _flag["done"] = True
+                if _pr is not None:
+                    try:
+                        _p.destroyed.connect(
+                            lambda *a, p=_pr: QTimer.singleShot(3000, p.deleteLater))
+                    except Exception:
+                        QTimer.singleShot(3000, lambda p=_pr: p.deleteLater())
                 try:
-                    # page の QObject 破棄を検知してから、さらに数秒待って
-                    # profile を解放する。QtWebEngine は page 破棄後も Chromium の
-                    # WebContents 解放が非同期で遅れるため、destroyed 直後に
-                    # 即 profile.deleteLater() すると
-                    # "Release of profile requested but WebEnginePage still not
-                    #  deleted" 警告が出る。profile を長生きさせる方向なので
-                    # 早期解放クラッシュのリスクは無い。
-                    _page.destroyed.connect(
-                        lambda *a, p=_prof: QTimer.singleShot(3000, p.deleteLater))
+                    _p.deleteLater()
                 except Exception:
-                    QTimer.singleShot(3000, lambda p=_prof: p.deleteLater())
+                    pass
             try:
-                _page.deleteLater()
+                _page.loadFinished.connect(lambda _ok, f=_teardown_page: f())
+                _page.setUrl(QUrl("about:blank"))
+                # loadFinished が来ない場合の保険
+                QTimer.singleShot(1500, _teardown_page)
             except Exception:
-                pass
+                _teardown_page()
         elif _prof is not None:
             try:
                 _prof.deleteLater()
