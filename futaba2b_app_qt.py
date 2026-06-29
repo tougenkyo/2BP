@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.171"
+APP_VER = "0.9.172"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3421,6 +3421,35 @@ class ThreadView(QWidget):
         lbl = "削除:隠す" if self._del_showing else "削除:見る"
         self._del_btn.setText(f"{lbl}({deleted_count}件)")
 
+    def _mode_marker_sets(self):
+        """画像/引用モードの目印用に (hidden_nos, del_nos, is_ng_fn, reveal) を返す。
+        hidden_nos: 手動NG/delして非表示にしたレスNo（NG解除中は空）
+        del_nos:    delしたレスNo（No.右に「del済」表示。NG解除と無関係に常時）
+        is_ng_fn:   NGワード/NG画像にマッチするレスか（緑帯対象）を返す関数。
+                    緑帯はNG解除時にも出したいので NG判定は常に行う。
+        reveal:     NG解除（表示）状態か。Trueなら NGレスを隠さず緑帯付きで表示する。"""
+        turl = (self._thread.url if self._thread else "") or ""
+        reveal = not self._ng_enabled
+        hidden = (set(self._settings.ng_hidden_res_nos.get(turl, []))
+                  if self._ng_enabled else set())
+        delnos = set(self._settings.del_res_nos.get(turl, []))
+        ng = self._settings.ng_filter   # 緑帯判定は常時（解除中も帯を出すため）
+        s = self._settings
+        _hide_name  = getattr(s, "ng_thread_hide_name",  True)
+        _hide_image = getattr(s, "ng_thread_hide_image", True)
+        def _is_ng(res):
+            if ng is None or getattr(res, "is_op", False) or getattr(res, "is_deleted", False):
+                return False
+            try:
+                if _hide_name and ng.is_ng(res):
+                    return True
+                if _hide_image and res.image_url and ng.is_ng_image(res):
+                    return True
+            except Exception:
+                pass
+            return False
+        return hidden, delnos, _is_ng, reveal
+
     def _sync_del_btn_after_full_render(self):
         """画像/引用モードを全描画した直後の状態同期。全描画ではbodyが作り直され
         show-deletedクラスが消える（=削除レス非表示）ので、_del_showingとボタン表示も
@@ -3662,10 +3691,15 @@ class ThreadView(QWidget):
         self._maybe_prefetch_images(thread)
         _ucss = _load_user_css(self._settings)
         _ul   = getattr(self._settings, "uploader_links", [])
-        _ng   = self._settings.ng_filter if self._ng_enabled else None
+        # NG判定は常時行う（NG解除時もNGレスに緑帯を出すため）。隠す/帯のみは
+        # ng_reveal で切り替える。
+        _ng   = self._settings.ng_filter
+        _ng_reveal = not self._ng_enabled
         # 手動NG済みレスNoを取得（NG解除中は手動NGも無効化して全レス表示）
         _thread_url = thread.url or ""
         _hidden_nos = set(self._settings.ng_hidden_res_nos.get(_thread_url, [])) if self._ng_enabled else set()
+        # del済マーカーはNG解除状態に関わらず表示する
+        _del_nos = set(self._settings.del_res_nos.get(_thread_url, []))
 
         # ── スレフッターHTML ──────────────────────────────────────────────
         import datetime as _dt
@@ -3730,7 +3764,7 @@ class ThreadView(QWidget):
             new_len = len(thread.res_list)
             if new_len > self._known_res_count:
                 # レスが増えた → 差分更新して終了
-                self._show_diff(thread, _ng, _ul, _hidden_nos, new_count, _t0)
+                self._show_diff(thread, _ng, _ul, _hidden_nos, new_count, _t0, _del_nos, _ng_reveal)
                 return
             elif new_len == self._known_res_count:
                 # レスが変わっていない or 削除で件数が同じ
@@ -3744,7 +3778,7 @@ class ThreadView(QWidget):
                     old_deleted = {r.no for r in self._thread.res_list if r.is_deleted}
                     newly_deleted = [no for no in deleted_nos if no not in old_deleted]
                     if newly_deleted:
-                        self._update_deleted_res_dom(thread, newly_deleted, _ng, _ul, _hidden_nos)
+                        self._update_deleted_res_dom(thread, newly_deleted, _ng, _ul, _hidden_nos, _del_nos, _ng_reveal)
                         self._thread = thread
                         self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
                         return
@@ -3766,7 +3800,7 @@ class ThreadView(QWidget):
             _prev_img_list_len = len(self._img_list)
             _html, self._img_list = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                                    ng_filter=_ng, ng_settings=self._settings,
-                                                   hidden_nos=_hidden_nos,
+                                                   hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal,
                                                    scroll_bottom_count=_sbc,
                                                    scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                                    footer_html=_make_thread_footer(thread),
@@ -3790,7 +3824,7 @@ class ThreadView(QWidget):
         self._img_list.clear()  # 全体再描画時のみクリア（差分・モード再描画パスでは保持）
         html, self._img_list = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                               ng_filter=_ng, ng_settings=self._settings,
-                                              hidden_nos=_hidden_nos,
+                                              hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal,
                                               scroll_bottom_count=_sbc,
                                               scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                               footer_html=_make_thread_footer(thread),
@@ -3863,7 +3897,7 @@ class ThreadView(QWidget):
             self._notify_ng_word_match(_new_res)
             self._check_self_res_notifications(thread, _new_res)
 
-    def _show_diff(self, thread, _ng, _ul, _hidden_nos, new_count: int, _t0: float):
+    def _show_diff(self, thread, _ng, _ul, _hidden_nos, new_count: int, _t0: float, _del_nos=None, _ng_reveal=False):
         """差分更新: 新着レスのみDOMに追記してスクロール位置を保持する"""
         from futaba2b_html import res_fragment_html
         import json, time as _t_mod
@@ -3890,6 +3924,9 @@ class ThreadView(QWidget):
             has_name_field=getattr(self._board, 'has_name_field', True),
             my_nos=self._get_my_nos(thread),
             id_warn_count=getattr(self._settings,'id_warn_count',5),
+            del_nos=(_del_nos if _del_nos is not None
+                     else set(self._settings.del_res_nos.get(thread.url or "", []))),
+            ng_reveal=_ng_reveal,
         )
 
         if not fragments:
@@ -4731,9 +4768,11 @@ class ThreadView(QWidget):
         thread = self._thread
         _ucss = _load_user_css(self._settings)
         _ul   = getattr(self._settings, "uploader_links", [])
-        _ng   = self._settings.ng_filter if self._ng_enabled else None
+        _ng   = self._settings.ng_filter
+        _ng_reveal = not self._ng_enabled
         _thread_url = thread.url or ""
         _hidden_nos = set(self._settings.ng_hidden_res_nos.get(_thread_url, [])) if self._ng_enabled else set()
+        _del_nos = set(self._settings.del_res_nos.get(_thread_url, []))
         _DAY_JP = ['月','火','水','木','金','土','日']
         def _footer(th):
             res_count = max(0, len(th.res_list) - 1)
@@ -4747,7 +4786,7 @@ class ThreadView(QWidget):
         html, self._img_list = thread_to_html(
             thread, user_css=_ucss, uploaders=_ul,
             ng_filter=_ng, ng_settings=self._settings,
-            hidden_nos=_hidden_nos, scroll_bottom_count=_sbc,
+            hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal, scroll_bottom_count=_sbc,
             footer_html=_footer(thread),
             my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5))
         self._last_html = html
@@ -4840,6 +4879,7 @@ class ThreadView(QWidget):
 
         rows = []
         seq = [0]
+        _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
 
         def render_node(no, prefix, is_last, depth):
             res = res_map[no]
@@ -4858,12 +4898,17 @@ class ThreadView(QWidget):
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
             _del_c = " deleted" if res.is_deleted else ""
+            _ngm = _is_ng(res)
+            if _ngm: _del_c += " ng-band"                       # NGワード/NG画像 → 緑帯
+            if (no in _hidden) or (_ngm and not _reveal):       # 手動NG/del or NG(非解除時)→非表示
+                _del_c += " ng-hidden"
+            _dm = ' <span class="del-done">del済</span>' if no in _delnos else ''
 
             if depth == 0:
                 rows.append('<div class="qt-sep"></div>')
                 rows.append(
                     f'<div class="qt-row qt-root{_del_c}">'
-                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '
+                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '
                     f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             else:
@@ -4871,7 +4916,7 @@ class ThreadView(QWidget):
                 rows.append(
                     f'<div class="qt-row qt-child{_del_c}" style="margin-left:{depth*20}px">'
                     f'<span class="qt-branch">{branch}</span> '
-                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '
+                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '
                     f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
 
@@ -4902,7 +4947,10 @@ class ThreadView(QWidget):
                    ".qt-thumb{max-height:60px;max-width:80px;object-fit:contain;"
                    "vertical-align:middle;margin-left:4px;border:1px solid #aaa;cursor:pointer;}"
                    ".qt-row.deleted{display:none;}"
-                   "body.show-deleted .qt-row.deleted{display:block;}")
+                   "body.show-deleted .qt-row.deleted{display:block;}"
+                   ".qt-row.ng-hidden{display:none;}"
+                   ".qt-row.ng-band{border-left:4px solid #1f9d1f;padding-left:4px;}"
+                   ".del-done{color:#cc1105;font-weight:bold;font-size:8pt;}")
         _sbc = getattr(self._settings, 'scroll_bottom_count', 5)
         _scroll_js = _make_scroll_bottom_js(_sbc, getattr(self._settings,'scroll_top_count',0))
         _ucss_q = _load_user_css(self._settings)
@@ -4991,6 +5039,7 @@ class ThreadView(QWidget):
             return t[:60] + ("…" if len(t) > 60 else "")
         rows = []
         seq = [0]
+        _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
         def render_node(no, prefix, is_last, depth):
             res = res_map[no]
             # 連番は返信モードと同じ通し番号(res_idx)を使う
@@ -5008,15 +5057,20 @@ class ThreadView(QWidget):
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
             _del_c = " deleted" if res.is_deleted else ""
+            _ngm = _is_ng(res)
+            if _ngm: _del_c += " ng-band"
+            if (no in _hidden) or (_ngm and not _reveal):
+                _del_c += " ng-hidden"
+            _dm = ' <span class="del-done">del済</span>' if no in _delnos else ''
             if depth == 0:
                 rows.append('<div class="qt-sep"></div>')
                 rows.append(
-                    f'<div class="qt-row qt-root{_del_c}">'                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
+                    f'<div class="qt-row qt-root{_del_c}">'                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             else:
                 branch = "└" if is_last else "├"
                 rows.append(
-                    f'<div class="qt-row qt-child{_del_c}" style="margin-left:{depth*20}px">'                    f'<span class="qt-branch">{branch}</span> '                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
+                    f'<div class="qt-row qt-child{_del_c}" style="margin-left:{depth*20}px">'                    f'<span class="qt-branch">{branch}</span> '                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             ch = children.get(no, [])
             for i, cno in enumerate(ch):
@@ -5052,6 +5106,7 @@ class ThreadView(QWidget):
             if b>=1024: return f'{b//1024}KB'
             return f'{b}B' if b else '?'
         items=[]
+        _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
         # ポップアップ用に全レスを隠しプールへ（▼被引用の引用元が画像なしレスでも
         # ポップアップ表示・引用マップ計算ができるよう全件入れる）
         # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
@@ -5068,17 +5123,25 @@ class ThreadView(QWidget):
             idx=seq-1
             # 左上の番号: スレ内通し番号（OP=0 → "OP"、返信は res_idx）
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
+            _gi_cls = "gi"
+            if r.is_deleted:     _gi_cls += " deleted"
+            _ngm = _is_ng(r)
+            if _ngm:             _gi_cls += " ng-band"     # NGワード/NG画像 → 緑帯
+            if (r.no in _hidden) or (_ngm and not _reveal):  # 手動NG/del or NG(非解除時)
+                _gi_cls += " ng-hidden"
+            _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
             items.append(
-                '<div class="gi'+(' deleted' if r.is_deleted else '')+'" data-res-no="'+str(r.no)+'"'
+                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'"'
                 ' onclick="try{openGalleryImg('+str(idx)+')}catch(e){}"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
+                + _gi_del +
                 '<div class="gn">'+display_no+'</div>'
                 '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy" data-popup-no="'+str(r.no)+'"></div>'
                 '<div class="gs">'+info+'</div>'
                 '</div>'
             )
         _cols = max(1, int(getattr(self._settings, "image_mode_cols", 6)))
-        _img_add = ".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;grid-template-columns:repeat(" + str(_cols) + ",80px);gap:4px}.gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}.gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}.gn{text-align:left;font-size:7pt;line-height:1.3}.gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}.gt img{max-width:100%;max-height:72px;object-fit:contain}.gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}.gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}"
+        _img_add = ".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;grid-template-columns:repeat(" + str(_cols) + ",80px);gap:4px}.gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}.gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}.gn{text-align:left;font-size:7pt;line-height:1.3}.gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}.gt img{max-width:100%;max-height:72px;object-fit:contain}.gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}.gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}.gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 4px 0 0 #1f9d1f}.gi-del{position:absolute;top:12px;left:1px;color:#cc1105;font-weight:bold;font-size:7pt;line-height:1.1;background:rgba(255,255,255,0.85);padding:0 2px;border-radius:2px;z-index:3}"
         # 画像モード固有関数のみ追加定義（_b/openImgBg/sodane/openUrl等はWEBCHANNEL_JSで共通定義）
         _img_js = "function openGalleryImg(i){_b('openGalleryImg',[i]);}"
         # 隠しレスプール（popup_js が getElementById('rNNNN') で参照する）
@@ -5119,6 +5182,7 @@ class ThreadView(QWidget):
             if b>=1024: return f'{b//1024}KB'
             return f'{b}B' if b else '?'
         items=[]
+        _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
         # ポップアップ用に全レスを隠しプールへ（▼被引用対応のため全件）。
         # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
         _id_counts = {}
@@ -5133,10 +5197,18 @@ class ThreadView(QWidget):
             info=ext+' / '+_fmt(r.file_size_bytes)
             idx=seq-1
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
+            _gi_cls = "gi"
+            if r.is_deleted:     _gi_cls += " deleted"
+            _ngm = _is_ng(r)
+            if _ngm:             _gi_cls += " ng-band"     # NGワード/NG画像 → 緑帯
+            if (r.no in _hidden) or (_ngm and not _reveal):  # 手動NG/del or NG(非解除時)
+                _gi_cls += " ng-hidden"
+            _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
             items.append(
-                '<div class="gi'+(' deleted' if r.is_deleted else '')+'" data-res-no="'+str(r.no)+'"'
+                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'"'
                 ' onclick="try{openGalleryImg('+str(idx)+')}catch(e){}"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
+                + _gi_del +
                 '<div class="gn">'+display_no+'</div>'
                 '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy" data-popup-no="'+str(r.no)+'"></div>'
                 '<div class="gs">'+info+'</div>'
@@ -5663,10 +5735,12 @@ class ThreadView(QWidget):
         )
 
     # ── del ──────────────────────────────────────────────────────────────
-    def _update_deleted_res_dom(self, thread, newly_deleted: list, _ng, _ul, _hidden_nos):
+    def _update_deleted_res_dom(self, thread, newly_deleted: list, _ng, _ul, _hidden_nos, _del_nos=None, _ng_reveal=False):
         """削除されたレスのDIVをページリロードなしでDOM書き換え"""
         import json as _json
         from futaba2b_html import render_res
+        if _del_nos is None:
+            _del_nos = set(self._settings.del_res_nos.get(thread.url or "", []))
         res_map = {r.no: r for r in thread.res_list}
         patches = []
         for no in newly_deleted:
@@ -5676,7 +5750,8 @@ class ThreadView(QWidget):
             html = render_res(res, False, [],
                               uploaders=_ul, ng_filter=_ng,
                               ng_settings=self._settings,
-                              hidden_nos=_hidden_nos)
+                              hidden_nos=_hidden_nos, del_nos=_del_nos,
+                              ng_reveal=_ng_reveal)
             html = html.strip()
             patches.append((no, html))
         if not patches:
@@ -5706,6 +5781,7 @@ class ThreadView(QWidget):
         self._pending_del_should_hide = bool(hide)
         # チェック状態を次回デフォルトとして記憶
         self._settings.del_hide_checked = bool(hide)
+        self._mark_del_res(no)
         if hide:
             self._hide_res_after_del(no)
         self._settings.save()
@@ -5723,6 +5799,7 @@ class ThreadView(QWidget):
         self._pending_del_should_hide = True
         # チェック状態を次回デフォルトとして記憶
         self._settings.del_hide_checked = bool(hide)
+        self._mark_del_res(no)
         if hide:
             self._hide_res_after_del(no)
         self._settings.save()
@@ -5730,6 +5807,15 @@ class ThreadView(QWidget):
             ok2, msg = self._fetcher.delete_res(board, no, pwd, onlyimg, thread_url=turl)
             self._del_result.emit(ok2, msg)
         threading.Thread(target=_do, daemon=True).start()
+
+    def _mark_del_res(self, no: int):
+        """delしたレスNoを del_res_nos に記録する（No.右の「del済」赤表示用）。"""
+        thread_url = (self._thread.url if self._thread else "") or ""
+        if not thread_url:
+            return
+        lst = self._settings.del_res_nos.setdefault(thread_url, [])
+        if no not in lst:
+            lst.append(no)
 
     def _hide_res_after_del(self, no: int):
         """削除後にNGと同様にレスを非表示化（設定保存のみ、reload_threadは呼び出し元任せ）"""
@@ -7909,6 +7995,7 @@ class AutoRefreshManager(QObject):
         _ucss = _load_user_css(self._settings)
         _ul   = getattr(self._settings, "uploader_links", [])
         _ng   = self._settings.ng_filter
+        _del_nos = set(self._settings.del_res_nos.get(thread.url or "", [])) if thread else set()
         # entry.max_res_no を更新（段階更新間隔計算の精度向上）
         if thread and thread.res_list:
             _latest_no = thread.res_list[-1].no
@@ -7943,6 +8030,7 @@ class AutoRefreshManager(QObject):
                 return
             html, _ = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                       ng_filter=_ng, ng_settings=self._settings,
+                                      del_nos=_del_nos,
                                       scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
                                       footer_html=view._thread_footer_html(thread),
                                       my_nos=self._get_my_nos_for_view(view, thread),
@@ -8000,6 +8088,7 @@ class AutoRefreshManager(QObject):
                 has_name_field=getattr(view._board, 'has_name_field', True),
                 my_nos=self._get_my_nos_for_view(view, thread),
                 id_warn_count=getattr(self._settings,'id_warn_count',5),
+                del_nos=_del_nos,
             )
             view._thread = thread
             view._known_res_count = len(thread.res_list)
@@ -8008,6 +8097,7 @@ class AutoRefreshManager(QObject):
             _ucss2 = _ucss
             _html_full, _ = thread_to_html(thread, user_css=_ucss2, uploaders=_ul,
                                            ng_filter=_ng, ng_settings=self._settings,
+                                           del_nos=_del_nos,
                                            scroll_bottom_count=_sbc,
                                            scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                            footer_html=view._thread_footer_html(thread),
@@ -8069,6 +8159,7 @@ class AutoRefreshManager(QObject):
         # ── 全体再描画（フォールバック） ──────────────────────────────────
         html, _ = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                   ng_filter=_ng, ng_settings=self._settings,
+                                  del_nos=_del_nos,
                                   scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
                                   footer_html=view._thread_footer_html(thread),
                                   my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5))

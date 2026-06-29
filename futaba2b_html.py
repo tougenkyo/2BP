@@ -369,6 +369,18 @@ body.op-no-id .post-id.post-id-warn {
 .res.ng-hidden {
     display: none !important;
 }
+/* ─ NGレス（NGワード/NG画像）: 表示された時に左へ緑の帯 ─ */
+.res.ng-band {
+    border-left: 4px solid #1f9d1f;
+    padding-left: 5px;
+}
+/* ─ del（削除依頼/記事削除）済みレスの目印 ─ */
+.del-done {
+    color: #cc1105;
+    font-weight: bold;
+    font-size: 8pt;
+    margin-left: 4px;
+}
 /* ─ NGレス（折りたたみ表示） ─ */
 .res.ng-collapsed .content,
 .res.ng-collapsed .footer,
@@ -1617,8 +1629,11 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
                ng_filter=None, ng_settings=None, hidden_nos: set = None,
                id_counts: dict = None, has_name_field: bool = True,
                my_nos: set = None, divider_html: str = "",
-               id_warn_count: int = 0) -> str:
+               id_warn_count: int = 0, del_nos: set = None,
+               ng_reveal: bool = False) -> str:
     no = res.no
+    # del（削除依頼/記事削除）したレスか。No.の右に「del済」を赤表示する。
+    _is_del_done = bool(del_nos and no in del_nos and not is_op)
     # ── 手動NG（永続非表示）判定 ───────────────────────────────────────────
     # 内容は通常どおり描画しつつ display:none で隠す。空divにすると、この
     # レスを引用しているレスの引用ポップアップ（クローン元）が空になり
@@ -1629,6 +1644,7 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
     ng_class = ""
     ng_style = ""       # 逆NG用インラインスタイル
     _ng_reason = ""     # NGで非表示にされた理由（引用ポップアップ用）。空なら通常描画。
+    _is_ng_match = False  # NGワード/NG画像にマッチした（=緑帯対象）か
     if ng_filter is not None and not is_op and not res.is_deleted:
         _hide_name  = getattr(ng_settings, "ng_thread_hide_name",  True)
         _hide_image = getattr(ng_settings, "ng_thread_hide_image", True)
@@ -1637,6 +1653,7 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
         if _hide_name and ng_filter.is_ng(res):
             ng_class = " ng-hidden"
             _ng_reason = "NGワード・名前により非表示"
+            _is_ng_match = True
         # 画像NG（hide_modeによって透明 or レス全体非表示）
         elif _hide_image and res.image_url and ng_filter.is_ng_image(res):
             _hm = ng_filter.get_ng_image_hide_mode(res)
@@ -1645,6 +1662,15 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
                 _ng_reason = "NG画像により非表示"
             else:
                 ng_class = " ng-image"
+            _is_ng_match = True
+    # 緑帯クラス: NGワード/NG画像マッチのレスに付与（表示された時に左へ緑帯）
+    if _is_ng_match:
+        ng_class += " ng-band"
+    # NG解除（表示）状態: NGレスを隠さず緑帯のみで表示する（理由のみ表示/透明化も解除）
+    if ng_reveal and _is_ng_match:
+        _ng_reason = ""
+        ng_style = ""
+        ng_class = ng_class.replace(" ng-hidden", "").replace(" ng-image", "")
     # 手動NG（永続非表示）も理由を記録（フィルタ理由が無いときのみ）
     if _manual_hidden and not _ng_reason:
         _ng_reason = "NG設定により非表示"
@@ -1763,6 +1789,7 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
         )
     else:
         id_html = ''
+    _del_mark = '<span class="del-done">del済</span>' if _is_del_done else ''
     hdr_html = (
         f'<div class="header">'
         f'{rsc_html}'
@@ -1772,6 +1799,7 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
         f'{name_block if not has_name_field else ""}'
         f'{id_html}'
         f'<a class="no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
+        f'{_del_mark}'
         f'<button class="sod" id="sod{no}" onclick="sodane({no})">{sod}</button>'
         f'{exp}'
         f'</div>'
@@ -1946,7 +1974,9 @@ def res_fragment_html(res_list: list, img_list_base: list,
                       id_counts: dict = None,
                       has_name_field: bool = True,
                       my_nos: set = None,
-                      id_warn_count: int = 0) -> tuple[list[str], list]:
+                      id_warn_count: int = 0,
+                      del_nos: set = None,
+                      ng_reveal: bool = False) -> tuple[list[str], list]:
     """新着レス群を HTML 断片のリストに変換する（差分更新用）。
 
     Parameters
@@ -1971,7 +2001,9 @@ def res_fragment_html(res_list: list, img_list_base: list,
                           hidden_nos=hidden_nos, id_counts=id_counts,
                           has_name_field=has_name_field,
                           my_nos=my_nos,
-                          id_warn_count=id_warn_count)
+                          id_warn_count=id_warn_count,
+                          del_nos=del_nos,
+                          ng_reveal=ng_reveal)
         fragments.append(frag)
     return fragments, img_list_base
 
@@ -1985,7 +2017,9 @@ def thread_to_html(thread, show_deleted: bool = False,
                    my_nos: set = None,
                    for_save: bool = False,
                    id_warn_count: int = 0,
-                   scroll_top_count: int = 0) -> tuple[str, list]:
+                   scroll_top_count: int = 0,
+                   del_nos: set = None,
+                   ng_reveal: bool = False) -> tuple[str, list]:
     """ThreadData → (HTML文字列, 画像リスト)"""
     img_list: list = []
     rows = []
@@ -2026,6 +2060,8 @@ def thread_to_html(thread, show_deleted: bool = False,
                                has_name_field=_has_name,
                                my_nos=my_nos,
                                id_warn_count=id_warn_count,
+                               del_nos=del_nos,
+                               ng_reveal=ng_reveal,
                                divider_html=_op_divider if i == 0 else ""))
     rows.append('<div class="thread-end"></div>')
     # 落ちかけ判定: contdispを赤字にするJSが存在する = thread.is_expiring

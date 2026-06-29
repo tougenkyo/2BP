@@ -575,6 +575,10 @@ class AppSettings:
         # レス内NGボタンで非表示にしたレスNo（キー=スレッドURL、値=レスNoリスト）
         self.ng_hidden_res_nos: dict[str, list[int]] = {}
 
+        # del（削除依頼/記事削除）したレスNo（キー=スレッドURL、値=レスNoリスト）
+        # 非表示とは別管理。No.の右に「del済」赤表示する目印に使う。
+        self.del_res_nos: dict[str, list[int]] = {}
+
         # ── 自分のレス追跡 ──────────────────────────────────────────────────
         self.my_post_nos: dict[str, list[int]] = {}   # スレURL → レス番号リスト
         # ハイライト
@@ -707,6 +711,10 @@ class AppSettings:
             self.ng_hidden_res_nos = {
                 k: list(map(int, v))
                 for k, v in raw.get("ng_hidden_res_nos", {}).items()
+            }
+            self.del_res_nos = {
+                k: list(map(int, v))
+                for k, v in raw.get("del_res_nos", {}).items()
             }
             # 自分のレス追跡
             self.my_post_nos = {
@@ -850,6 +858,7 @@ class AppSettings:
             _thread_read  = dict(self.thread_read_counts)
             _catalog_read = dict(self.catalog_read_counts)
             _ng_hidden    = {k: list(v) for k, v in self.ng_hidden_res_nos.items() if v}
+            _del_res      = {k: list(v) for k, v in self.del_res_nos.items() if v}
             _global_max   = dict(self.global_max_no_by_board)
             _max_saved_bb = dict(self.max_saved_by_board)
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -881,6 +890,7 @@ class AppSettings:
                         "ng_reverse_opened_urls": self._ng_reverse_opened_list[-2000:],
                         "ng_thread_urls": self.ng_thread_urls,
                         "ng_hidden_res_nos": _ng_hidden,
+                        "del_res_nos": _del_res,
                         "my_post_nos": {k: list(v) for k, v in self.my_post_nos.items() if v},
                         "self_res_highlight":       self.self_res_highlight,
                         "self_res_sodane_notify":   self.self_res_sodane_notify,
