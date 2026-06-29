@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.174"
+APP_VER = "0.9.175"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3991,9 +3991,10 @@ class ThreadView(QWidget):
             self._del_btn_action.setVisible(False)
             self._del_showing = False
         self.thread_loaded.emit(thread.no, new_count)
-        # 更新後のimg_listを画像タブに通知
+        # 更新後のimg_listを画像タブに通知（NG対象レスの画像は除外）
         if self._img_list:
-            self.img_list_updated.emit(self._img_list)
+            _flst, _ = self._filter_img_list_for_tab(self._img_list, "")
+            self.img_list_updated.emit(_flst)
         # そうだね数をDOMに反映（fetch時に付加された場合）
         _sd = getattr(thread, "_sd_update", {})
         if _sd:
@@ -5250,7 +5251,8 @@ class ThreadView(QWidget):
         if any(lo.endswith(ext) for ext in ('.mp4', '.webm', '.mov', '.m4v')):
             _show_video_window(url, self._fetcher, getattr(self, '_settings', None))
         else:
-            self.open_image_tab.emit(url, lst, idx)
+            flst, fidx = self._filter_img_list_for_tab(lst, url)
+            self.open_image_tab.emit(url, flst, fidx)
 
 
     def _do_extract(self, query: str = ""):
@@ -5664,19 +5666,46 @@ class ThreadView(QWidget):
 
     # ── スクリーンショット ────────────────────────────────────────────────────
 
-    def _resolve_img_list(self, url: str, idx: int):
-        """クリックされた画像を解決する。
-        idxが有効かつURL一致ならそのまま使う（高速・正確）。
-        一致しない場合はURLでimg_list内を検索する（画像モードのポップアップ内
-        サムネは隠しレスプールがidx=0固定で生成されるため、idxを信頼すると
-        OPスレ画が開いてしまう。URL照合で正しい画像に補正する）。
-        どちらも該当しなければ（うｐろだ等）URLから単一要素リストを生成する。"""
-        lst = self._img_list or []
-        if idx >= 0 and idx < len(lst) and lst[idx].get("url") == url:
-            return lst, idx
-        for i, e in enumerate(lst):
+    def _nosave_res_nos(self) -> set:
+        """画像ウインドウ/タブの表示対象から外すレスNo（NG対象）。
+        NGワード/NG画像マッチ or 手動NG登録(ng_hidden_res_nos = フッタNG・del登録)。
+        NG解除中(_ng_enabled=False)はNGレスも表示対象に含めるため空集合を返す。"""
+        if not self._thread or not self._ng_enabled:
+            return set()
+        turl = self._thread.url or ""
+        out = set(self._settings.ng_hidden_res_nos.get(turl, []))
+        _ng = self._settings.ng_filter
+        if _ng is not None:
+            for r in self._thread.res_list:
+                if r.no in out:
+                    continue
+                try:
+                    if _ng.is_ng(r) or (r.image_url and _ng.is_ng_image(r)):
+                        out.add(r.no)
+                except Exception:
+                    pass
+        return out
+
+    def _filter_img_list_for_tab(self, lst: list, url: str):
+        """img_list/gallery_list から NG対象レスの画像を除き、(filtered, urlの新index) を返す。
+        クリックURL自体が除外対象でも保険で残す。res_no が無い要素(うｐろだ等)は残す。"""
+        nos = self._nosave_res_nos()
+        if nos:
+            filtered = [e for e in lst
+                        if (e.get("res_no") not in nos) or (e.get("url") == url)]
+        else:
+            filtered = list(lst)
+        for i, e in enumerate(filtered):
             if e.get("url") == url:
-                return lst, i
+                return filtered, i
+        return (filtered or list(lst)), 0
+
+    def _resolve_img_list(self, url: str, idx: int):
+        """クリックされた画像を解決する。img_list内にURLがあればNG対象を除いた
+        リストとURLの新indexを返す。該当しなければ（うｐろだ等）単一要素リスト。"""
+        lst = self._img_list or []
+        if any(e.get("url") == url for e in lst):
+            return self._filter_img_list_for_tab(lst, url)
         name = url.rsplit("/", 1)[-1].split("?")[0] or url
         single = [{"url": url, "name": name, "res_no": ""}]
         return single, 0
