@@ -2673,7 +2673,7 @@ class MainWindow(QMainWindow):
             print(f"[LOG] 原本html取得失敗: {e}")
         if not raw:
             return self._set_log_title(
-                self._strip_deleted_images(
+                self._strip_nosave_images(
                     self._build_log_html_rendered(cur, thread), thread), thread)
         # 自動更新は差分APIのみで生htmキャッシュを更新しないため、フルGET失敗時に
         # 古いキャッシュ(=開いた時点の少ないレス数)へフォールバックすることがある。
@@ -2689,7 +2689,7 @@ class MainWindow(QMainWindow):
                       f"→ 不足レスを生htm形式で補完")
                 raw = self._append_missing_res_raw(raw, thread, raw_n)
         return self._set_log_title(
-            self._strip_deleted_images(self._strip_futaba_ads(raw), thread), thread)
+            self._strip_nosave_images(self._strip_futaba_ads(raw), thread), thread)
 
     def _op_thread_name(self, thread) -> str:
         """0レスめ(OP)のスレ名（ブラウザtitle用）。OPコメント先頭の有効行→題名→
@@ -2856,17 +2856,34 @@ class MainWindow(QMainWindow):
                 pass
         return str(soup)
 
-    def _strip_deleted_images(self, html: str, thread) -> str:
-        """削除されたレスの画像（サムネ/本画像リンク）を保存HTMLから除去する。
-        モデルの is_deleted なレスの画像/サムネのファイル名(basename)で一致する
-        <img>・<a href> を削るので、保存ログに削除レスの画像が残らず、後段の
-        メディア収集(URL正規表現)にも引っかからずダウンロード/埋め込みもされない。
-        レス本文（「削除されました」表示等）はそのまま残す。"""
+    def _strip_nosave_images(self, html: str, thread) -> str:
+        """保存対象外レスの画像（サムネ/本画像リンク）を保存HTMLから除去する。
+        対象 = 削除レス(is_deleted) ＋ NGレス（NGワード/NG画像マッチ、または
+        手動NG登録 ng_hidden_res_nos = フッタNG・delして非表示で登録したレス）。
+        これらの画像/サムネのファイル名(basename)で一致する <img>・<a href> を削るので、
+        保存ログに対象レスの画像が残らず、後段のメディア収集(URL正規表現)にも
+        引っかからずダウンロード/埋め込みもされない。レス本文はそのまま残す。"""
         if not thread:
             return html
+        _ng = getattr(self._settings, "ng_filter", None)
+        _hidden = set(self._settings.ng_hidden_res_nos.get(getattr(thread, "url", "") or "", []))
+        def _is_nosave(r) -> bool:
+            if getattr(r, "is_deleted", False):
+                return True
+            if getattr(r, "no", None) in _hidden:
+                return True
+            if _ng is not None:
+                try:
+                    if _ng.is_ng(r):
+                        return True
+                    if getattr(r, "image_url", "") and _ng.is_ng_image(r):
+                        return True
+                except Exception:
+                    pass
+            return False
         names: set[str] = set()
         for r in getattr(thread, "res_list", []) or []:
-            if not getattr(r, "is_deleted", False):
+            if not _is_nosave(r):
                 continue
             for u in (getattr(r, "image_url", ""), getattr(r, "thumb_url", "")):
                 if u:
