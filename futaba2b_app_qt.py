@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.167"
+APP_VER = "0.9.168"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5815,6 +5815,20 @@ class ThreadView(QWidget):
         if getattr(self, '_tmp_html_path', ''):
             _cleanup_tmp(self._tmp_html_path)
             self._tmp_html_path = ''
+
+        # Python側の大きな保持データを即解放する。
+        # レス数が多いスレほど res_list / _last_html が巨大で、これらを抱えたまま
+        # deleteLater→後続の遅延 gc.collect() を迎えると、巨大ヒープ全体の走査で
+        # GUIスレッドが数百ms以上止まる（閉じた直後に時々フリーズ）。先に参照を切れば
+        # 大半は参照カウントで即解放され、gc の走査対象も減ってフリーズしにくくなる。
+        # （tab_closing → _on_tab_closing 等の読み取りは removeTab 前に済むため安全）
+        self._thread = None
+        self._last_valid_thread = None
+        self._last_html = ""
+        self._error_banner_html = ""
+        self._img_list = []
+        self._pending_self_res_popups = []
+        self._my_sodane_cache = {}
 
         _page   = getattr(self, '_page', None)
         _prof   = getattr(self, '_profile', None)
