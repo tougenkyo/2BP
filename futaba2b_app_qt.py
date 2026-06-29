@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.164"
+APP_VER = "0.9.165"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5203,11 +5203,13 @@ class ThreadView(QWidget):
             import html as _html
             from bs4 import BeautifulSoup as _BS
 
-            # 自分レスのプレーンテキストマップ: no -> str
-            my_res_texts = {}
+            # 自分レスを「行」に分解したマップ: no -> list[str]（strip済み・空行除去）。
+            # 引用判定は行単位で行う（>を含む引用行 と 地の文 を区別するため）。
+            my_res_lines = {}
             for r in thread.res_list:
                 if r.no in my_nos:
-                    my_res_texts[r.no] = _html.unescape(r.comment_text or "").strip()
+                    _txt = _html.unescape(r.comment_text or "")
+                    my_res_lines[r.no] = [ln.strip() for ln in _txt.splitlines() if ln.strip()]
 
             for r in new_res:
                 if r.no in my_nos:
@@ -5231,19 +5233,32 @@ class ThreadView(QWidget):
                                  for r2 in thread.res_list
                                  if r2.no in my_nos and r2.image_name}
                     for font in soup.find_all("font", color="#789922"):
-                        quoted = font.get_text().lstrip(">").strip()
-                        if len(quoted) < 4:
-                            continue
-                        quoted_l = quoted.lower()
-                        # 画像引用: >タイムスタンプ.拡張子 形式
-                        if _re.match(r'\d{10,}\.(jpe?g|png|gif|webp|bmp|mp4|webm)$', quoted_l):
-                            if quoted_l in my_fnames:
-                                hit_nos.add(my_fnames[quoted_l])
-                        else:
-                            # テキスト引用: 自分レスのcomment_textと照合
-                            for no, my_text in my_res_texts.items():
-                                if quoted in my_text or my_text.startswith(quoted):
-                                    hit_nos.add(no)
+                        for _raw in font.get_text("\n").split("\n"):
+                            q = _raw.strip()
+                            if not q.startswith(">"):
+                                continue
+                            # 引用先頭の > は1つだけ外す。
+                            #   >X  … 元発言（Xを書いた人）宛て
+                            #   >>X … 引用行 >X を持つレス（=自分が >X と引用した側）宛て
+                            # 全ての > を剥がすと >X と >>X が同一になり、他人宛ての引用が
+                            # 自分の引用行に部分一致して誤って自分宛て判定になっていた。
+                            content = q[1:].strip()
+                            if len(content) < 4:
+                                continue
+                            cl = content.lower()
+                            # 画像引用: >タイムスタンプ.拡張子 形式
+                            if _re.match(r'\d{10,}\.(jpe?g|png|gif|webp|bmp|mp4|webm)$', cl):
+                                if cl in my_fnames:
+                                    hit_nos.add(my_fnames[cl])
+                                continue
+                            # テキスト引用: 自分レスの「行」と照合。
+                            #   ・どの行とも完全一致なら自分宛て（引用行 >X への >>X 返信を含む）。
+                            #   ・地の文（>で始まらない行）に限り部分一致も許容（部分引用対策）。
+                            for no, lines in my_res_lines.items():
+                                for ln in lines:
+                                    if content == ln or (not ln.startswith(">") and content in ln):
+                                        hit_nos.add(no)
+                                        break
 
                 if hit_nos:
                     cmt = _re.sub(r"<[^>]+>", "", ct).strip()[:80]
