@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.169"
+APP_VER = "0.9.170"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3421,6 +3421,18 @@ class ThreadView(QWidget):
         lbl = "削除:隠す" if self._del_showing else "削除:見る"
         self._del_btn.setText(f"{lbl}({deleted_count}件)")
 
+    def _sync_del_btn_after_full_render(self):
+        """画像/引用モードを全描画した直後の状態同期。全描画ではbodyが作り直され
+        show-deletedクラスが消える（=削除レス非表示）ので、_del_showingとボタン表示も
+        「見る」に揃える（_on_del_toggle のトグルが反転しないようにする）。"""
+        self._del_showing = False
+        try:
+            _dc = sum(1 for r in self._thread.res_list[1:] if r.is_deleted) if self._thread else 0
+            if hasattr(self, '_del_btn'):
+                self._del_btn.setText(f"削除:見る({_dc}件)")
+        except Exception:
+            pass
+
     def _on_bouyomi_chk_changed(self, state):
         """棒読みチェックボックス変更 → ARエントリに即反映"""
         checked = bool(state)
@@ -4845,18 +4857,19 @@ class ThreadView(QWidget):
                        if res.image_url and res.thumb_url else "")
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
+            _del_c = " deleted" if res.is_deleted else ""
 
             if depth == 0:
                 rows.append('<div class="qt-sep"></div>')
                 rows.append(
-                    f'<div class="qt-row qt-root">'
+                    f'<div class="qt-row qt-root{_del_c}">'
                     f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '
                     f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             else:
                 branch = "└" if is_last else "├"
                 rows.append(
-                    f'<div class="qt-row qt-child" style="margin-left:{depth*20}px">'
+                    f'<div class="qt-row qt-child{_del_c}" style="margin-left:{depth*20}px">'
                     f'<span class="qt-branch">{branch}</span> '
                     f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '
                     f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
@@ -4887,7 +4900,9 @@ class ThreadView(QWidget):
                    ".qt-new{color:#cc1105;font-size:8pt;}"
                    ".qt-branch{color:#888;margin-right:2px;}"
                    ".qt-thumb{max-height:60px;max-width:80px;object-fit:contain;"
-                   "vertical-align:middle;margin-left:4px;border:1px solid #aaa;cursor:pointer;}")
+                   "vertical-align:middle;margin-left:4px;border:1px solid #aaa;cursor:pointer;}"
+                   ".qt-row.deleted{display:none;}"
+                   "body.show-deleted .qt-row.deleted{display:block;}")
         _sbc = getattr(self._settings, 'scroll_bottom_count', 5)
         _scroll_js = _make_scroll_bottom_js(_sbc, getattr(self._settings,'scroll_top_count',0))
         _ucss_q = _load_user_css(self._settings)
@@ -4903,6 +4918,7 @@ class ThreadView(QWidget):
         url = (self._thread.url if self._thread else None) or "https://www.2chan.net/"
         self._load_html_via_tempfile(html, QUrl(url))
         self._loaded_page_mode = 'quote'
+        self._sync_del_btn_after_full_render()
 
     def _render_quote_mode_with_scroll(self, scroll_y: int = 0):
         """スクロール位置を保持しながら引用モードを再描画する（DOM書き換え方式・ページリロードなし）"""
@@ -4991,15 +5007,16 @@ class ThreadView(QWidget):
                        if res.image_url and res.thumb_url else "")
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
+            _del_c = " deleted" if res.is_deleted else ""
             if depth == 0:
                 rows.append('<div class="qt-sep"></div>')
                 rows.append(
-                    f'<div class="qt-row qt-root">'                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
+                    f'<div class="qt-row qt-root{_del_c}">'                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             else:
                 branch = "└" if is_last else "├"
                 rows.append(
-                    f'<div class="qt-row qt-child" style="margin-left:{depth*20}px">'                    f'<span class="qt-branch">{branch}</span> '                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
+                    f'<div class="qt-row qt-child{_del_c}" style="margin-left:{depth*20}px">'                    f'<span class="qt-branch">{branch}</span> '                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             ch = children.get(no, [])
             for i, cno in enumerate(ch):
@@ -5052,7 +5069,7 @@ class ThreadView(QWidget):
             # 左上の番号: スレ内通し番号（OP=0 → "OP"、返信は res_idx）
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             items.append(
-                '<div class="gi" data-res-no="'+str(r.no)+'"'
+                '<div class="gi'+(' deleted' if r.is_deleted else '')+'" data-res-no="'+str(r.no)+'"'
                 ' onclick="try{openGalleryImg('+str(idx)+')}catch(e){}"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 '<div class="gn">'+display_no+'</div>'
@@ -5061,7 +5078,7 @@ class ThreadView(QWidget):
                 '</div>'
             )
         _cols = max(1, int(getattr(self._settings, "image_mode_cols", 6)))
-        _img_add = ".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;grid-template-columns:repeat(" + str(_cols) + ",80px);gap:4px}.gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}.gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}.gn{text-align:left;font-size:7pt;line-height:1.3}.gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}.gt img{max-width:100%;max-height:72px;object-fit:contain}.gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
+        _img_add = ".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;grid-template-columns:repeat(" + str(_cols) + ",80px);gap:4px}.gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}.gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}.gn{text-align:left;font-size:7pt;line-height:1.3}.gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}.gt img{max-width:100%;max-height:72px;object-fit:contain}.gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}.gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}"
         # 画像モード固有関数のみ追加定義（_b/openImgBg/sodane/openUrl等はWEBCHANNEL_JSで共通定義）
         _img_js = "function openGalleryImg(i){_b('openGalleryImg',[i]);}"
         # 隠しレスプール（popup_js が getElementById('rNNNN') で参照する）
@@ -5083,6 +5100,7 @@ class ThreadView(QWidget):
         url=(self._thread.url if self._thread else None) or 'https://www.2chan.net/'
         self._load_html_via_tempfile(html, QUrl(url))
         self._loaded_page_mode = 'image'
+        self._sync_del_btn_after_full_render()
 
     def _render_image_mode_with_scroll(self, scroll_y: int = 0):
         """スクロール位置を保持しながら画像モードを再描画する（DOM書き換え方式・ページリロードなし）"""
@@ -5116,7 +5134,7 @@ class ThreadView(QWidget):
             idx=seq-1
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             items.append(
-                '<div class="gi" data-res-no="'+str(r.no)+'"'
+                '<div class="gi'+(' deleted' if r.is_deleted else '')+'" data-res-no="'+str(r.no)+'"'
                 ' onclick="try{openGalleryImg('+str(idx)+')}catch(e){}"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 '<div class="gn">'+display_no+'</div>'
