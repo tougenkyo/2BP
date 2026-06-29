@@ -2672,7 +2672,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[LOG] 原本html取得失敗: {e}")
         if not raw:
-            return self._set_log_title(self._build_log_html_rendered(cur, thread), thread)
+            return self._set_log_title(
+                self._strip_deleted_images(
+                    self._build_log_html_rendered(cur, thread), thread), thread)
         # 自動更新は差分APIのみで生htmキャッシュを更新しないため、フルGET失敗時に
         # 古いキャッシュ(=開いた時点の少ないレス数)へフォールバックすることがある。
         # 原本htmのレス数(OP1 + class=rtd) がモデルより少なければ、
@@ -2686,7 +2688,8 @@ class MainWindow(QMainWindow):
                 print(f"[LOG] 原本htmレス不足 raw≈{raw_n} < model={model_n} "
                       f"→ 不足レスを生htm形式で補完")
                 raw = self._append_missing_res_raw(raw, thread, raw_n)
-        return self._set_log_title(self._strip_futaba_ads(raw), thread)
+        return self._set_log_title(
+            self._strip_deleted_images(self._strip_futaba_ads(raw), thread), thread)
 
     def _op_thread_name(self, thread) -> str:
         """0レスめ(OP)のスレ名（ブラウザtitle用）。OPコメント先頭の有効行→題名→
@@ -2851,6 +2854,49 @@ class MainWindow(QMainWindow):
                 el.decompose()
             except Exception:
                 pass
+        return str(soup)
+
+    def _strip_deleted_images(self, html: str, thread) -> str:
+        """削除されたレスの画像（サムネ/本画像リンク）を保存HTMLから除去する。
+        モデルの is_deleted なレスの画像/サムネのファイル名(basename)で一致する
+        <img>・<a href> を削るので、保存ログに削除レスの画像が残らず、後段の
+        メディア収集(URL正規表現)にも引っかからずダウンロード/埋め込みもされない。
+        レス本文（「削除されました」表示等）はそのまま残す。"""
+        if not thread:
+            return html
+        names: set[str] = set()
+        for r in getattr(thread, "res_list", []) or []:
+            if not getattr(r, "is_deleted", False):
+                continue
+            for u in (getattr(r, "image_url", ""), getattr(r, "thumb_url", "")):
+                if u:
+                    bn = u.rsplit("/", 1)[-1].split("?")[0]
+                    if bn:
+                        names.add(bn)
+        if not names:
+            return html
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+        except Exception:
+            return html
+        def _bn(u: str) -> str:
+            return (u or "").rsplit("/", 1)[-1].split("?")[0]
+        # サムネ<img>（多くは <a href=本画像> に内包）→ 内包する<a>ごと削除
+        for img in list(soup.find_all("img", src=True)):
+            if _bn(img.get("src", "")) in names:
+                a = img.find_parent("a")
+                try:
+                    (a or img).decompose()
+                except Exception:
+                    pass
+        # 本画像へのテキストリンク（ファイル名リンク）→ 削除
+        for a in list(soup.find_all("a", href=True)):
+            if _bn(a.get("href", "")) in names:
+                try:
+                    a.decompose()
+                except Exception:
+                    pass
         return str(soup)
 
     def _replace_thumb_urls_with_src_raw(self, html: str) -> str:
