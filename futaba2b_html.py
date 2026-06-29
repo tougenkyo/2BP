@@ -1663,16 +1663,20 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
             else:
                 ng_class = " ng-image"
             _is_ng_match = True
-    # 緑帯クラス: NGワード/NG画像マッチのレスに付与（表示された時に左へ緑帯）
-    if _is_ng_match:
+    # 緑帯/非表示の対象 = NG[使う/解除]の対象レス:
+    #   NGワード/NG画像マッチ or 手動NG登録(ng_hidden_res_nos: フッタNGボタン・del登録)。
+    # これらに緑帯(ng-band)を付け、NG解除(ng_reveal)時は隠さず緑帯のみで表示する。
+    _is_ng_target = _is_ng_match or _manual_hidden
+    if _is_ng_target:
         ng_class += " ng-band"
-    # NG解除（表示）状態: NGレスを隠さず緑帯のみで表示する（理由のみ表示/透明化も解除）
-    if ng_reveal and _is_ng_match:
+    if ng_reveal:
+        # NG解除（表示）状態: NG対象を隠さず緑帯のみ（理由のみ表示/透明化/手動非表示も解除）
         _ng_reason = ""
         ng_style = ""
+        _manual_hidden = False
         ng_class = ng_class.replace(" ng-hidden", "").replace(" ng-image", "")
-    # 手動NG（永続非表示）も理由を記録（フィルタ理由が無いときのみ）
-    if _manual_hidden and not _ng_reason:
+    elif _manual_hidden and not _ng_reason:
+        # 手動NG（永続非表示）の理由を記録（フィルタ理由が無いときのみ）
         _ng_reason = "NG設定により非表示"
 
 

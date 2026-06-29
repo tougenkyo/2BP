@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.172"
+APP_VER = "0.9.173"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3430,8 +3430,8 @@ class ThreadView(QWidget):
         reveal:     NG解除（表示）状態か。Trueなら NGレスを隠さず緑帯付きで表示する。"""
         turl = (self._thread.url if self._thread else "") or ""
         reveal = not self._ng_enabled
-        hidden = (set(self._settings.ng_hidden_res_nos.get(turl, []))
-                  if self._ng_enabled else set())
+        # 手動NG登録は緑帯/非表示判定に常に必要なので常時フル。表示切替は reveal 側で。
+        hidden = set(self._settings.ng_hidden_res_nos.get(turl, []))
         delnos = set(self._settings.del_res_nos.get(turl, []))
         ng = self._settings.ng_filter   # 緑帯判定は常時（解除中も帯を出すため）
         s = self._settings
@@ -3695,9 +3695,10 @@ class ThreadView(QWidget):
         # ng_reveal で切り替える。
         _ng   = self._settings.ng_filter
         _ng_reveal = not self._ng_enabled
-        # 手動NG済みレスNoを取得（NG解除中は手動NGも無効化して全レス表示）
+        # 手動NG登録レスNo。緑帯/非表示判定に常に必要なので常時フルで渡し、
+        # 表示/非表示の切替は ng_reveal 側で行う（NG解除時は隠さず緑帯のみ）。
         _thread_url = thread.url or ""
-        _hidden_nos = set(self._settings.ng_hidden_res_nos.get(_thread_url, [])) if self._ng_enabled else set()
+        _hidden_nos = set(self._settings.ng_hidden_res_nos.get(_thread_url, []))
         # del済マーカーはNG解除状態に関わらず表示する
         _del_nos = set(self._settings.del_res_nos.get(_thread_url, []))
 
@@ -4771,7 +4772,7 @@ class ThreadView(QWidget):
         _ng   = self._settings.ng_filter
         _ng_reveal = not self._ng_enabled
         _thread_url = thread.url or ""
-        _hidden_nos = set(self._settings.ng_hidden_res_nos.get(_thread_url, [])) if self._ng_enabled else set()
+        _hidden_nos = set(self._settings.ng_hidden_res_nos.get(_thread_url, []))
         _del_nos = set(self._settings.del_res_nos.get(_thread_url, []))
         _DAY_JP = ['月','火','水','木','金','土','日']
         def _footer(th):
@@ -4898,9 +4899,9 @@ class ThreadView(QWidget):
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
             _del_c = " deleted" if res.is_deleted else ""
-            _ngm = _is_ng(res)
-            if _ngm: _del_c += " ng-band"                       # NGワード/NG画像 → 緑帯
-            if (no in _hidden) or (_ngm and not _reveal):       # 手動NG/del or NG(非解除時)→非表示
+            _ngm = _is_ng(res) or (no in _hidden)   # NG対象(NGワード/画像 or 手動NG/del登録)
+            if _ngm: _del_c += " ng-band"           # → 緑帯
+            if _ngm and not _reveal:                # NG使う時は非表示、解除時は帯付き表示
                 _del_c += " ng-hidden"
             _dm = ' <span class="del-done">del済</span>' if no in _delnos else ''
 
@@ -5057,9 +5058,9 @@ class ThreadView(QWidget):
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
             _del_c = " deleted" if res.is_deleted else ""
-            _ngm = _is_ng(res)
+            _ngm = _is_ng(res) or (no in _hidden)
             if _ngm: _del_c += " ng-band"
-            if (no in _hidden) or (_ngm and not _reveal):
+            if _ngm and not _reveal:
                 _del_c += " ng-hidden"
             _dm = ' <span class="del-done">del済</span>' if no in _delnos else ''
             if depth == 0:
@@ -5125,9 +5126,9 @@ class ThreadView(QWidget):
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             _gi_cls = "gi"
             if r.is_deleted:     _gi_cls += " deleted"
-            _ngm = _is_ng(r)
-            if _ngm:             _gi_cls += " ng-band"     # NGワード/NG画像 → 緑帯
-            if (r.no in _hidden) or (_ngm and not _reveal):  # 手動NG/del or NG(非解除時)
+            _ngm = _is_ng(r) or (r.no in _hidden)   # NG対象(NGワード/画像 or 手動NG/del登録)
+            if _ngm:             _gi_cls += " ng-band"      # → 緑帯
+            if _ngm and not _reveal:                        # NG使う時は非表示、解除時は帯付き表示
                 _gi_cls += " ng-hidden"
             _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
             items.append(
@@ -5199,9 +5200,9 @@ class ThreadView(QWidget):
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             _gi_cls = "gi"
             if r.is_deleted:     _gi_cls += " deleted"
-            _ngm = _is_ng(r)
-            if _ngm:             _gi_cls += " ng-band"     # NGワード/NG画像 → 緑帯
-            if (r.no in _hidden) or (_ngm and not _reveal):  # 手動NG/del or NG(非解除時)
+            _ngm = _is_ng(r) or (r.no in _hidden)   # NG対象(NGワード/画像 or 手動NG/del登録)
+            if _ngm:             _gi_cls += " ng-band"      # → 緑帯
+            if _ngm and not _reveal:                        # NG使う時は非表示、解除時は帯付き表示
                 _gi_cls += " ng-hidden"
             _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
             items.append(
