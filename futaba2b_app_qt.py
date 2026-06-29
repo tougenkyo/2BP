@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.166"
+APP_VER = "0.9.167"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -4674,12 +4674,17 @@ class ThreadView(QWidget):
         if self._pending_scroll > 0:
             y = self._pending_scroll
             self._pending_scroll = 0
-            # loadFinished直後はレイアウト未確定でscrollToが無視されることがある
-            # requestAnimationFrameを2段ネストしてレイアウト確定後に実行する
+            # loadFinished直後は画像等のレイアウトが未確定で body 高さが不足し、
+            # scrollTo(0,y) が上方向にクランプされて「先頭付近に飛ぶ」ことがある
+            # （画像キャッシュ有無で再現が時々になる）。目標位置に届かない間は
+            # 高さが伸びるのを待って数回リトライし、到達したら停止する。
+            # （ユーザが下方向へ動かした場合は scrollY>=y で停止＝操作を妨げない）
             self._view.page().runJavaScript(
-                f"requestAnimationFrame(function(){{"
-                f"requestAnimationFrame(function(){{window.scrollTo(0,{y});}});"
-                f"}});"
+                "(function(){var y=" + str(int(y)) + ",tries=0;"
+                "function go(){window.scrollTo(0,y);"
+                "if(window.scrollY<y-2&&tries++<50){setTimeout(go,33);}}"
+                "requestAnimationFrame(function(){requestAnimationFrame(go);});"
+                "})();"
             )
 
 
