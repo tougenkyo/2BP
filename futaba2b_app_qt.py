@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.163"
+APP_VER = "0.9.164"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2932,6 +2932,7 @@ class ThreadView(QWidget):
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
         self._error_banner_html = ""   # エラー(キャッシュ表示)時の赤帯バナーHTML（画像/引用モードでも使用）
         self._pending_redraw  = False  # 非表示時にAR更新が来た→アクティブ化時に再描画する
+        self._pending_self_res_popups: list = []  # 非アクティブ時のそうだね/返信通知→アクティブ化時に表示
         self._scroll_bottom_after_update = False  # 投稿後: 更新完了時に最下部へ送る
         self._prev_scroll_y   = 0   # 前回のスクロール位置 (前回のレス位置に移動 用)
         self._known_res_count = 0   # 差分更新: 前回表示済みレス数
@@ -5251,6 +5252,17 @@ class ThreadView(QWidget):
                     self._show_self_res_popup(msg, "reply")
 
     def _show_self_res_popup(self, msg: str, kind: str):
+        """そうだね/返信ポップアップ。別のスレを見ている間（このタブが非アクティブ）は
+        表示せず保留し、このスレをアクティブにした時(showEvent)にまとめて表示する。"""
+        if not self.isVisible():
+            q = self._pending_self_res_popups
+            q.append((msg, kind))
+            if len(q) > 20:        # 肥大防止: 直近のみ保持
+                del q[:-20]
+            return
+        self._show_self_res_popup_now(msg, kind)
+
+    def _show_self_res_popup_now(self, msg: str, kind: str):
         """右上に点滅なしポップアップを表示する。kind: 'sodane'=青, 'reply'=赤"""
         s = self._settings
         duration = (getattr(s, "self_res_sodane_duration", 5000)
@@ -5329,6 +5341,24 @@ class ThreadView(QWidget):
             return result
         except Exception:
             return defaults
+
+    def showEvent(self, event):
+        """このスレタブがアクティブ化されたら、保留していたそうだね/返信通知を表示する。"""
+        super().showEvent(event)
+        q = self._pending_self_res_popups
+        if q:
+            pending = q[:]
+            q.clear()
+            # レイアウト確定後に右上へ正しく配置するため少し遅延させる
+            QTimer.singleShot(60, lambda items=pending: self._flush_self_res_popups(items))
+
+    def _flush_self_res_popups(self, items: list):
+        for i, (msg, kind) in enumerate(items):
+            if not self.isVisible():
+                # 表示中に再び別タブへ移った場合は残りを先頭へ戻して打ち切る
+                self._pending_self_res_popups[:0] = items[i:]
+                break
+            self._show_self_res_popup_now(msg, kind)
 
     def _notify_ng_word_match(self, res_list: list):
         """新着レスの中に notify=True な NGワードにマッチするものがあれば通知する。
