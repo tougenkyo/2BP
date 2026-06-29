@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.161"
+APP_VER = "0.9.162"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2387,11 +2387,19 @@ class BoardPane(QWidget):
                             _seen.add(_p); _matched.append(_p)
                 # カタログ件名でヒットした逆NGも対象に含める
                 # （scope_catalog 専用の逆NG等、OPレス側のスコープでは拾えないもの）
+                _brd = getattr(_w_rev, "_board", None)
                 _cat_entry = self._find_catalog_entry(
-                    getattr(_w_rev, "_board", None),
-                    getattr(_w_rev, "_thread_no", None))
+                    _brd, getattr(_w_rev, "_thread_no", None))
+                _tc_rev = 0
+                if _brd is not None:
+                    try:
+                        from futaba2b_settings import get_board_settings as _gbs
+                        _tc_rev = int(getattr(_gbs(_brd.base_url), "cat_chars", 0) or 0)
+                    except Exception:
+                        _tc_rev = 0
                 if _cat_entry is not None:
-                    for _ng in _ngf.get_matched_reverse_ng_words_catalog(_cat_entry):
+                    for _ng in _ngf.get_matched_reverse_ng_words_catalog(
+                            _cat_entry, title_chars=_tc_rev):
                         _p = (_ng.get("pattern", "") or "").strip()
                         if _p and _p not in _seen:
                             _seen.add(_p); _matched.append(_p)
@@ -6720,6 +6728,22 @@ class CatalogView(QWidget):
         except Exception:
             return 14 * 6
 
+    def _reverse_ng_title_chars(self) -> int:
+        """逆NG判定に使うタイトル文字数（カタログ表示文字数 cat_chars）。
+        0=全表示（制限なし）。catalog_to_html の char_limit と同じ値を逆NG判定にも
+        適用し、カタログに表示されていない末尾文字での逆NG＝自動オープンを防ぐ。"""
+        cxyl = None
+        if self._board:
+            from futaba2b_settings import get_board_settings as _gbs
+            cxyl = _gbs(self._board.base_url).catalog_cxyl_str
+        if not cxyl:
+            cxyl = self._fetcher.get_cxyl()
+        try:
+            parts = (cxyl or "").split("x")
+            return int(parts[2]) if len(parts) > 2 else 0
+        except Exception:
+            return 0
+
     def _re_render(self):
         """検索 + ローカルソート + レス数フィルタ + NGフィルタを適用してレンダリング"""
         import time as _time
@@ -6805,7 +6829,9 @@ class CatalogView(QWidget):
         # ── 逆NGアクション実行 ────────────────────────────────────────────
         action = getattr(self._settings, "ng_reverse_action", 0)
         if action > 0 and ng_filter:
-            rev_entries = [e for e in entries if ng_filter.is_reverse_ng_catalog(e)]
+            _tc = self._reverse_ng_title_chars()
+            rev_entries = [e for e in entries
+                           if ng_filter.is_reverse_ng_catalog(e, title_chars=_tc)]
             if rev_entries:
                 self._exec_reverse_ng_action(rev_entries, action, ng_filter)
 
@@ -6847,12 +6873,13 @@ class CatalogView(QWidget):
         # ── 診断ログ: NGスレが開かれる事象の特定用（原因確定後に削除） ──
         _ng_f = ng_filter or self._settings.ng_filter
         _pri = getattr(self._settings, "ng_priority_word_idx", 0)
+        _tc = self._reverse_ng_title_chars()
         for e in targets:
             try:
-                _is_ng, _is_rev = _ng_f._classify_ng_catalog_1pass(e)
-                print(f"[REV_OPEN] No.{e.no} title={e.title!r} "
+                _is_ng, _is_rev = _ng_f._classify_ng_catalog_1pass(e, _tc)
+                print(f"[REV_OPEN] No.{e.no} title={e.title!r} chars={_tc} "
                       f"is_ng={_is_ng} is_rev={_is_rev} priority={'NG優先' if _pri == 0 else '逆NG優先'} "
-                      f"cls={_ng_f.classify_catalog(e)} url={e.thread_url}")
+                      f"cls={_ng_f.classify_catalog(e, title_chars=_tc)} url={e.thread_url}")
             except Exception:
                 pass
         for e in targets:
@@ -6886,8 +6913,9 @@ class CatalogView(QWidget):
     def _exec_reverse_ng_sound(self, targets: list, ng_filter) -> None:
         """逆NGヒットのうち notify 有効かつ notify_type=='sound' なワードにマッチが
         あれば効果音(ng_se.wav)を1回鳴らす。"""
+        _tc = self._reverse_ng_title_chars()
         for e in targets:
-            matched = ng_filter.get_matched_reverse_ng_words_catalog(e)
+            matched = ng_filter.get_matched_reverse_ng_words_catalog(e, title_chars=_tc)
             if any(w.get("notify") and w.get("notify_type", "sound") == "sound"
                    for w in matched):
                 _play_ng_se()
@@ -6915,9 +6943,10 @@ class CatalogView(QWidget):
             m = _re2.match(r'https?://([^.]+)\.2chan\.net/([^/]+)/', board.url or "")
             board_name = f"{m.group(1)}/{m.group(2)}" if m else (board.name or "")
 
+        _tc = self._reverse_ng_title_chars()
         texts = []
         for e in targets:
-            matched_words = ng_filter.get_matched_reverse_ng_words_catalog(e)
+            matched_words = ng_filter.get_matched_reverse_ng_words_catalog(e, title_chars=_tc)
             bouyomi_words = [w for w in matched_words
                              if w.get("notify_type", "sound") == "bouyomi"]
             if not bouyomi_words:

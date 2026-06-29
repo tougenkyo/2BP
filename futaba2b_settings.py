@@ -1166,7 +1166,7 @@ class NgFilter:
         self._compiled: dict[str, re.Pattern | None] = {}  # コンパイル済みパターンキャッシュ
         self._flat_words:   list | None = None
         self._flat_replaces: list | None = None
-        self._cat_cls_cache: dict[str, tuple[bool, bool]] = {}  # title → (is_ng, is_rev) カタログ分類メモ
+        self._cat_cls_cache: dict[tuple, tuple[bool, bool]] = {}  # (title,title_chars) → (is_ng,is_rev) カタログ分類メモ
 
     def invalidate_cache(self) -> None:
         """ng_words/ng_images変更後にキャッシュをすべてクリアする"""
@@ -1293,20 +1293,26 @@ class NgFilter:
 
 
     # ── NGワード: カタログエントリ判定（フラット化キャッシュ使用） ────────────
-    def _classify_ng_catalog_1pass(self, entry) -> tuple[bool, bool]:
+    def _classify_ng_catalog_1pass(self, entry, title_chars: int = 0) -> tuple[bool, bool]:
         self._ensure_flat()
         title = entry.title or ""
         if not title:
             return False, False
-        # タイトル単位でメモ化（同一レンダリング内の多重判定・再レンダリング間の再計算を排除）
-        cached = self._cat_cls_cache.get(title)
+        # 逆NGは板のカタログ表示文字数(cat_chars)までに切り詰めたタイトルで判定する。
+        # （カタログに表示されない末尾の文字で逆NG＝自動オープンが起きるのを防ぐ。
+        #   title_chars<=0 は全表示＝従来どおり全文で判定）。NG(非表示)は全文のまま。
+        rev_title = title[:title_chars] if title_chars and title_chars > 0 else title
+        # タイトル＋判定文字数でメモ化（同一レンダリング内の多重判定・再計算を排除）
+        cache_key = (title, title_chars)
+        cached = self._cat_cls_cache.get(cache_key)
         if cached is not None:
             return cached
         is_ng = is_rev = False
         for rxp, pat, ng_type, scope in self._flat_words:
             if not scope[0] and not scope[6]:
                 continue
-            hit = bool(rxp.search(title)) if rxp else pat.lower() in title.lower()
+            _t = rev_title if ng_type == "reverse_ng" else title
+            hit = bool(rxp.search(_t)) if rxp else pat.lower() in _t.lower()
             if not hit:
                 continue
             if ng_type == "ng":           is_ng  = True
@@ -1315,15 +1321,16 @@ class NgFilter:
                 break
         if len(self._cat_cls_cache) > 5000:   # 肥大防止
             self._cat_cls_cache.clear()
-        self._cat_cls_cache[title] = (is_ng, is_rev)
+        self._cat_cls_cache[cache_key] = (is_ng, is_rev)
         return is_ng, is_rev
 
-    def classify_catalog(self, entry) -> str:
-        """カタログエントリのNG分類を返す: 'ng' / 'reverse_ng' / 'none'"""
+    def classify_catalog(self, entry, title_chars: int = 0) -> str:
+        """カタログエントリのNG分類を返す: 'ng' / 'reverse_ng' / 'none'
+        title_chars>0 のとき逆NGはタイトル先頭 title_chars 文字のみで判定する。"""
         url = getattr(entry, "thread_url", "")
         if url and url in self._settings.ng_thread_urls:
             return "ng"
-        is_ng, is_rev_ng = self._classify_ng_catalog_1pass(entry)
+        is_ng, is_rev_ng = self._classify_ng_catalog_1pass(entry, title_chars)
         if is_ng and is_rev_ng:
             priority = getattr(self._settings, "ng_priority_word_idx", 0)
             return "ng" if priority == 0 else "reverse_ng"
@@ -1331,19 +1338,22 @@ class NgFilter:
         if is_rev_ng:  return "reverse_ng"
         return "none"
 
-    def is_ng_catalog(self, entry) -> bool:
-        return self.classify_catalog(entry) == "ng"
+    def is_ng_catalog(self, entry, title_chars: int = 0) -> bool:
+        return self.classify_catalog(entry, title_chars) == "ng"
 
-    def is_reverse_ng_catalog(self, entry) -> bool:
-        return self.classify_catalog(entry) == "reverse_ng"
+    def is_reverse_ng_catalog(self, entry, title_chars: int = 0) -> bool:
+        return self.classify_catalog(entry, title_chars) == "reverse_ng"
 
 
-    def get_matched_reverse_ng_words_catalog(self, entry) -> list[dict]:
-        """逆NGにマッチしたワード辞書（notify/notify_type含む）のリストを返す（カタログエントリ用）"""
+    def get_matched_reverse_ng_words_catalog(self, entry, title_chars: int = 0) -> list[dict]:
+        """逆NGにマッチしたワード辞書（notify/notify_type含む）のリストを返す（カタログエントリ用）。
+        title_chars>0 のときタイトル先頭 title_chars 文字のみで判定する。"""
         self._ensure_flat()
         title = entry.title or ""
         if not title:
             return []
+        if title_chars and title_chars > 0:
+            title = title[:title_chars]
         # _flat_words にはnotify情報がないので ng_words から直接引く
         result = []
         seen_pats: set = set()

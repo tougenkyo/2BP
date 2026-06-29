@@ -2215,7 +2215,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         # 逆NGチェック（デフォルト色ONならCSSに任せ、OFFなら既読/未読で色を切り替え）
         _extra_style = ""
         if ng_filter is not None:
-            is_rev_ng = ng_filter.is_reverse_ng_catalog(e)
+            is_rev_ng = ng_filter.is_reverse_ng_catalog(e, title_chars=char_limit)
             if is_rev_ng:
                 ecls += " reverse-ng"
                 if not _use_default:
