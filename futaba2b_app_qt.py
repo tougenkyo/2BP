@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.165"
+APP_VER = "0.9.166"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5225,13 +5225,18 @@ class ThreadView(QWidget):
                     if n in my_nos:
                         hit_nos.add(n)
 
-                # ② テキスト/画像引用: comment_html の <font color="#789922"> を解析
+                # ② テキスト/画像/ID引用: comment_html の <font color="#789922"> を解析
                 if not hit_nos and r.comment_html:
                     soup = _BS(r.comment_html, "html.parser")
                     # 自分レスの画像ファイル名マップ: fname.lower() -> no
                     my_fnames = {r2.image_name.lower(): r2.no
                                  for r2 in thread.res_list
                                  if r2.no in my_nos and r2.image_name}
+                    # 自分レスのIDマップ: id_str -> [no...]（同一IDの自分レスは複数あり得る）
+                    my_ids: dict = {}
+                    for r2 in thread.res_list:
+                        if r2.no in my_nos and r2.id_str:
+                            my_ids.setdefault(r2.id_str, []).append(r2.no)
                     for font in soup.find_all("font", color="#789922"):
                         for _raw in font.get_text("\n").split("\n"):
                             q = _raw.strip()
@@ -5250,6 +5255,13 @@ class ThreadView(QWidget):
                             if _re.match(r'\d{10,}\.(jpe?g|png|gif|webp|bmp|mp4|webm)$', cl):
                                 if cl in my_fnames:
                                     hit_nos.add(my_fnames[cl])
+                                continue
+                            # ID引用: >ID:xxxxxxxx 形式（自分レスのIDと完全一致なら自分宛て）。
+                            # IDは大小文字を区別するため content をそのまま使う。
+                            _idm = _re.match(r'ID:(\S+)$', content)
+                            if _idm:
+                                for _n in my_ids.get(_idm.group(1), []):
+                                    hit_nos.add(_n)
                                 continue
                             # テキスト引用: 自分レスの「行」と照合。
                             #   ・どの行とも完全一致なら自分宛て（引用行 >X への >>X 返信を含む）。
