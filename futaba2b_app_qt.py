@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.179"
+APP_VER = "0.9.180"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5203,7 +5203,12 @@ class ThreadView(QWidget):
             f"document.body.innerHTML = {body_js};\n"
             "document.body.dataset.mode='quote';\n"
             f"window.scrollTo(0, {int(scroll_y)});\n"
-            "if (typeof _rebuildQuoteIndicators === 'function') _rebuildQuoteIndicators();\n"
+            # ▼インジケータ構築はペイント後に回す（切替の「▼待ち」固まりを裏へ）。
+            # 構築後に明示再フック（hookQuoteInd は data-hooked ガードで多重防止）。
+            "requestAnimationFrame(function(){requestAnimationFrame(function(){"
+            "if(typeof _rebuildQuoteIndicators==='function')_rebuildQuoteIndicators();"
+            "if(typeof window._hookPopupQuoteInd==='function')window._hookPopupQuoteInd(document);"
+            "});});\n"
         )
         self._loaded_page_mode = 'quote'
         self._view.page().runJavaScript(js,
@@ -5352,7 +5357,12 @@ class ThreadView(QWidget):
             # body差替ではDOMContentLoaded非発火のため、隠しプールのレスに
             # ▼被引用インジケータが付与されない。明示的に再構築し、続く
             # _inject_popup_js のフック付与で有効化する。
-            "if (typeof _rebuildQuoteIndicators === 'function') _rebuildQuoteIndicators();\n"
+            # ▼インジケータ構築はペイント後に回す（切替の「▼待ち」固まりを裏へ）。
+            # 構築後に明示再フック（hookQuoteInd は data-hooked ガードで多重防止）。
+            "requestAnimationFrame(function(){requestAnimationFrame(function(){"
+            "if(typeof _rebuildQuoteIndicators==='function')_rebuildQuoteIndicators();"
+            "if(typeof window._hookPopupQuoteInd==='function')window._hookPopupQuoteInd(document);"
+            "});});\n"
         )
         self._loaded_page_mode = 'image'
         self._view.page().runJavaScript(js,

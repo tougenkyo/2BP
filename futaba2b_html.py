@@ -843,6 +843,30 @@ function toggleDeleted() {
    quotedBy[no] = [引用者No のリスト] を返す。 */
 function _computeQuotedBy() {
     var quotedBy = {};
+    // 事前計算: 各resの引用除去済みプレーンテキストとURL/ファイル名集を1回だけ作る。
+    // テキスト引用・画像名引用の探索でO(n^2)のDOM深クローン/再クエリを避ける。
+    var _allRes = Array.from(document.querySelectorAll('.res'));
+    var _info = _allRes.map(function(el) {
+        var im = (el.id || '').match(/^r(\\d+)$/);
+        var no = im ? parseInt(im[1]) : -1;
+        var plain = '';
+        var c0 = el.querySelector('.comment');
+        if (c0) {
+            var cl = c0.cloneNode(true);
+            cl.querySelectorAll('span.qt').forEach(function(s) { s.remove(); });
+            plain = (cl.textContent || '').toLowerCase();
+        }
+        var urls = '';
+        el.querySelectorAll('a[href], img[src]').forEach(function(a) {
+            urls += (a.getAttribute('href') || a.getAttribute('src') || '').toLowerCase() + ' ';
+        });
+        el.querySelectorAll('.ul-fname').forEach(function(s) {
+            urls += (s.textContent || '').toLowerCase() + ' ';
+        });
+        return { no: no, plain: plain, urls: urls };
+    });
+    var _idxByNo = {};
+    _info.forEach(function(o, i) { if (o.no >= 0) _idxByNo[o.no] = i; });
     document.querySelectorAll('.res').forEach(function(el) {
         var m = (el.id || '').match(/^r(\\d+)$/);
         if (!m) return;
@@ -868,55 +892,36 @@ function _computeQuotedBy() {
                 if (quotedBy[tgt].indexOf(myNo) < 0) quotedBy[tgt].push(myNo);
                 return;
             }
-            /* テキスト引用: 自分より前のレスの中で引用文を（引用行以外で）含む最近接1件のみ記録 */
+            /* テキスト引用: 自分より前のレスの中で引用文を（引用行以外で）含む最近接1件のみ記録
+               （事前計算 _info[].plain を使い、DOM深クローンを排除） */
             var q = t.replace(/^>+/, '').trim();
             if (q.length < 2) return;
             var ql = q.toLowerCase();
-            var allRes = Array.from(document.querySelectorAll('.res'));
-            var selfIdx = allRes.findIndex(function(r) {
-                var rm = (r.id || '').match(/^r(\\d+)$/);
-                return rm && parseInt(rm[1]) === myNo;
-            });
+            var selfIdx = _idxByNo[myNo];
+            if (selfIdx === undefined) selfIdx = _info.length;
             var hit = null;
             for (var ri = 0; ri < selfIdx; ri++) {
-                var r = allRes[ri];
-                var rm = (r.id || '').match(/^r(\\d+)$/);
-                if (!rm) continue;
-                var cloneNode = r.querySelector('.comment');
-                if (!cloneNode) continue;
-                cloneNode = cloneNode.cloneNode(true);
-                cloneNode.querySelectorAll('span.qt').forEach(function(s) { s.remove(); });
-                if (cloneNode.textContent.toLowerCase().indexOf(ql) >= 0) hit = parseInt(rm[1]);
+                if (_info[ri].no < 0) continue;
+                if (_info[ri].plain.indexOf(ql) >= 0) hit = _info[ri].no;
             }
             if (hit !== null) {
                 if (!quotedBy[hit]) quotedBy[hit] = [];
                 if (quotedBy[hit].indexOf(myNo) < 0) quotedBy[hit].push(myNo);
             }
         });
-        /* 画像ファイル名引用: span.qt[data-img-ref] → 同名画像を持つ前方レスに ▼ */
+        /* 画像ファイル名引用: span.qt[data-img-ref] → 同名画像を持つ前方レスに ▼
+           （事前計算 _info[].urls を使用） */
         el.querySelectorAll('.comment span.qt[data-img-ref]').forEach(function(sp) {
             var fname = (sp.getAttribute('data-img-ref') || '').toLowerCase();
             if (!fname) return;
-            document.querySelectorAll('.res').forEach(function(r) {
-                var rm = (r.id || '').match(/^r(\\d+)$/);
-                if (!rm) return;
-                var rno = parseInt(rm[1]);
-                if (rno >= myNo) return;
-                var found = false;
-                r.querySelectorAll('a[href], img[src]').forEach(function(a) {
-                    var u = (a.getAttribute('href') || a.getAttribute('src') || '').toLowerCase();
-                    if (u.indexOf(fname) >= 0) found = true;
-                });
-                if (!found) {
-                    r.querySelectorAll('.ul-fname').forEach(function(s) {
-                        if ((s.textContent || '').toLowerCase().indexOf(fname) >= 0) found = true;
-                    });
+            for (var ri = 0; ri < _info.length; ri++) {
+                var o2 = _info[ri];
+                if (o2.no < 0 || o2.no >= myNo) continue;
+                if (o2.urls.indexOf(fname) >= 0) {
+                    if (!quotedBy[o2.no]) quotedBy[o2.no] = [];
+                    if (quotedBy[o2.no].indexOf(myNo) < 0) quotedBy[o2.no].push(myNo);
                 }
-                if (found) {
-                    if (!quotedBy[rno]) quotedBy[rno] = [];
-                    if (quotedBy[rno].indexOf(myNo) < 0) quotedBy[rno].push(myNo);
-                }
-            });
+            }
         });
     });
     return quotedBy;
@@ -1178,6 +1183,30 @@ function appendNewReplies(htmlArray) {
 // 引用インジケータを全体再構築（差分更新後に呼ぶ）
 function _rebuildQuoteIndicators() {
     var quotedBy = {};
+    // 事前計算: 各resの「引用除去済みプレーンテキスト」とURL/ファイル名集を1回だけ作る。
+    // テキスト引用・画像名引用の探索でO(n^2)のDOM深クローン/再クエリが起きるのを防ぐ。
+    var _allRes = Array.from(document.querySelectorAll('.res'));
+    var _info = _allRes.map(function(el) {
+        var im = (el.id || '').match(/^r(\\d+)$/);
+        var no = im ? parseInt(im[1]) : -1;
+        var plain = '';
+        var c0 = el.querySelector('.comment');
+        if (c0) {
+            var cl = c0.cloneNode(true);
+            cl.querySelectorAll('span.qt').forEach(function(s) { s.remove(); });
+            plain = (cl.textContent || '').toLowerCase();
+        }
+        var urls = '';
+        el.querySelectorAll('a[href], img[src]').forEach(function(a) {
+            urls += (a.getAttribute('href') || a.getAttribute('src') || '').toLowerCase() + ' ';
+        });
+        el.querySelectorAll('.ul-fname').forEach(function(s) {
+            urls += (s.textContent || '').toLowerCase() + ' ';
+        });
+        return { no: no, plain: plain, urls: urls };
+    });
+    var _idxByNo = {};
+    _info.forEach(function(o, i) { if (o.no >= 0) _idxByNo[o.no] = i; });
     document.querySelectorAll('.res').forEach(function(el) {
         var m = (el.id || '').match(/^r(\\d+)$/);
         if (!m) return;
@@ -1204,24 +1233,16 @@ function _rebuildQuoteIndicators() {
                 return;
             }
             // テキスト引用: 自分より前のレスで引用文を含む最近接1件を記録
+            // （事前計算 _info[].plain を使い、DOM深クローンを排除）
             var q = t.replace(/^>+/, '').trim();
             if (q.length < 2) return;
             var ql = q.toLowerCase();
-            var allRes = Array.from(document.querySelectorAll('.res'));
-            var selfIdx = allRes.findIndex(function(r) {
-                var rm = (r.id || '').match(/^r(\\d+)$/);
-                return rm && parseInt(rm[1]) === myNo;
-            });
+            var selfIdx = _idxByNo[myNo];
+            if (selfIdx === undefined) selfIdx = _info.length;
             var hit = null;
             for (var ri = 0; ri < selfIdx; ri++) {
-                var r = allRes[ri];
-                var rm = (r.id || '').match(/^r(\\d+)$/);
-                if (!rm) continue;
-                var cloneNode = r.querySelector('.comment');
-                if (!cloneNode) continue;
-                cloneNode = cloneNode.cloneNode(true);
-                cloneNode.querySelectorAll('span.qt').forEach(function(s) { s.remove(); });
-                if (cloneNode.textContent.toLowerCase().indexOf(ql) >= 0) hit = parseInt(rm[1]);
+                if (_info[ri].no < 0) continue;
+                if (_info[ri].plain.indexOf(ql) >= 0) hit = _info[ri].no;
             }
             if (hit !== null) {
                 if (!quotedBy[hit]) quotedBy[hit] = [];
@@ -1240,30 +1261,18 @@ function _rebuildQuoteIndicators() {
                 if (quotedBy[tgt].indexOf(myNo) < 0) quotedBy[tgt].push(myNo);
             }
         });
-        // 画像ファイル名引用: span.qt[data-img-ref]
+        // 画像ファイル名引用: span.qt[data-img-ref]（事前計算 _info[].urls を使用）
         el.querySelectorAll('.comment span.qt[data-img-ref]').forEach(function(sp) {
             var fname = (sp.getAttribute('data-img-ref') || '').toLowerCase();
             if (!fname) return;
-            document.querySelectorAll('.res').forEach(function(r) {
-                var rm = (r.id || '').match(/^r(\\d+)$/);
-                if (!rm) return;
-                var rno = parseInt(rm[1]);
-                if (rno >= myNo) return;
-                var found = false;
-                r.querySelectorAll('a[href], img[src]').forEach(function(a) {
-                    var u = (a.getAttribute('href') || a.getAttribute('src') || '').toLowerCase();
-                    if (u.indexOf(fname) >= 0) found = true;
-                });
-                if (!found) {
-                    r.querySelectorAll('.ul-fname').forEach(function(s) {
-                        if ((s.textContent || '').toLowerCase().indexOf(fname) >= 0) found = true;
-                    });
+            for (var ri = 0; ri < _info.length; ri++) {
+                var o2 = _info[ri];
+                if (o2.no < 0 || o2.no >= myNo) continue;
+                if (o2.urls.indexOf(fname) >= 0) {
+                    if (!quotedBy[o2.no]) quotedBy[o2.no] = [];
+                    if (quotedBy[o2.no].indexOf(myNo) < 0) quotedBy[o2.no].push(myNo);
                 }
-                if (found) {
-                    if (!quotedBy[rno]) quotedBy[rno] = [];
-                    if (quotedBy[rno].indexOf(myNo) < 0) quotedBy[rno].push(myNo);
-                }
-            });
+            }
         });
         // 最後のレスの .comment innerHTML をダンプ（デバッグ用）
     });
