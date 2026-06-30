@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.177"
+APP_VER = "0.9.178"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2941,6 +2941,11 @@ class ThreadView(QWidget):
         self._thread    = None
         self._last_valid_thread = None   # 最後にres_listが有効だったスレ（スレ落ち保存用）
         self._img_list: list = []
+        # 画像/引用モードのポップアップ用隠しプール(_respool)を per-res でキャッシュ。
+        # {res_no: (sig, html)}。モード切替・モード中の差分更新で変化のないレスの
+        # render_res 再実行を避ける（切替の重さ軽減）。
+        self._respool_cache: dict = {}
+        self._respool_cache_no = None   # キャッシュが属するスレッドNo（同一性ガード）
         self._board: BoardInfo | None = None
         self._saved_search: str = ""   # タブ切り替え時に検索テキストを保存
         self._thread_no: int = 0
@@ -4819,6 +4824,34 @@ class ThreadView(QWidget):
         self._last_html_dirty = False
 
 
+    def _build_respool_html(self, res_list, id_counts=None, id_warn: int = 0) -> str:
+        """画像/引用モードのポップアップ用隠しプール(_respool)の内側HTMLを返す。
+
+        全レスを render_res でフルレンダリングするのは重い（1000レスで切替毎に
+        1000回）ため、per-res キャッシュ(_respool_cache)で変化のないレスの再実行を
+        避ける。署名(sig)は render_res の出力に影響する可変フィールドのみで構成し、
+        変化時だけ再生成する。NG状態は respool では描画に影響しない（ng_filterを
+        渡さない＝CSSクラスで制御）ためキャッシュ無効化は不要。"""
+        # スレッド同一性ガード: ビューが別スレに切り替わった場合は res_no が衝突
+        # しうるためキャッシュを破棄する（通常タブは1スレ固定なので発生しない保険）。
+        _tno = self._thread.no if self._thread else None
+        if getattr(self, '_respool_cache_no', None) != _tno:
+            self._respool_cache.clear()
+            self._respool_cache_no = _tno
+        cache = self._respool_cache
+        parts = []
+        for r in res_list:
+            idc = id_counts.get(r.id_str, 0) if (id_counts and r.id_str) else 0
+            sig = (idc, id_warn, r.sodane, r.is_new, r.is_deleted, r.expiry_str)
+            ent = cache.get(r.no)
+            if ent is not None and ent[0] == sig:
+                parts.append(ent[1])
+            else:
+                frag = render_res(r, r.is_op, [], id_counts=id_counts, id_warn_count=id_warn)
+                cache[r.no] = (sig, frag)
+                parts.append(frag)
+        return ''.join(parts)
+
     def _thread_footer_html(self, thread) -> str:
         """スレ表示用フッター（レス数/受信/最終更新/バージョン）HTMLを返す。
         返信モードと同一内容を画像・引用モードでも使うための共通生成。"""
@@ -4956,7 +4989,7 @@ class ThreadView(QWidget):
         rows.append('<div class="qt-sep"></div>')
 
         # ポップアップ用：各レスのHTMLを _respool に格納
-        res_pool_html = ''.join(render_res(r, r.is_op, []) for r in res_list)
+        res_pool_html = self._build_respool_html(res_list)
         res_pool = ('<div id="_respool" style="position:absolute;left:-9999px;width:520px;'
                     'visibility:hidden;pointer-events:none;">'
                     + res_pool_html + '</div>')
@@ -5108,7 +5141,7 @@ class ThreadView(QWidget):
         rows.append('<div class="qt-sep"></div>')
 
         # ポップアップ用 _respool も更新
-        res_pool_html = ''.join(render_res(r, r.is_op, []) for r in res_list)
+        res_pool_html = self._build_respool_html(res_list)
         res_pool = ('<div id="_respool" style="position:absolute;left:-9999px;width:520px;'
                     'visibility:hidden;pointer-events:none;">'
                     + res_pool_html + '</div>')
@@ -5141,8 +5174,7 @@ class ThreadView(QWidget):
             if _r.id_str:
                 _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
         _id_warn = getattr(self._settings, 'id_warn_count', 5)
-        hidden_res=[render_res(r, r.is_op, [], id_counts=_id_counts, id_warn_count=_id_warn)
-                    for r in self._thread.res_list]
+        _respool_inner=self._build_respool_html(self._thread.res_list, _id_counts, _id_warn)
         for seq,r in img_res:
             ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
             info=ext+' / '+_fmt(r.file_size_bytes)
@@ -5173,7 +5205,7 @@ class ThreadView(QWidget):
         # 隠しレスプール（popup_js が getElementById('rNNNN') で参照する）
         res_pool = ('<div id="_respool" style="position:absolute;left:-9999px;width:520px;'
                     'visibility:hidden;pointer-events:none;">'
-                    + ''.join(hidden_res) + '</div>')
+                    + _respool_inner + '</div>')
         _sbc_img = getattr(self._settings, 'scroll_bottom_count', 5)
         _scroll_js_img = _make_scroll_bottom_js(_sbc_img, getattr(self._settings,'scroll_top_count',0))
         _ucss_i = _load_user_css(self._settings)
@@ -5216,8 +5248,7 @@ class ThreadView(QWidget):
             if _r.id_str:
                 _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
         _id_warn = getattr(self._settings, 'id_warn_count', 5)
-        hidden_res=[render_res(r, r.is_op, [], id_counts=_id_counts, id_warn_count=_id_warn)
-                    for r in self._thread.res_list]
+        _respool_inner=self._build_respool_html(self._thread.res_list, _id_counts, _id_warn)
         for seq,r in img_res:
             ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
             info=ext+' / '+_fmt(r.file_size_bytes)
@@ -5242,7 +5273,7 @@ class ThreadView(QWidget):
             )
         res_pool = ('<div id="_respool" style="position:absolute;left:-9999px;width:520px;'
                     'visibility:hidden;pointer-events:none;">'
-                    + ''.join(hidden_res) + '</div>')
+                    + _respool_inner + '</div>')
         grid_html = (getattr(self, "_error_banner_html", "")
                      + '<div class="wrap"><div class="grid">'
                      + ''.join(items)
@@ -5985,6 +6016,7 @@ class ThreadView(QWidget):
         self._last_html = ""
         self._error_banner_html = ""
         self._img_list = []
+        self._respool_cache = {}
         self._pending_self_res_popups = []
         self._my_sodane_cache = {}
 
