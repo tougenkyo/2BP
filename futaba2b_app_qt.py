@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.181"
+APP_VER = "0.9.182"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -4721,7 +4721,11 @@ class ThreadView(QWidget):
         }
         var has = (!window._unreadSeen)
                   && (document.querySelectorAll('.res.new-res').length > 0);
-        if (bridge && bridge.notifyUnread) {
+        /* bridge は WEBCHANNEL_JS で var 宣言される。エラー/404ページ
+           （setHtml about:blank）には WEBCHANNEL_JS が無く bridge が未宣言の
+           ことがあり、その場合 `bridge &&` だけでは Reference: bridge is not
+           defined を投げる。typeof で未宣言を先にガードする。 */
+        if (typeof bridge !== 'undefined' && bridge && bridge.notifyUnread) {
             bridge.notifyUnread(has);
         }
     }
@@ -4847,7 +4851,9 @@ class ThreadView(QWidget):
         if hasattr(self, '_last_html') and self._last_html:
             url = (self._thread.url if self._thread else None) or 'https://www.2chan.net/'
             self._load_html_via_tempfile(self._last_html, QUrl(url))
-        self._view.page().runJavaScript('document.body.dataset.mode="' + mode + '"')
+        # ページ読込途中だと document.body が一瞬 null になり
+        # 「Cannot read properties of null (reading 'dataset')」を投げるためガードする。
+        self._view.page().runJavaScript('if(document.body)document.body.dataset.mode="' + mode + '"')
 
     def _rebuild_last_html(self):
         """最新のスレッドモデルから _last_html を再生成する。
