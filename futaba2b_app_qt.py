@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.175"
+APP_VER = "0.9.176"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2089,19 +2089,25 @@ class BoardPane(QWidget):
             _cur_mode_r = _checked_r.property("mode") if _checked_r else ""
             if _cur_mode_r in ("image", "quote"):
                 w._set_view_mode(_cur_mode_r)
-            elif getattr(w, '_last_html', ""):
-                _url_r = (w._thread.url if w._thread else None) or 'https://www.2chan.net/'
-                # 全リロードで先頭に戻るのを防ぐため、再ロード前に現在の
-                # スクロール位置を読み取り _pending_scroll に渡す
-                # （_on_load_finished_scroll が読込完了後に復元する）。
-                _html_r = w._last_html
-                def _reload_keep_scroll(_y, _w=w, _h=_html_r, _u=_url_r):
-                    try:
-                        _w._pending_scroll = int(_y) if _y else 0
-                    except Exception:
-                        _w._pending_scroll = 0
-                    _w._load_html_via_tempfile(_h, QUrl(_u))
-                w._view.page().runJavaScript("window.scrollY", _reload_keep_scroll)
+            else:
+                # 自動更新中は _last_html を遅延生成方式にしているため、再ロード前に
+                # dirty なら最新モデルから作り直す（古いHTMLで再ロードして新着が
+                # 消えるのを防ぐ）。
+                if getattr(w, '_last_html_dirty', False) and w._thread:
+                    w._rebuild_last_html()
+                if getattr(w, '_last_html', ""):
+                    _url_r = (w._thread.url if w._thread else None) or 'https://www.2chan.net/'
+                    # 全リロードで先頭に戻るのを防ぐため、再ロード前に現在の
+                    # スクロール位置を読み取り _pending_scroll に渡す
+                    # （_on_load_finished_scroll が読込完了後に復元する）。
+                    _html_r = w._last_html
+                    def _reload_keep_scroll(_y, _w=w, _h=_html_r, _u=_url_r):
+                        try:
+                            _w._pending_scroll = int(_y) if _y else 0
+                        except Exception:
+                            _w._pending_scroll = 0
+                        _w._load_html_via_tempfile(_h, QUrl(_u))
+                    w._view.page().runJavaScript("window.scrollY", _reload_keep_scroll)
         # アクティブ化時に「末尾まで表示済みなら未読(青背景)を解除」を再評価する。
         # 背景でロードされ innerHeight=0 のまま初回判定が効かなかった画像モード等で、
         # 表示後に末尾が見えていれば青背景をデフォルトに戻す（少し遅延でレイアウト確定後）。
@@ -8122,18 +8128,12 @@ class AutoRefreshManager(QObject):
             )
             view._thread = thread
             view._known_res_count = len(thread.res_list)
-            # _last_html も更新（モード切替・ログ保存で使われる）
-            _sbc = getattr(self._settings, 'scroll_bottom_count', 5)
-            _ucss2 = _ucss
-            _html_full, _ = thread_to_html(thread, user_css=_ucss2, uploaders=_ul,
-                                           ng_filter=_ng, ng_settings=self._settings,
-                                           del_nos=_del_nos,
-                                           scroll_bottom_count=_sbc,
-                                           scroll_top_count=getattr(self._settings,'scroll_top_count',0),
-                                           footer_html=view._thread_footer_html(thread),
-                                           my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5))
-            view._last_html = _html_full
-            view._last_html_dirty = False
+            # _last_html は「全体HTML」として保持したいが、ここで毎回 thread_to_html
+            # で全レスを文字列化すると、自動更新のたびに（非アクティブタブ含め）
+            # 1000レス規模のHTML生成がGUIスレッドで走りフリーズの原因になる。
+            # _show_diff と同様に dirty フラグだけ立て、実際に _last_html が要る瞬間
+            # （モード切替・タブ再表示・ログ保存）で _rebuild_last_html により遅延生成する。
+            view._last_html_dirty = True
 
             # 現在の表示モードを確認
             _checked = view._mode_grp.checkedButton() if hasattr(view, '_mode_grp') else None
