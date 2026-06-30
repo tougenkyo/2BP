@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.176"
+APP_VER = "0.9.177"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1002,14 +1002,32 @@ def _default_zoom() -> float:
         return 1.25
 
 
+_USER_CSS_CACHE: dict = {}   # resolved_path -> (mtime, content)
+
 def _load_user_css(settings) -> str:
-    """設定の user_css_file を読んで内容を返す。なければ空文字"""
+    """設定の user_css_file を読んで内容を返す。なければ空文字。
+    全描画パス（自動更新の毎ティック含む）から呼ばれるため、mtimeで
+    無効化するキャッシュを使い毎回のディスク読み込みを避ける。CSSを
+    編集すればmtimeが変わり次回読込で自動反映される。"""
+    css_file = getattr(settings, "user_css_file", "") or ""
+    if not css_file:
+        return ""
     try:
-        p = Path(settings.user_css_file)
+        p = Path(css_file)
         if not p.is_absolute():
             p = Path(__file__).parent / p
-        if p.exists():
-            return p.read_text(encoding="utf-8")
+        key = str(p)
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            _USER_CSS_CACHE.pop(key, None)   # 無くなった → キャッシュ破棄
+            return ""
+        cached = _USER_CSS_CACHE.get(key)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        content = p.read_text(encoding="utf-8")
+        _USER_CSS_CACHE[key] = (mtime, content)
+        return content
     except Exception as e:
         print(f"[UserCSS] 読み込みエラー: {e}")
     return ""
