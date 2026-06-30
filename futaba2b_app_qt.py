@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.180"
+APP_VER = "0.9.181"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5473,7 +5473,10 @@ class ThreadView(QWidget):
                             # 全ての > を剥がすと >X と >>X が同一になり、他人宛ての引用が
                             # 自分の引用行に部分一致して誤って自分宛て判定になっていた。
                             content = q[1:].strip()
-                            if len(content) < 4:
+                            # 短文引用も通知対象にする（誤検知より取りこぼし回避を優先）。
+                            # ただし空文字だけは除外する（"" は全レスに部分一致し、
+                            # すべての返信が誤通知になるため）。
+                            if not content:
                                 continue
                             cl = content.lower()
                             # 画像引用: >タイムスタンプ.拡張子 形式
