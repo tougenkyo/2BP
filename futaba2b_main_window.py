@@ -1726,13 +1726,18 @@ class MainWindow(QMainWindow):
             should_close = ((is_full and _close_full)
                             or (not is_full and _close_dead)
                             or _rev_auto_close)
-            # カタログから開いた直後（一度も正常表示していない）は自動クローズしない
-            if getattr(view, "_known_res_count", 0) == 0:
+            # カタログから開いた直後（一度も正常表示していない）は自動クローズしない。
+            # ただし逆NG自動オープン由来は例外。img板など回転が速い板では、開いた
+            # 瞬間に既に404（dead-on-arrival, _known_res_count==0）のスレが大量に
+            # 自動オープンされ、放置するとそれらが閉じられず404タブが累積するため、
+            # 逆NG由来は開いた直後の404でも閉じる。
+            if getattr(view, "_known_res_count", 0) == 0 and not _rev_auto_close:
                 should_close = False
             # タブを開いた瞬間に既に死んでいた（1000到達済み・最初から404）スレは
             # 自動クローズしない（ユーザーが意図的に開いた死亡スレを勝手に閉じない）。
             # _opened_dead は初回読み込み時に死亡を検出した場合のみ True になる。
-            if getattr(view, "_opened_dead", False):
+            # 逆NG自動オープン由来は「意図的に開いた」ではないため例外（上と同じ理由で閉じる）。
+            if getattr(view, "_opened_dead", False) and not _rev_auto_close:
                 should_close = False
             if should_close:
                 # 一度自動クローズ済みのスレは再表示後クローズしない（url基準・既存ロジック維持）
