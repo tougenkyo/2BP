@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.183"
+APP_VER = "0.9.184"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2451,13 +2451,15 @@ class BoardPane(QWidget):
                 _brd = getattr(_w_rev, "_board", None)
                 _cat_entry = self._find_catalog_entry(
                     _brd, getattr(_w_rev, "_thread_no", None))
-                _tc_rev = 0
+                _tc_rev = -1   # 板不明=全文（判定不能フォールバック）
                 if _brd is not None:
                     try:
                         from futaba2b_settings import get_board_settings as _gbs
-                        _tc_rev = int(getattr(_gbs(_brd.base_url), "cat_chars", 0) or 0)
+                        _cc = getattr(_gbs(_brd.base_url), "cat_chars", None)
+                        # 板の cat_chars（0含む）はそのまま採用。None のみ全文(-1)。
+                        _tc_rev = int(_cc) if _cc is not None else -1
                     except Exception:
-                        _tc_rev = 0
+                        _tc_rev = -1
                 if _cat_entry is not None:
                     for _ng in _ngf.get_matched_reverse_ng_words_catalog(
                             _cat_entry, title_chars=_tc_rev):
@@ -7091,9 +7093,11 @@ class CatalogView(QWidget):
             return 14 * 6
 
     def _reverse_ng_title_chars(self) -> int:
-        """逆NG判定に使うタイトル文字数（カタログ表示文字数 cat_chars）。
-        0=全表示（制限なし）。catalog_to_html の char_limit と同じ値を逆NG判定にも
-        適用し、カタログに表示されていない末尾文字での逆NG＝自動オープンを防ぐ。"""
+        """逆NG判定に使うタイトル文字数（カタログ表示文字数 cat_chars = cxyl の3番目）。
+        catalog_to_html の char_limit と同じ値を逆NG判定にも適用し、カタログに
+        表示されていない文字での逆NG＝自動オープンを防ぐ。
+        戻り値の意味: 0=タイトル非表示（先頭0文字＝逆NG判定なし）/ N>0=先頭N文字 /
+        -1=cxyl不明で判定不能（全文＝従来通りのフォールバック）。"""
         cxyl = None
         if self._board:
             from futaba2b_settings import get_board_settings as _gbs
@@ -7102,9 +7106,11 @@ class CatalogView(QWidget):
             cxyl = self._fetcher.get_cxyl()
         try:
             parts = (cxyl or "").split("x")
-            return int(parts[2]) if len(parts) > 2 else 0
+            # 板の cl 値（0含む）はそのまま返す。cxyl が壊れている/取得不能な時のみ
+            # -1（全文フォールバック）にして逆NGが効かなくなるのを防ぐ。
+            return int(parts[2]) if len(parts) > 2 else -1
         except Exception:
-            return 0
+            return -1
 
     def _re_render(self):
         """検索 + ローカルソート + レス数フィルタ + NGフィルタを適用してレンダリング"""

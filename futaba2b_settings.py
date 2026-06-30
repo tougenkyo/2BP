@@ -1303,15 +1303,18 @@ class NgFilter:
 
 
     # ── NGワード: カタログエントリ判定（フラット化キャッシュ使用） ────────────
-    def _classify_ng_catalog_1pass(self, entry, title_chars: int = 0) -> tuple[bool, bool]:
+    def _classify_ng_catalog_1pass(self, entry, title_chars: int = -1) -> tuple[bool, bool]:
         self._ensure_flat()
         title = entry.title or ""
         if not title:
             return False, False
-        # 逆NGは板のカタログ表示文字数(cat_chars)までに切り詰めたタイトルで判定する。
-        # （カタログに表示されない末尾の文字で逆NG＝自動オープンが起きるのを防ぐ。
-        #   title_chars<=0 は全表示＝従来どおり全文で判定）。NG(非表示)は全文のまま。
-        rev_title = title[:title_chars] if title_chars and title_chars > 0 else title
+        # 逆NGは板のカタログ表示文字数(cat_chars)までに切り詰めたタイトルで判定する
+        # （カタログに表示されない文字での逆NG＝自動オープンを防ぐ）。
+        #   title_chars <  0 … 制限なし（全文）。判定不能時のフォールバック等。
+        #   title_chars == 0 … 空（カタログがタイトル非表示の板＝逆NG判定対象なし）。
+        #   title_chars >  0 … 先頭 title_chars 文字。
+        # NG(非表示)はタイトル全文のまま（title_chars 非依存）。
+        rev_title = title if title_chars < 0 else title[:title_chars]
         # タイトル＋判定文字数でメモ化（同一レンダリング内の多重判定・再計算を排除）
         cache_key = (title, title_chars)
         cached = self._cat_cls_cache.get(cache_key)
@@ -1334,9 +1337,9 @@ class NgFilter:
         self._cat_cls_cache[cache_key] = (is_ng, is_rev)
         return is_ng, is_rev
 
-    def classify_catalog(self, entry, title_chars: int = 0) -> str:
+    def classify_catalog(self, entry, title_chars: int = -1) -> str:
         """カタログエントリのNG分類を返す: 'ng' / 'reverse_ng' / 'none'
-        title_chars>0 のとき逆NGはタイトル先頭 title_chars 文字のみで判定する。"""
+        逆NGの判定タイトル長: <0=全文 / 0=空（判定なし）/ >0=先頭N文字。"""
         url = getattr(entry, "thread_url", "")
         if url and url in self._settings.ng_thread_urls:
             return "ng"
@@ -1348,21 +1351,21 @@ class NgFilter:
         if is_rev_ng:  return "reverse_ng"
         return "none"
 
-    def is_ng_catalog(self, entry, title_chars: int = 0) -> bool:
+    def is_ng_catalog(self, entry, title_chars: int = -1) -> bool:
         return self.classify_catalog(entry, title_chars) == "ng"
 
-    def is_reverse_ng_catalog(self, entry, title_chars: int = 0) -> bool:
+    def is_reverse_ng_catalog(self, entry, title_chars: int = -1) -> bool:
         return self.classify_catalog(entry, title_chars) == "reverse_ng"
 
 
-    def get_matched_reverse_ng_words_catalog(self, entry, title_chars: int = 0) -> list[dict]:
+    def get_matched_reverse_ng_words_catalog(self, entry, title_chars: int = -1) -> list[dict]:
         """逆NGにマッチしたワード辞書（notify/notify_type含む）のリストを返す（カタログエントリ用）。
-        title_chars>0 のときタイトル先頭 title_chars 文字のみで判定する。"""
+        判定タイトル長: <0=全文 / 0=空（マッチなし）/ >0=先頭N文字。"""
         self._ensure_flat()
         title = entry.title or ""
         if not title:
             return []
-        if title_chars and title_chars > 0:
+        if title_chars >= 0:
             title = title[:title_chars]
         # _flat_words にはnotify情報がないので ng_words から直接引く
         result = []
