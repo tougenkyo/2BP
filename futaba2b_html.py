@@ -741,6 +741,10 @@ document.addEventListener('contextmenu', function(e) {
 });
 function openImg(url, idx)      { _b('openImg',        [url, idx]); }
 function openImgBg(url, idx)    { _b('openImgBg',      [url, idx]); }
+/* 画像モードのギャラリークリック。モード切替をページ再読込せずDOM入替で
+   行うため、画像モード以外のページにも定義しておく（未定義だとbody入替後の
+   グリッドクリックが失敗する）。 */
+function openGalleryImg(i)      { _b('openGalleryImg', [i]); }
 function openUrl(url)           { _b('openUrl',        [url]); }
 function openThread(url)        { _b('openThread',     [url]); }
 function openThreadBg(url)      { _b('openThreadBg',  [url]); }

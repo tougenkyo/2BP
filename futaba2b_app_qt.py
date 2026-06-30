@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.178"
+APP_VER = "0.9.179"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1031,6 +1031,43 @@ def _load_user_css(settings) -> str:
     except Exception as e:
         print(f"[UserCSS] 読み込みエラー: {e}")
     return ""
+
+
+# ── 画像/引用モードの固有CSS ─────────────────────────────────────────────────
+# フルレンダー（初回ロード）と、モード切替時のDOM入替注入の両方から使うため
+# モジュールレベルに切り出す。引用CSSは静的、画像CSSは列数(cols)に依存。
+_QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
+                ".qt-row{padding:2px 4px;line-height:1.8;white-space:nowrap;overflow:hidden;"
+                "margin-bottom:3px;}"
+                ".qt-root{font-weight:bold;}"
+                ".qt-idx{color:#888;font-size:8pt;min-width:28px;display:inline-block;}"
+                ".qt-no{color:#0000EE;text-decoration:none;margin:0 4px;}"
+                ".qt-no:hover{text-decoration:underline;color:#cc1105;}"
+                ".qt-new{color:#cc1105;font-size:8pt;}"
+                ".qt-branch{color:#888;margin-right:2px;}"
+                ".qt-thumb{max-height:60px;max-width:80px;object-fit:contain;"
+                "vertical-align:middle;margin-left:4px;border:1px solid #aaa;cursor:pointer;}"
+                ".qt-row.deleted{display:none;}"
+                "body.show-deleted .qt-row.deleted{display:block;}"
+                ".qt-row.ng-hidden{display:none;}"
+                ".qt-row.ng-band{border-left:4px solid #1f9d1f;padding-left:4px;}"
+                ".del-done{color:#cc1105;font-weight:bold;font-size:8pt;}")
+
+def _img_mode_css(cols: int) -> str:
+    return (".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;"
+            "grid-template-columns:repeat(" + str(cols) + ",80px);gap:4px}"
+            ".gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;"
+            "width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}"
+            ".gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;"
+            "cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}"
+            ".gn{text-align:left;font-size:7pt;line-height:1.3}"
+            ".gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}"
+            ".gt img{max-width:100%;max-height:72px;object-fit:contain}"
+            ".gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
+            ".gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}"
+            ".gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 4px 0 0 #1f9d1f}"
+            ".gi-del{position:absolute;top:12px;left:1px;color:#cc1105;font-weight:bold;font-size:7pt;"
+            "line-height:1.1;background:rgba(255,255,255,0.85);padding:0 2px;border-radius:2px;z-index:3}")
 
 
 # ── テーマアイコン読み込み ───────────────────────────────────────────────────
@@ -2946,6 +2983,9 @@ class ThreadView(QWidget):
         # render_res 再実行を避ける（切替の重さ軽減）。
         self._respool_cache: dict = {}
         self._respool_cache_no = None   # キャッシュが属するスレッドNo（同一性ガード）
+        # スレッドページ(返信/画像/引用いずれか)のDOMがロード済みで利用可能か。
+        # モード切替をページ再読込せずDOM入替で行えるかの判定に使う。
+        self._thread_page_live = False
         self._board: BoardInfo | None = None
         self._saved_search: str = ""   # タブ切り替え時に検索テキストを保存
         self._thread_no: int = 0
@@ -4108,6 +4148,8 @@ class ThreadView(QWidget):
 
         # ページモード追跡: デフォルトは返信モード（image/quoteレンダラーがロード後に上書き）
         self._loaded_page_mode = ''
+        # 新規ナビゲーション開始 → ロード完了まではDOM入替不可（loadFinishedで再びTrue）
+        self._thread_page_live = False
 
         # 旧一時ファイルを削除
         if self._tmp_html_path:
@@ -4751,6 +4793,8 @@ class ThreadView(QWidget):
 
     def _on_load_finished_scroll(self, _ok: bool):
         """ページ読込完了後にスクロール位置を復元"""
+        # スレッドページのDOMがロード完了 → モード切替をDOM入替で行える
+        self._thread_page_live = True
         if self._pending_scroll > 0:
             y = self._pending_scroll
             self._pending_scroll = 0
@@ -4776,10 +4820,26 @@ class ThreadView(QWidget):
                 btn.blockSignals(True)
                 btn.setChecked(btn.property("mode") == mode)
                 btn.blockSignals(False)
+        # スレッドページがライブ（DOMロード済み）なら、ページ再読込せず
+        # body入替でモードを切り替える（一時ファイル書出し・ナビゲーション・
+        # QWebChannel再構築のオーバーヘッドを排除）。未ロード時はフルレンダー。
+        _live = getattr(self, '_thread_page_live', False) and self._thread is not None
         if mode == 'image':
-            self._render_image_mode(); return
+            if _live:
+                self._view.page().runJavaScript(
+                    "window.scrollY",
+                    lambda y: self._render_image_mode_with_scroll(int(y) if y else 0))
+            else:
+                self._render_image_mode()
+            return
         if mode == 'quote':
-            self._render_quote_mode(); return
+            if _live:
+                self._view.page().runJavaScript(
+                    "window.scrollY",
+                    lambda y: self._render_quote_mode_with_scroll(int(y) if y else 0))
+            else:
+                self._render_quote_mode()
+            return
         # 返信モード: 差分更新で _last_html が古い場合は最新モデルから再生成する
         # （返信→画像→返信 で「開いた時のレスしか出ない」不具合の修正）
         if getattr(self, '_last_html_dirty', False) and self._thread:
@@ -4994,22 +5054,7 @@ class ThreadView(QWidget):
                     'visibility:hidden;pointer-events:none;">'
                     + res_pool_html + '</div>')
 
-        _qt_add = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
-                   ".qt-row{padding:2px 4px;line-height:1.8;white-space:nowrap;overflow:hidden;"
-                   "margin-bottom:3px;}"
-                   ".qt-root{font-weight:bold;}"
-                   ".qt-idx{color:#888;font-size:8pt;min-width:28px;display:inline-block;}"
-                   ".qt-no{color:#0000EE;text-decoration:none;margin:0 4px;}"
-                   ".qt-no:hover{text-decoration:underline;color:#cc1105;}"
-                   ".qt-new{color:#cc1105;font-size:8pt;}"
-                   ".qt-branch{color:#888;margin-right:2px;}"
-                   ".qt-thumb{max-height:60px;max-width:80px;object-fit:contain;"
-                   "vertical-align:middle;margin-left:4px;border:1px solid #aaa;cursor:pointer;}"
-                   ".qt-row.deleted{display:none;}"
-                   "body.show-deleted .qt-row.deleted{display:block;}"
-                   ".qt-row.ng-hidden{display:none;}"
-                   ".qt-row.ng-band{border-left:4px solid #1f9d1f;padding-left:4px;}"
-                   ".del-done{color:#cc1105;font-weight:bold;font-size:8pt;}")
+        _qt_add = _QT_MODE_CSS
         _sbc = getattr(self._settings, 'scroll_bottom_count', 5)
         _scroll_js = _make_scroll_bottom_js(_sbc, getattr(self._settings,'scroll_top_count',0))
         _ucss_q = _load_user_css(self._settings)
@@ -5028,10 +5073,11 @@ class ThreadView(QWidget):
         self._sync_del_btn_after_full_render()
 
     def _render_quote_mode_with_scroll(self, scroll_y: int = 0):
-        """スクロール位置を保持しながら引用モードを再描画する（DOM書き換え方式・ページリロードなし）"""
+        """スクロール位置を保持しながら引用モードを再描画する（DOM書き換え方式・ページリロードなし）。
+        返信/画像モードからの切替でも、引用CSSをheadへ注入してから body を入れ替えるので
+        ページ再読込は不要。DOMが未ロードのときのみフルレンダーにフォールバックする。"""
         if not self._thread: return
-        # ページが引用モードHTMLでない場合はフルレンダーに切替（CSS不在によるレイアウト崩れ防止）
-        if getattr(self, '_loaded_page_mode', '') != 'quote':
+        if not getattr(self, '_thread_page_live', False):
             self._render_quote_mode()
             return
         import re as _re, json as _json
@@ -5148,10 +5194,18 @@ class ThreadView(QWidget):
 
         body_html = getattr(self, "_error_banner_html", "") + "\n".join(rows) + res_pool + self._thread_footer_html(self._thread)
         body_js = _json.dumps(body_html, ensure_ascii=False)
+        css_js  = _json.dumps(_QT_MODE_CSS, ensure_ascii=False)
         js = (
+            # 別モードからの切替時、引用CSSがheadに無ければ注入（id重複ガード）
+            "(function(){if(!document.getElementById('__qtcss')){"
+            "var s=document.createElement('style');s.id='__qtcss';"
+            f"s.textContent={css_js};document.head.appendChild(s);}}}})();\n"
             f"document.body.innerHTML = {body_js};\n"
+            "document.body.dataset.mode='quote';\n"
             f"window.scrollTo(0, {int(scroll_y)});\n"
+            "if (typeof _rebuildQuoteIndicators === 'function') _rebuildQuoteIndicators();\n"
         )
+        self._loaded_page_mode = 'quote'
         self._view.page().runJavaScript(js,
             lambda _: QTimer.singleShot(50, self._inject_popup_js))
 
@@ -5199,7 +5253,7 @@ class ThreadView(QWidget):
                 '</div>'
             )
         _cols = max(1, int(getattr(self._settings, "image_mode_cols", 6)))
-        _img_add = ".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;grid-template-columns:repeat(" + str(_cols) + ",80px);gap:4px}.gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}.gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}.gn{text-align:left;font-size:7pt;line-height:1.3}.gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}.gt img{max-width:100%;max-height:72px;object-fit:contain}.gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}.gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}.gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 4px 0 0 #1f9d1f}.gi-del{position:absolute;top:12px;left:1px;color:#cc1105;font-weight:bold;font-size:7pt;line-height:1.1;background:rgba(255,255,255,0.85);padding:0 2px;border-radius:2px;z-index:3}"
+        _img_add = _img_mode_css(_cols)
         # 画像モード固有関数のみ追加定義（_b/openImgBg/sodane/openUrl等はWEBCHANNEL_JSで共通定義）
         _img_js = "function openGalleryImg(i){_b('openGalleryImg',[i]);}"
         # 隠しレスプール（popup_js が getElementById('rNNNN') で参照する）
@@ -5224,11 +5278,11 @@ class ThreadView(QWidget):
         self._sync_del_btn_after_full_render()
 
     def _render_image_mode_with_scroll(self, scroll_y: int = 0):
-        """スクロール位置を保持しながら画像モードを再描画する（DOM書き換え方式・ページリロードなし）"""
+        """スクロール位置を保持しながら画像モードを再描画する（DOM書き換え方式・ページリロードなし）。
+        返信/引用モードからの切替でも、グリッドCSSをheadへ注入してから body を入れ替えるので
+        ページ再読込は不要。DOMが未ロードのときのみフルレンダーにフォールバックする。"""
         if not self._thread: return
-        # ページが画像モードHTMLでない場合（AR等で返信HTMLがロードされた等）はフルレンダーに切替
-        # （head内のグリッドCSSが無いためDOMパッチではレイアウトが崩れる）
-        if getattr(self, '_loaded_page_mode', '') != 'image':
+        if not getattr(self, '_thread_page_live', False):
             self._render_image_mode()
             return
         # ── ギャラリーHTML断片を生成（body内コンテンツのみ） ──
@@ -5284,8 +5338,15 @@ class ThreadView(QWidget):
         grid_js = _json.dumps(grid_html, ensure_ascii=False)
         # _gallery_list も JS側に同期
         gallery_js = _json.dumps(self._gallery_list, ensure_ascii=False)
+        _cols = max(1, int(getattr(self._settings, "image_mode_cols", 6)))
+        css_js = _json.dumps(_img_mode_css(_cols), ensure_ascii=False)
         js = (
+            # 別モードからの切替時、グリッドCSSがheadに無ければ注入（id重複ガード）
+            "(function(){if(!document.getElementById('__imgcss')){"
+            "var s=document.createElement('style');s.id='__imgcss';"
+            "s.textContent=" + css_js + ";document.head.appendChild(s);}})();\n"
             "document.body.innerHTML = " + grid_js + ";\n"
+            "document.body.dataset.mode='image';\n"
             "window._galleryList = " + gallery_js + ";\n"
             "window.scrollTo(0, " + str(int(scroll_y)) + ");\n"
             # body差替ではDOMContentLoaded非発火のため、隠しプールのレスに
@@ -5293,6 +5354,7 @@ class ThreadView(QWidget):
             # _inject_popup_js のフック付与で有効化する。
             "if (typeof _rebuildQuoteIndicators === 'function') _rebuildQuoteIndicators();\n"
         )
+        self._loaded_page_mode = 'image'
         self._view.page().runJavaScript(js,
             lambda _: QTimer.singleShot(50, self._inject_popup_js))
 
