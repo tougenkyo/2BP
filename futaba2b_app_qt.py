@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.190"
+APP_VER = "0.9.191"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6479,6 +6479,9 @@ class CatalogView(QWidget):
         self._board: BoardInfo | None = None
         self._all_entries: list = []
         self._tmp_html_path: str = ""
+        self._cat_page_live = False   # カタログページのDOMがロード完了済みか（body入替可能か）
+        self._pending_light_body: str | None = None  # ロード完了前に来たマージ再描画body（loadFinished後に適用）
+        self._light_render_once = False  # _re_render_light 実行中フラグ（_renderでbody入替に切替）
         self._hovering: bool = False  # マウスがカタログエントリ上にあるか
         self._pending_catset: callable | None = None  # fetch完了後に1回だけ実行するcatset
         self._email_cache: dict = {}            # {no: email} board_top取得済みemail（二重レンダリング防止）
@@ -6567,6 +6570,7 @@ class CatalogView(QWidget):
         self._view = _CatalogWebView(self._page, self)
         self._view.setZoomFactor(_default_zoom())
         self._view._source_callback = self._show_catalog_source
+        self._view.loadFinished.connect(self._on_cat_load_finished)
         lay.addWidget(self._view)
         self._find_bar = _FindBar(lambda: self._page, self)
         lay.addWidget(self._find_bar)
@@ -6783,7 +6787,35 @@ class CatalogView(QWidget):
         tmp.write(html)
         tmp.close()
         self._tmp_html_path = tmp.name
+        # フルナビゲーション開始 → 完了までbody入替不可。保留中のマージ入替は
+        # このフルロードの内容（マージ済み _all_entries から生成）に含まれるため破棄。
+        self._cat_page_live = False
+        self._pending_light_body = None
         self._view.load(QUrl.fromLocalFile(tmp.name))
+
+    def _on_cat_load_finished(self, ok: bool):
+        """カタログページのロード完了。body入替を解禁し、ロード中に届いた
+        マージ再描画（_pending_light_body）があればここで適用する。"""
+        self._cat_page_live = bool(ok)
+        _body = self._pending_light_body
+        self._pending_light_body = None
+        if ok and _body is not None:
+            self._apply_catalog_body_swap(_body)
+
+    def _apply_catalog_body_swap(self, body_inner: str):
+        """カタログの body だけを差し替える（ページナビゲーションなし・スクロール位置維持）。
+        head の CSS/qwebchannel/スクロールJSはそのまま残る。カタログの body には
+        script要素が無くハンドラは全てインライン属性のため、innerHTML入替で機能が保たれる。
+        フルリロードで発生する白フラッシュ／スクロールバー伸縮（ちらつき）を避ける。"""
+        import json as _json
+        body_js = _json.dumps(body_inner, ensure_ascii=False)
+        js = ("(function(){var y=window.scrollY;"
+              "document.body.innerHTML=" + body_js + ";"
+              "window.scrollTo(0,y);})();")
+        try:
+            self._view.page().runJavaScript(js)
+        except Exception:
+            pass
 
     def _copy_to_clipboard(self, text: str):
         """クリップボードにテキストをコピー"""
@@ -7110,7 +7142,7 @@ class CatalogView(QWidget):
                 self._all_entries = real
                 changed = True
         if changed:
-            self._re_render()
+            self._re_render_light()
 
     def _merge_email_data(self, email_map: dict):
         """board topから取得したemail情報をカタログエントリにマージして再描画"""
@@ -7130,7 +7162,7 @@ class CatalogView(QWidget):
                 e.email = em
                 changed = True
         if changed:
-            self._re_render()
+            self._re_render_light()
 
     def _emit_catalog_status(self):
         """カタログ表示中のステータスバー情報を status_info シグナルで送出"""
@@ -7203,6 +7235,17 @@ class CatalogView(QWidget):
             return int(parts[2]) if len(parts) > 2 else -1
         except Exception:
             return -1
+
+    def _re_render_light(self):
+        """マージ再描画（email/mode=json取得後の差分反映）用の _re_render。
+        フルページリロードではなく body のみのDOM入替で描画し、カタログ更新直後に
+        二度目のリロードが走って画面がちらつく（スクロールバーが二度縮む）のを防ぐ。
+        シグナル接続されている _re_render の引数シグネチャは変えず、フラグで伝える。"""
+        self._light_render_once = True
+        try:
+            self._re_render()
+        finally:
+            self._light_render_once = False
 
     def _re_render(self):
         """検索 + ローカルソート + レス数フィルタ + NGフィルタを適用してレンダリング"""
@@ -7582,7 +7625,25 @@ class CatalogView(QWidget):
                             show_badge=getattr(self._settings, "catalog_show_mail_badge", True),
                             quarantine_section=getattr(self._settings, "catalog_quarantine_bottom", True),
                             common_id_section=getattr(self._settings, "catalog_common_id_bottom", False))
-        self._load_html_via_tempfile(_cat_html, QUrl("https://www.2chan.net/"))
+        # マージ再描画（_re_render_light 経由）はフルリロードせず body のみ入替える。
+        # 通常描画（カタログ取得・ソート・検索等）は従来どおりフルロード（先頭に戻る挙動を維持）。
+        _light = self._light_render_once
+        _swapped = False
+        if _light:
+            _bi = _cat_html.find('<body>')
+            _bj = _cat_html.rfind('</body>')
+            if _bi >= 0 and _bj > _bi:
+                _body_inner = _cat_html[_bi + 6:_bj]
+                # 入替で旧DOM要素が消えると onmouseleave が発火しないため先に閉じる
+                self._on_cat_hover_leave()
+                if self._cat_page_live:
+                    self._apply_catalog_body_swap(_body_inner)
+                else:
+                    # 初回フルロードがまだ完了していない → loadFinished 後に適用
+                    self._pending_light_body = _body_inner
+                _swapped = True
+        if not _swapped:
+            self._load_html_via_tempfile(_cat_html, QUrl("https://www.2chan.net/"))
 
         # catalog_read_counts: 未登録スレのみ現在のレス数を基準値として登録する
         # （既登録スレは上書きしない → +N がリセットされない）
