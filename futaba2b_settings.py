@@ -1241,6 +1241,14 @@ class NgFilter:
             rxp = self._compile_one(pat)
             if ng_type in ("replace", "mow_replace"):
                 flat_replaces.append((rxp, pat, ng_type, ng.get("replace_str", "")))
+            elif ng_type == "reverse_ng":
+                # 逆NGはカタログのタイトルのみで判定する（適用範囲は持たない）。
+                # 過去データで scope_body 等が付いていても無視し、カタログ専用
+                # (scope[6]=True, 他 False) に固定する。これにより classify_res
+                # （レス判定）ではヒットせず、_classify_ng_catalog_1pass
+                # （カタログ判定）でのみ評価される＝「逆NGはカタログでしか使わない」。
+                flat_words.append((rxp, pat, "reverse_ng",
+                                   (False, False, False, False, False, False, True)))
             else:
                 has_any = any(ng.get(k) for k in
                     ("scope_body","scope_name","scope_subject",
@@ -1378,10 +1386,8 @@ class NgFilter:
             pat = ng.get("pattern", "").strip()
             if not pat or pat in seen_pats:
                 continue
-            scope_body    = ng.get("scope_body",    True)
-            scope_catalog = ng.get("scope_catalog", False)
-            if not scope_body and not scope_catalog:
-                continue
+            # 逆NGはカタログのタイトルのみで判定する（適用範囲は持たない）ため
+            # scope による絞り込みは行わず、全逆NGワードをタイトル照合する。
             rxp = self._compile_one(pat)
             hit = bool(rxp.search(title)) if rxp else pat.lower() in title.lower()
             if hit:
@@ -1390,13 +1396,14 @@ class NgFilter:
         return result
 
     def get_matched_reverse_ng_words(self, res: "ResData") -> list[dict]:
-        """逆NGにマッチしたワード辞書のリストを返す（レス用・スコープ考慮）"""
-        body    = res.comment_text or ""
-        name    = res.name or ""
-        trip    = res.trip or ""
-        subject = getattr(res, "subject", "") or ""
-        mail    = res.email or ""
-        id_str  = res.id_str or ""
+        """逆NGにマッチしたワード辞書のリストを返す（レス用）。
+        逆NGはカタログのタイトルでのみ判定する仕様のため、レスの題名(subject)を
+        カタログタイトル相当とみなして照合する（適用範囲スコープは持たない）。
+        題名が無いレスは対象外（空リスト）。呼び出し側は実カタログエントリ用の
+        get_matched_reverse_ng_words_catalog と併用して取りこぼしを補う。"""
+        title = (getattr(res, "subject", "") or "").strip()
+        if not title:
+            return []
         result = []
         seen_pats: set = set()
         for ng in self._settings.ng_words:
@@ -1407,22 +1414,8 @@ class NgFilter:
             pat = ng.get("pattern", "").strip()
             if not pat or pat in seen_pats:
                 continue
-            has_any = any(ng.get(k) for k in
-                ("scope_body", "scope_name", "scope_subject",
-                 "scope_mail", "scope_id", "scope_ip"))
-            targets = []
-            if ng.get("scope_body", not has_any) and body: targets.append(body)
-            if ng.get("scope_name", False):
-                if name: targets.append(name)
-                if trip: targets.append(trip)
-            if ng.get("scope_subject", False) and subject: targets.append(subject)
-            if ng.get("scope_mail", False)    and mail:    targets.append(mail)
-            if ng.get("scope_id", False)      and id_str:  targets.append(id_str)
-            if not targets:
-                continue
             rxp = self._compile_one(pat)
-            hit = any(bool(rxp.search(t)) if rxp else pat.lower() in t.lower()
-                      for t in targets)
+            hit = bool(rxp.search(title)) if rxp else pat.lower() in title.lower()
             if hit:
                 seen_pats.add(pat)
                 result.append(ng)

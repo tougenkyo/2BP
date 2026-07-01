@@ -2403,14 +2403,19 @@ class NgWordEditDialog(QDialog):
         idx = self._type_grp.checkedId()
         is_mow = (idx == 3)  # 芝刈り置換
         is_rep = (idx in (2, 3))  # 置換 or 芝刈り
+        is_rev = (idx == 1)  # 逆NG
 
-        # 置換文字列: 置換/芝刈りで有効
+        # 置換文字列: 置換/芝刈りで有効（逆NGは置換しないので無効）
         self._replace.setEnabled(is_rep)
+        self._replace_lbl.setEnabled(is_rep)
         if is_mow and not self._replace.text():
             self._replace.setText(".")
 
-        # 芝刈り置換: 適用範囲＋パターンをグレーアウト
-        self._scope_box.setEnabled(not is_mow)
+        # 適用範囲: 芝刈り置換／逆NG でグレーアウト。
+        #   芝刈り置換 → レス本文固定
+        #   逆NG       → カタログのタイトルのみで判定するため適用範囲の選択は無意味
+        self._scope_box.setEnabled(not is_mow and not is_rev)
+        # マッチングパターン: 芝刈り置換のみ不要（逆NGはキーワードとして必須なので有効のまま）
         self._pattern.setEnabled(not is_mow)
         self._pattern_lbl.setEnabled(not is_mow)
         if is_mow:
@@ -2419,6 +2424,7 @@ class NgWordEditDialog(QDialog):
     def _ok(self):
         idx = self._type_grp.checkedId()
         is_mow = (idx == 3)
+        is_rev = (idx == 1)   # 逆NG（カタログのタイトルのみで判定。適用範囲/置換は持たない）
 
         pat = self._pattern.text().strip()
         # 芝刈り置換はパターン不要
@@ -2436,20 +2442,23 @@ class NgWordEditDialog(QDialog):
         if days > 0:
             expires_at = (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
 
+        # 逆NGは「カタログのタイトルのみで判定」に固定する。適用範囲は
+        # scope_catalog のみ True（他は False）、置換文字列は持たない（空）。
+        _no_scope = is_mow or is_rev
         _notify_types = ["sound", "bouyomi"]
         self._result = {
             "pattern":       pat,
             "is_regex":      True,
             "enabled":       True,
             "ng_type":       _type_vals[idx] if 0 <= idx < 4 else "ng",
-            "scope_body":    True if is_mow else self._chk_body.isChecked(),
-            "scope_name":    False if is_mow else self._chk_name.isChecked(),
-            "scope_subject": False if is_mow else self._chk_subject.isChecked(),
-            "scope_mail":    False if is_mow else self._chk_mail.isChecked(),
-            "scope_id":      False if is_mow else self._chk_id.isChecked(),
-            "scope_ip":      False if is_mow else self._chk_ip.isChecked(),
-            "scope_catalog": False if is_mow else self._chk_catalog.isChecked(),
-            "replace_str":   self._replace.text() if is_mow else self._replace.text(),
+            "scope_body":    True if is_mow else (False if is_rev else self._chk_body.isChecked()),
+            "scope_name":    False if _no_scope else self._chk_name.isChecked(),
+            "scope_subject": False if _no_scope else self._chk_subject.isChecked(),
+            "scope_mail":    False if _no_scope else self._chk_mail.isChecked(),
+            "scope_id":      False if _no_scope else self._chk_id.isChecked(),
+            "scope_ip":      False if _no_scope else self._chk_ip.isChecked(),
+            "scope_catalog": True if is_rev else (False if is_mow else self._chk_catalog.isChecked()),
+            "replace_str":   "" if is_rev else self._replace.text(),
             "expires":       exp_text,
             "expires_at":    expires_at,
             "notify":        self._chk_notify.isChecked(),
