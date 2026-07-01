@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.185"
+APP_VER = "0.9.186"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2018,7 +2018,16 @@ class BoardPane(QWidget):
     def currentWidget(self):       return self._tabs.currentWidget()
     def currentIndex(self):        return self._tabs.currentIndex()
     def setCurrentIndex(self, i):  self._tabs.setCurrentIndex(i)
-    def indexOf(self, w):          return self._tabs.indexOf(w)
+    def indexOf(self, w):
+        # w(ThreadView等)が非同期コールバック経由で渡された場合、その間にタブが
+        # 閉じられてC++オブジェクトが破棄済みのことがある。shiboken の
+        # 「already deleted」RuntimeErrorが未処理のままQtの仮想関数呼び出し
+        # スタックを遡って伝播すると（多重ネスト経由で）クラッシュに至るため、
+        # ここで確実に吸収して「見つからない」(-1)として返す。
+        try:
+            return self._tabs.indexOf(w)
+        except RuntimeError:
+            return -1
     def tabText(self, i):          return self._tabs.tabText(i)
     def setTabText(self, i, t):    self._tabs.setTabText(i, t)
     def setTabIcon(self, i, ic):   self._wrap_bar.setTabIcon(i, ic)
