@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.184"
+APP_VER = "0.9.185"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3785,7 +3785,8 @@ class ThreadView(QWidget):
             new_count = getattr(th, '_footer_new_count', 0)
             now_str   = _fmt_dt(_dt.datetime.now())
             return (
-                f'<div class="page-footer">'
+                self._expiry_line_html(th)
+                + f'<div class="page-footer">'
                 f'レス: {res_count}件 ／ 受信: {new_count}件'
                 f' ／ 最終更新: {now_str}'
                 f' ／ 2BP {APP_VER}'
@@ -4879,7 +4880,8 @@ class ThreadView(QWidget):
             _n = _dt.datetime.now()
             now_str = (f"{_n.year}/{_n.month:02d}/{_n.day:02d}"
                        f" ({_DAY_JP[_n.weekday()]}) {_n.hour}:{_n.minute:02d}:{_n.second:02d}")
-            return (f'<div class="page-footer">レス: {res_count}件 ／ 受信: {new_count}件'
+            return (self._expiry_line_html(th)
+                    + f'<div class="page-footer">レス: {res_count}件 ／ 受信: {new_count}件'
                     f' ／ 最終更新: {now_str} ／ 2BP {APP_VER}</div>')
         _sbc = getattr(self._settings, 'scroll_bottom_count', 5)
         html, self._img_list = thread_to_html(
@@ -4920,6 +4922,37 @@ class ThreadView(QWidget):
                 parts.append(frag)
         return ''.join(parts)
 
+    def _expiry_line_html(self, thread) -> str:
+        """スレ落ち予定（「○時頃消えます」）をフッター直上に左寄せ表示するHTML。
+        赤字スレ(is_expiring)は赤、仮赤字(保存残1/10以下)はピンク、それ以外は灰色。
+        expiry未取得時は空文字を返す（表示しない）。"""
+        if not thread:
+            return ""
+        txt = (getattr(thread, "expiry", "") or "").strip()
+        if not txt:
+            return ""
+        is_expiring = bool(getattr(thread, "is_expiring", False))
+        is_pseudo = False
+        if (not is_expiring
+                and getattr(self._settings, "treat_near_limit_as_expiring", False)):
+            _board = thread.board
+            _ms = getattr(_board, 'max_saved', 0) if _board else 0
+            _o = (self._settings.global_max_no_by_board.get(
+                      _board.base_url, 0) if _board else 0)
+            if _ms > 0 and _o > 0:
+                _remain = thread.no + _ms - _o
+                is_pseudo = (_remain <= _ms // 10)
+        if is_expiring:
+            color = "#cc0000"
+        elif is_pseudo:
+            color = "#e07080"
+        else:
+            color = "#888888"
+        from html import escape as _esc
+        return (f'<div class="thread-expiry-info" '
+                f'style="text-align:left;color:{color};font-size:small;'
+                f'padding:6px 8px 0;">{_esc(txt)}</div>')
+
     def _thread_footer_html(self, thread) -> str:
         """スレ表示用フッター（レス数/受信/最終更新/バージョン）HTMLを返す。
         返信モードと同一内容を画像・引用モードでも使うための共通生成。"""
@@ -4932,7 +4965,8 @@ class ThreadView(QWidget):
         _n = _dt.datetime.now()
         now_str = (f"{_n.year}/{_n.month:02d}/{_n.day:02d}"
                    f" ({_DAY_JP[_n.weekday()]}) {_n.hour}:{_n.minute:02d}:{_n.second:02d}")
-        return (f'<div class="page-footer">レス: {res_count}件 ／ 受信: {new_count}件'
+        return (self._expiry_line_html(thread)
+                + f'<div class="page-footer">レス: {res_count}件 ／ 受信: {new_count}件'
                 f' ／ 最終更新: {now_str} ／ 2BP {APP_VER}</div>')
 
     def _render_quote_mode(self):
