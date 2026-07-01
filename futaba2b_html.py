@@ -596,11 +596,15 @@ function delRes(no, el) {
     document.getElementById('del-img').checked = false;
     document.getElementById('del-hide').checked =
         (typeof window._delHideDefault === 'boolean') ? window._delHideDefault : true;
-    // 自分の書き込みでない場合は削除セクションの背景をグレーアウト（操作は可能）
+    // 自分の書き込みか否かでポップアップ内の該当セクションをグレーアウトする（操作は可能）。
+    //   自分のレス → 「削除依頼(del)＋非表示」部分をグレー（記事削除がメイン）
+    //   他人のレス → 「記事削除」部分をグレー（削除キー不明で使えない。削除依頼がメイン）
     var _resEl = document.getElementById('r' + no);
     var _mine  = !!(_resEl && _resEl.classList.contains('self-res'));
-    var _dsec  = document.getElementById('del-delsec');
-    if (_dsec) _dsec.style.background = _mine ? '' : '#d0d0d0';
+    var _reqsec = document.getElementById('del-reqsec');
+    var _dsec   = document.getElementById('del-delsec');
+    if (_reqsec) _reqsec.style.background = _mine ? '#d0d0d0' : '';
+    if (_dsec)   _dsec.style.background   = _mine ? '' : '#d0d0d0';
     const pop = document.getElementById('del-pop');
     pop.style.display = 'block';
     const btn = el || event.target;
@@ -621,12 +625,14 @@ function _ensureDelPop() {
     pop.id = 'del-pop';
     pop.style.cssText = 'display:none;position:fixed;border:2px solid #800000;background:#FFFFEE;padding:8px;z-index:9999;box-shadow:2px 2px 6px rgba(0,0,0,.3);min-width:220px;font-size:9pt;';
     pop.innerHTML =
-        '<div style="margin-bottom:4px;">'
-      +   '<span onclick="delReport()" style="color:#800000;text-decoration:underline;cursor:pointer;font-size:9pt;">削除依頼(del)</span>'
+        '<div id="del-reqsec" style="padding:3px;border-radius:3px;">'
+      +   '<div style="margin-bottom:4px;">'
+      +     '<span onclick="delReport()" style="color:#800000;text-decoration:underline;cursor:pointer;font-size:9pt;">削除依頼(del)</span>'
+      +   '</div>'
+      +   '<label style="display:block;margin:3px 0;font-size:8pt;">'
+      +     '<input id="del-hide" type="checkbox"> delしたレスを非表示にする'
+      +   '</label>'
       + '</div>'
-      + '<label style="display:block;margin:3px 0;font-size:8pt;">'
-      +   '<input id="del-hide" type="checkbox"> delしたレスを非表示にする'
-      + '</label>'
       + '<div id="del-delsec" style="padding:3px;border-radius:3px;">'
       +   '<hr style="border:none;border-top:1px solid #ccc;margin:4px 0">'
       +   '<div style="margin:3px 0;">'
