@@ -2036,7 +2036,8 @@ def thread_to_html(thread, show_deleted: bool = False,
                    id_warn_count: int = 0,
                    scroll_top_count: int = 0,
                    del_nos: set = None,
-                   ng_reveal: bool = False) -> tuple[str, list]:
+                   ng_reveal: bool = False,
+                   pseudo_expiring: bool = False) -> tuple[str, list]:
     """ThreadData → (HTML文字列, 画像リスト)"""
     img_list: list = []
     rows = []
@@ -2082,7 +2083,8 @@ def thread_to_html(thread, show_deleted: bool = False,
                                divider_html=_op_divider if i == 0 else ""))
     rows.append('<div class="thread-end"></div>')
     # 落ちかけ判定: contdispを赤字にするJSが存在する = thread.is_expiring
-    is_expiring = thread.is_expiring
+    # 仮赤字(pseudo_expiring)設定ONで保存残りが少ない場合も同じバナーを出す
+    is_expiring = thread.is_expiring or pseudo_expiring
     if is_expiring:
         rows.append(
             f'<div class="expiry-banner">'

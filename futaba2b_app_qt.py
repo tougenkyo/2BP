@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.186"
+APP_VER = "0.9.187"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1068,6 +1068,22 @@ def _img_mode_css(cols: int) -> str:
             ".gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 4px 0 0 #1f9d1f}"
             ".gi-del{position:absolute;top:12px;left:1px;color:#cc1105;font-weight:bold;font-size:7pt;"
             "line-height:1.1;background:rgba(255,255,255,0.85);padding:0 2px;border-radius:2px;z-index:3}")
+
+
+def _is_pseudo_red_thread(thread, settings) -> bool:
+    """仮赤字判定（保存残りが max_saved の1/10以下、設定ONの場合のみ）。
+    サーバー側の本物の赤字(thread.is_expiring)ならFalse（呼び出し側で優先判定するため）。"""
+    if not thread or thread.is_expiring:
+        return False
+    if not getattr(settings, "treat_near_limit_as_expiring", False):
+        return False
+    board = thread.board
+    ms = getattr(board, 'max_saved', 0) if board else 0
+    o = settings.global_max_no_by_board.get(board.base_url, 0) if board else 0
+    if ms > 0 and o > 0:
+        remain = thread.no + ms - o
+        return remain <= ms // 10
+    return False
 
 
 # ── テーマアイコン読み込み ───────────────────────────────────────────────────
@@ -3865,7 +3881,9 @@ class ThreadView(QWidget):
                         self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
                         return
                 # レス数変化なし・新着なし → appendNewReplies([]) で既読化＋仕切り線更新
-                self._view.page().runJavaScript("appendNewReplies([]);")
+                # （新着が無くても赤字/仮赤字状態は変化しうるためバナーも同期する）
+                self._view.page().runJavaScript(
+                    "appendNewReplies([]);" + self._expiry_banner_sync_js(thread))
                 self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
                 return
             # レスが減った（削除発生）→ 全体再描画に落ちる（return しない）
@@ -3886,7 +3904,8 @@ class ThreadView(QWidget):
                                                    scroll_bottom_count=_sbc,
                                                    scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                                    footer_html=_make_thread_footer(thread),
-                                                   my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5))
+                                                   my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
+                                                   pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
             self._last_html = _html
             self._last_html_dirty = False
             self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
@@ -3910,7 +3929,8 @@ class ThreadView(QWidget):
                                               scroll_bottom_count=_sbc,
                                               scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                               footer_html=_make_thread_footer(thread),
-                                              my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5))
+                                              my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
+                                              pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
         _t1 = _t.time()
         html_bytes = html.encode('utf-8')
 
@@ -4013,14 +4033,15 @@ class ThreadView(QWidget):
 
         if not fragments:
             # 差分なし（NGで全消し等）→ 仕切り線・既読化だけ更新して終了
-            self._view.page().runJavaScript("appendNewReplies([]);")
+            self._view.page().runJavaScript(
+                "appendNewReplies([]);" + self._expiry_banner_sync_js(thread))
             self._known_res_count = len(thread.res_list)
             self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
             return
 
         # JSON配列として渡す（エスケープ込み）
         frags_json = json.dumps(fragments, ensure_ascii=False)
-        js = f"appendNewReplies({frags_json});"
+        js = f"appendNewReplies({frags_json});" + self._expiry_banner_sync_js(thread)
         self._view.page().runJavaScript(js)
 
 
@@ -4043,17 +4064,8 @@ class ThreadView(QWidget):
         count_base = f"{len(thread.res_list) - 1} レス (+{new_count}新着)" if new_count else f"{len(thread.res_list) - 1} レス"
         # 落ちかけ判定
         is_expiring = thread.is_expiring
-        # 保存残1/10以下判定
-        is_pseudo = False
-        if (not is_expiring
-                and getattr(self._settings, "treat_near_limit_as_expiring", False)):
-            _board = thread.board
-            _ms    = getattr(_board, 'max_saved', 0) if _board else 0
-            _o     = (self._settings.global_max_no_by_board.get(
-                          _board.base_url, 0) if _board else 0)
-            if _ms > 0 and _o > 0:
-                _remain = thread.no + _ms - _o
-                is_pseudo = (_remain <= _ms // 10)
+        # 保存残1/10以下判定（仮赤字）
+        is_pseudo = _is_pseudo_red_thread(thread, self._settings)
         if is_expiring:
             self._lbl_count.setText(
                 f'{count_base} <span style="color:#cc0000;">(赤字)</span>')
@@ -4898,7 +4910,8 @@ class ThreadView(QWidget):
             ng_filter=_ng, ng_settings=self._settings,
             hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal, scroll_bottom_count=_sbc,
             footer_html=_footer(thread),
-            my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5))
+            my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
+            pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
         self._last_html = html
         self._last_html_dirty = False
 
@@ -4941,16 +4954,7 @@ class ThreadView(QWidget):
         if not txt:
             return ""
         is_expiring = bool(getattr(thread, "is_expiring", False))
-        is_pseudo = False
-        if (not is_expiring
-                and getattr(self._settings, "treat_near_limit_as_expiring", False)):
-            _board = thread.board
-            _ms = getattr(_board, 'max_saved', 0) if _board else 0
-            _o = (self._settings.global_max_no_by_board.get(
-                      _board.base_url, 0) if _board else 0)
-            if _ms > 0 and _o > 0:
-                _remain = thread.no + _ms - _o
-                is_pseudo = (_remain <= _ms // 10)
+        is_pseudo = _is_pseudo_red_thread(thread, self._settings)
         if is_expiring:
             color = "#cc0000"
         elif is_pseudo:
@@ -4961,6 +4965,38 @@ class ThreadView(QWidget):
         return (f'<div class="thread-expiry-info" '
                 f'style="text-align:left;color:{color};font-size:small;'
                 f'padding:6px 8px 0;">{_esc(txt)}</div>')
+
+    def _expiry_banner_html(self, thread) -> str:
+        """「このスレは古いので、もうすぐ消えます。」バナー。返信モード(thread_to_html)は
+        自前で出しているが、画像/引用モードは独自HTMLのためここで同一バナーを提供する。
+        赤字(is_expiring)・仮赤字(設定ON時の保存残1/10以下)のどちらでも表示する。"""
+        if not thread:
+            return ""
+        if not (thread.is_expiring or _is_pseudo_red_thread(thread, self._settings)):
+            return ""
+        return ('<div class="expiry-banner">'
+                'このスレは古いので、もうすぐ消えます。'
+                '</div>')
+
+    def _expiry_banner_sync_js(self, thread) -> str:
+        """差分更新(appendNewReplies等)はページ全体を再生成しないため、赤字/仮赤字状態が
+        更新途中で変化してもバナーが追随しない。この JS を差分更新のJSに連結して呼ぶことで、
+        現在の状態に合わせて .expiry-banner の追加/削除を行う（.thread-end の直後に配置、
+        返信モードのフッター＝page-footerより前）。"""
+        want = bool(thread and (thread.is_expiring or _is_pseudo_red_thread(thread, self._settings)))
+        return (
+            "(function(){"
+            f"var want={'true' if want else 'false'};"
+            "var el=document.querySelector('.expiry-banner');"
+            "if(want&&!el){"
+            "var d=document.createElement('div');d.className='expiry-banner';"
+            "d.textContent='このスレは古いので、もうすぐ消えます。';"
+            "var end=document.querySelector('.thread-end');"
+            "if(end&&end.parentNode)end.parentNode.insertBefore(d,end.nextSibling);"
+            "else document.body.appendChild(d);"
+            "}else if(!want&&el){el.remove();}"
+            "})();"
+        )
 
     def _thread_footer_html(self, thread) -> str:
         """スレ表示用フッター（レス数/受信/最終更新/バージョン）HTMLを返す。
@@ -5116,7 +5152,8 @@ class ThreadView(QWidget):
             f"{_usr_q}"
             f"{WEBCHANNEL_JS}"
             f"{_scroll_js}"
-            f"</head><body>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}{res_pool}{self._thread_footer_html(self._thread)}</body></html>"
+            f"</head><body>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}"
+            f"{self._expiry_banner_html(self._thread)}{res_pool}{self._thread_footer_html(self._thread)}</body></html>"
         )
         url = (self._thread.url if self._thread else None) or "https://www.2chan.net/"
         self._load_html_via_tempfile(html, QUrl(url))
@@ -5243,7 +5280,9 @@ class ThreadView(QWidget):
                     'visibility:hidden;pointer-events:none;">'
                     + res_pool_html + '</div>')
 
-        body_html = getattr(self, "_error_banner_html", "") + "\n".join(rows) + res_pool + self._thread_footer_html(self._thread)
+        body_html = (getattr(self, "_error_banner_html", "") + "\n".join(rows)
+                     + self._expiry_banner_html(self._thread)
+                     + res_pool + self._thread_footer_html(self._thread))
         body_js = _json.dumps(body_html, ensure_ascii=False)
         css_js  = _json.dumps(_QT_MODE_CSS, ensure_ascii=False)
         js = (
@@ -5327,6 +5366,7 @@ class ThreadView(QWidget):
               '<script>'+_img_js+'</script>'
               f'{_scroll_js_img}'
               f'</head><body>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
+              f'{self._expiry_banner_html(self._thread)}'
               f'{res_pool}{self._thread_footer_html(self._thread)}</body></html>')
         url=(self._thread.url if self._thread else None) or 'https://www.2chan.net/'
         self._load_html_via_tempfile(html, QUrl(url))
@@ -5388,6 +5428,7 @@ class ThreadView(QWidget):
                      + '<div class="wrap"><div class="grid">'
                      + ''.join(items)
                      + '</div></div>'
+                     + self._expiry_banner_html(self._thread)
                      + res_pool
                      + self._thread_footer_html(self._thread))
         import json as _json
@@ -5978,6 +6019,7 @@ class ThreadView(QWidget):
                 f"el.parentNode.replaceChild(tmp.firstChild,el);}}"
                 f"}})();"
             )
+        js_parts.append(self._expiry_banner_sync_js(thread))
         self._view.page().runJavaScript("\n".join(js_parts))
 
     def _on_del(self, no: int):
@@ -8250,7 +8292,8 @@ class AutoRefreshManager(QObject):
                                       scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
                                       footer_html=view._thread_footer_html(thread),
                                       my_nos=self._get_my_nos_for_view(view, thread),
-                id_warn_count=getattr(self._settings,'id_warn_count',5))
+                id_warn_count=getattr(self._settings,'id_warn_count',5),
+                pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
             _cn = '' if 'キャッシュ表示' in (thread.error or '') else ' (キャッシュ表示)'
             banner = (f'<div style="background:#a00;color:#fff;padding:6px 8px;'
                       f'font-size:9pt;font-weight:bold;text-align:center;">'
@@ -8284,8 +8327,18 @@ class AutoRefreshManager(QObject):
 
         if _is_same_thread:
             if len(thread.res_list) <= view._known_res_count:
-                # 新着なし → DOM変更不要（スクロール位置も動かさない）
+                # 新着なし → DOM変更不要（スクロール位置も動かさない）。
+                # ただし赤字/仮赤字は新着と無関係に変化しうるため、その状態が
+                # 変わった時だけバナーを同期し、_last_html も次回全体再描画時に
+                # 作り直されるようdirty化する（無変化時は余計な再構築をしない）。
+                _old_t = view._thread
+                _old_exp = bool(_old_t and (_old_t.is_expiring or _is_pseudo_red_thread(_old_t, self._settings)))
+                _new_exp = bool(thread.is_expiring or _is_pseudo_red_thread(thread, self._settings))
                 view._thread = thread
+                if _new_exp != _old_exp:
+                    view._last_html_dirty = True
+                    if view.isVisible():
+                        view._view.page().runJavaScript(view._expiry_banner_sync_js(thread))
                 return
 
             prev_count = view._known_res_count
@@ -8346,9 +8399,11 @@ class AutoRefreshManager(QObject):
                     view._pending_redraw = True
                 elif fragments:
                     frags_json = json.dumps(fragments, ensure_ascii=False)
-                    view._view.page().runJavaScript(f"appendNewReplies({frags_json});")
+                    view._view.page().runJavaScript(
+                        f"appendNewReplies({frags_json});" + view._expiry_banner_sync_js(thread))
                 else:
-                    view._view.page().runJavaScript("appendNewReplies([]);")
+                    view._view.page().runJavaScript(
+                        "appendNewReplies([]);" + view._expiry_banner_sync_js(thread))
                 if scroll and view.isVisible():
                     QTimer.singleShot(100, lambda v=view: v._view.page().runJavaScript(
                         "var el=document.querySelector('.new-res');"
@@ -8372,7 +8427,8 @@ class AutoRefreshManager(QObject):
                                   del_nos=_del_nos,
                                   scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
                                   footer_html=view._thread_footer_html(thread),
-                                  my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5))
+                                  my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
+                                  pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
         view._thread = thread
         view._known_res_count = len(thread.res_list)
         # _last_html を更新（モード切替・ログ保存で使われる）
