@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.191"
+APP_VER = "0.9.192"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2168,26 +2168,41 @@ class BoardPane(QWidget):
             _checked_r = w._mode_grp.checkedButton() if hasattr(w, '_mode_grp') else None
             _cur_mode_r = _checked_r.property("mode") if _checked_r else ""
             if _cur_mode_r in ("image", "quote"):
+                w._pending_frags = []   # モード再描画は最新モデルから全生成するため不要
                 w._set_view_mode(_cur_mode_r)
             else:
-                # 自動更新中は _last_html を遅延生成方式にしているため、再ロード前に
-                # dirty なら最新モデルから作り直す（古いHTMLで再ロードして新着が
-                # 消えるのを防ぐ）。
-                if getattr(w, '_last_html_dirty', False) and w._thread:
-                    w._rebuild_last_html()
-                if getattr(w, '_last_html', ""):
-                    _url_r = (w._thread.url if w._thread else None) or 'https://www.2chan.net/'
-                    # 全リロードで先頭に戻るのを防ぐため、再ロード前に現在の
-                    # スクロール位置を読み取り _pending_scroll に渡す
-                    # （_on_load_finished_scroll が読込完了後に復元する）。
-                    _html_r = w._last_html
-                    def _reload_keep_scroll(_y, _w=w, _h=_html_r, _u=_url_r):
-                        try:
-                            _w._pending_scroll = int(_y) if _y else 0
-                        except Exception:
-                            _w._pending_scroll = 0
-                        _w._load_html_via_tempfile(_h, QUrl(_u))
-                    w._view.page().runJavaScript("window.scrollY", _reload_keep_scroll)
+                # 非表示中にたまった新着フラグメントがあり、ページがライブなら
+                # フルリロードせずDOM追記で反映する（フルリロードはスクロール復元前に
+                # 一瞬先頭が見えてちらつくため）。スクロール位置は一切動かない。
+                _frags_r = getattr(w, '_pending_frags', None) or []
+                if _frags_r and getattr(w, '_thread_page_live', False):
+                    import json as _json_r
+                    w._pending_frags = []
+                    w._view.page().runJavaScript(
+                        f"appendNewReplies({_json_r.dumps(_frags_r, ensure_ascii=False)});"
+                        + w._expiry_banner_sync_js(w._thread))
+                else:
+                    # フラグメントが無い（エラー再ロードで破棄済み等）または
+                    # ページ未ロード → 従来どおり最新HTMLをフルリロード（取りこぼし防止）
+                    w._pending_frags = []
+                    # 自動更新中は _last_html を遅延生成方式にしているため、再ロード前に
+                    # dirty なら最新モデルから作り直す（古いHTMLで再ロードして新着が
+                    # 消えるのを防ぐ）。
+                    if getattr(w, '_last_html_dirty', False) and w._thread:
+                        w._rebuild_last_html()
+                    if getattr(w, '_last_html', ""):
+                        _url_r = (w._thread.url if w._thread else None) or 'https://www.2chan.net/'
+                        # 全リロードで先頭に戻るのを防ぐため、再ロード前に現在の
+                        # スクロール位置を読み取り _pending_scroll に渡す
+                        # （_on_load_finished_scroll が読込完了後に復元する）。
+                        _html_r = w._last_html
+                        def _reload_keep_scroll(_y, _w=w, _h=_html_r, _u=_url_r):
+                            try:
+                                _w._pending_scroll = int(_y) if _y else 0
+                            except Exception:
+                                _w._pending_scroll = 0
+                            _w._load_html_via_tempfile(_h, QUrl(_u))
+                        w._view.page().runJavaScript("window.scrollY", _reload_keep_scroll)
         # アクティブ化時に「末尾まで表示済みなら未読(青背景)を解除」を再評価する。
         # 背景でロードされ innerHeight=0 のまま初回判定が効かなかった画像モード等で、
         # 表示後に末尾が見えていれば青背景をデフォルトに戻す（少し遅延でレイアウト確定後）。
@@ -3028,6 +3043,9 @@ class ThreadView(QWidget):
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
         self._error_banner_html = ""   # エラー(キャッシュ表示)時の赤帯バナーHTML（画像/引用モードでも使用）
         self._pending_redraw  = False  # 非表示時にAR更新が来た→アクティブ化時に再描画する
+        self._pending_frags: list = []  # 非表示中(返信モード)にARが生成した新着フラグメント。
+                                        # アクティブ化時にフルリロードせずDOM追記して
+                                        # 「一瞬先頭が見える」ちらつきを防ぐ
         self._pending_self_res_popups: list = []  # 非アクティブ時のそうだね/返信通知→アクティブ化時に表示
         self._scroll_bottom_after_update = False  # 投稿後: 更新完了時に最下部へ送る
         self._prev_scroll_y   = 0   # 前回のスクロール位置 (前回のレス位置に移動 用)
@@ -4181,6 +4199,9 @@ class ThreadView(QWidget):
         self._loaded_page_mode = ''
         # 新規ナビゲーション開始 → ロード完了まではDOM入替不可（loadFinishedで再びTrue）
         self._thread_page_live = False
+        # フルロードするHTMLは最新モデルから生成され保留分の新着を含むため、
+        # 非表示中にたまった追記用フラグメントは破棄（二重追記防止）
+        self._pending_frags = []
 
         # 旧一時ファイルを削除
         if self._tmp_html_path:
@@ -6193,6 +6214,7 @@ class ThreadView(QWidget):
         self._img_list = []
         self._respool_cache = {}
         self._pending_self_res_popups = []
+        self._pending_frags = []
         self._my_sodane_cache = {}
 
         _page   = getattr(self, '_page', None)
@@ -8461,10 +8483,15 @@ class AutoRefreshManager(QObject):
                 # ただし非アクティブ（非表示）タブのWebViewへ appendNewReplies しても
                 # 反映が失われる（DOMが描画状態でない/freeze）ことがあり、
                 # 「タブ青→開いたら新着が無い」不具合になる。
-                # 非表示時は追記せず再描画フラグを立て、アクティブ化時に
-                # 最新の _last_html を再ロードして取りこぼしを防ぐ。
+                # 非表示時は追記せずフラグメントを蓄積し、アクティブ化時にまとめて
+                # DOM追記する（フルリロードだとスクロール復元前に一瞬先頭が見えて
+                # ちらつくため。取りこぼし時は _last_html 再ロードにフォールバック）。
                 if not view.isVisible():
                     view._pending_redraw = True
+                    if fragments:
+                        if not hasattr(view, '_pending_frags'):
+                            view._pending_frags = []
+                        view._pending_frags.extend(fragments)
                 elif fragments:
                     frags_json = json.dumps(fragments, ensure_ascii=False)
                     view._view.page().runJavaScript(
