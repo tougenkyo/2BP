@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.188"
+APP_VER = "0.9.189"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3946,12 +3946,8 @@ class ThreadView(QWidget):
             self._error_banner_html = ""
         # 全体再描画でバナーの有無が確定する → エラー状態を記録
         # （次回更新が差分更新かどうかの判定に使う。復旧時は全体再描画を強制してバナーを消す）
-        # エラー(赤帯/赤タブ)→正常復旧時は、手動更新/スクロール更新でも自動更新と同様に
-        # タブのエラー赤を解除する（自動更新は _do_refresh 側で解除済み。この経路は
-        # thread_recovered を出していなかったため赤が残っていた）。上下赤帯は全体再描画で消える。
-        if _recovered_from_error:
-            self._has_error_band = False
-            self.thread_recovered.emit()
+        # ※ タブのエラー赤／上下赤帯の解除は正常系共通の _update_ui_after_show（後段で
+        #   必ず呼ばれる）に集約した。新着なし/差分/通信エラー赤帯など全経路で戻る。
         self._was_error = _is_error
         self._last_html = html
         import time as _time
@@ -4128,6 +4124,17 @@ class ThreadView(QWidget):
             if _err_code == "404":
                 self._is_dead = True
                 self.thread_dead.emit(thread.url or "")
+        else:
+            # 正常更新に到達 → 通信エラーで付いた赤（上下赤帯＋タブ赤）を必ず解除する。
+            # 新着の有無や赤化経路（キャッシュ付きエラー/通信エラー赤帯/完全エラー画面）に
+            # 依存せず戻す。自動更新(_update_view)は正常時に無条件で解除しているが、
+            # 手動更新(スクロール/更新ボタン→_show_impl→本メソッド)は従来
+            # _recovered_from_error（前回キャッシュ付きエラー）のときしか解除しておらず、
+            # 通信エラー赤帯や「新着なし」サイクルでは一度赤くなると戻らなかった。
+            # 赤が無いときは _clear_error_tab 側が no-op（タブ色が c_error のときだけ解除）。
+            if getattr(self, '_has_error_band', False):
+                self._clear_error_band()
+            self.thread_recovered.emit()
         # 1000レス到達 → thread_deadで自動保存・自動更新停止を起動
         if getattr(thread, 'is_full', False):
             QTimer.singleShot(0, lambda: self.thread_dead.emit(thread.url or ""))
