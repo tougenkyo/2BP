@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.194"
+APP_VER = "0.9.195"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9759,7 +9759,18 @@ class ImageTabView(QWidget):
         if not _cur_url:
             return
         try:
-            if str(VideoPlayerWindow._cache_path(_cur_url)) != path:
+            # 期待されるローカルパス: 通常はDLキャッシュパス。ログ動画(file://)は
+            # _download がキャッシュを経由せず元ファイルのパスをそのまま emit する
+            # ため、そのパスも正として扱う（キャッシュパスとだけ比較すると正当な
+            # ready が破棄され「ダウンロード中...」のまま止まる）。
+            _ok_paths = {str(VideoPlayerWindow._cache_path(_cur_url))}
+            if _cur_url.startswith("file://"):
+                from urllib.parse import urlparse, unquote
+                _p = unquote(urlparse(_cur_url).path)
+                if len(_p) >= 3 and _p[0] == "/" and _p[2] == ":":
+                    _p = _p[1:]   # Windows: /C:/... → C:/...
+                _ok_paths.add(_p)
+            if path not in _ok_paths:
                 return
         except Exception:
             pass
