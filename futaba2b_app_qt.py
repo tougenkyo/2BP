@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.192"
+APP_VER = "0.9.193"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6058,6 +6058,7 @@ class ThreadView(QWidget):
         board = self._board
         turl  = (self._thread.url if self._thread else "") or ""
         self._pending_del_no = no
+        self._pending_del_onlyimg = False
         # 削除依頼はサーバ削除しないため、非表示は「非表示にする」チェック時のみ。
         self._pending_del_should_hide = bool(hide)
         # チェック状態を次回デフォルトとして記憶
@@ -6072,17 +6073,22 @@ class ThreadView(QWidget):
         threading.Thread(target=_do, daemon=True).start()
 
     def _on_delete_res_with_hide(self, no: int, pwd: str, onlyimg: bool, hide: bool):
-        """記事削除 + hideが立っていたらNGと同様に非表示化"""
+        """記事削除 + hideが立っていたらNGと同様に非表示化。
+        「画像だけ」(onlyimg)はサーバ上でレス本体が残るため、レスを非表示にせず
+        del済マークも付けない（成功時に画像部分のみDOMから取り除く）。"""
         board = self._board
         turl  = (self._thread.url if self._thread else "") or ""
         self._pending_del_no = no
-        # 記事削除は実際にサーバ削除されるため常に非表示にする。
-        self._pending_del_should_hide = True
+        self._pending_del_onlyimg = bool(onlyimg)
+        # 記事削除(レス全体)は実際にサーバ削除されるため常に非表示にする。
+        # 画像だけ削除はレスが残るので非表示にしない。
+        self._pending_del_should_hide = not onlyimg
         # チェック状態を次回デフォルトとして記憶
         self._settings.del_hide_checked = bool(hide)
-        self._mark_del_res(no)
-        if hide:
-            self._hide_res_after_del(no)
+        if not onlyimg:
+            self._mark_del_res(no)
+            if hide:
+                self._hide_res_after_del(no)
         self._settings.save()
         def _do():
             ok2, msg = self._fetcher.delete_res(board, no, pwd, onlyimg, thread_url=turl)
@@ -6112,12 +6118,40 @@ class ThreadView(QWidget):
         if ok:
             # 成功: 削除したレスを即座にDOM非表示
             no = getattr(self, "_pending_del_no", None)
-            if no is not None and getattr(self, "_pending_del_should_hide", False):
+            _msg_txt = "登録しました"
+            if no is not None and getattr(self, "_pending_del_onlyimg", False):
+                # 画像だけ削除: レス本体は残し、画像部分のみ取り除く。
+                #   返信モード: .thumb(サムネ)＋.file-info(ファイル名行)
+                #   画像モード: ギャラリーセル .gi[data-res-no]（隠しプール内のレスも上記で処理）
+                #   引用モード: ツリー行のサムネ img.qt-thumb（No.アンカーから行を特定）
+                self._view.page().runJavaScript(
+                    f'(function(){{var el=document.getElementById("r{no}");'
+                    f'if(el)el.querySelectorAll(".thumb,.file-info")'
+                    f'.forEach(function(n){{n.remove();}});'
+                    f'document.querySelectorAll(\'.gi[data-res-no="{no}"]\')'
+                    f'.forEach(function(n){{n.remove();}});'
+                    f'document.querySelectorAll(\'a.qt-no[href="#r{no}"]\')'
+                    f'.forEach(function(a){{var row=a.closest(".qt-row");'
+                    f'if(row)row.querySelectorAll("img.qt-thumb")'
+                    f'.forEach(function(n){{n.remove();}});}});}})();'
+                )
+                # モデルも画像なしへ更新（モード切替・_rebuild_last_html での復活防止）。
+                # _img_list は他レスの openImg インデックスがずれるため触らない。
+                if self._thread:
+                    for _r in self._thread.res_list:
+                        if _r.no == no:
+                            _r.image_url = ""; _r.thumb_url = ""
+                            _r.image_name = ""; _r.file_size_bytes = 0
+                            break
+                    self._last_html_dirty = True
+                self._respool_cache.pop(no, None)  # ポップアップ用キャッシュも画像なしで再生成させる
+                _msg_txt = "画像を削除しました"
+            elif no is not None and getattr(self, "_pending_del_should_hide", False):
                 self._view.page().runJavaScript(
                     f'(function(){{var el=document.getElementById("r{no}");'
                     f'if(el)el.classList.add("deleted");}})();'
                 )
-            safe = "登録しました".replace("\\", "\\\\").replace('"', '\\"'). replace("\n", " ")
+            safe = _msg_txt.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
             self._view.page().runJavaScript(f'showDelMsg("{safe}")')
             self._refresh_deleted_res_dom()  # 即時実行（2100ms遅延廃止）
         else:
