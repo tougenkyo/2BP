@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.193"
+APP_VER = "0.9.194"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3743,7 +3743,9 @@ class ThreadView(QWidget):
                 self._settings.thread_read_counts[thread.url] = len(thread.res_list)
                 # スレを開いたタイミングで catalog_read_counts もリセット
                 # → カタログに戻ったとき +N が 0 になる（次の更新から再カウント開始）
-                self._settings.catalog_read_counts[thread.url] = len(thread.res_list)
+                # カタログの res_count はOPを含まない返信数なので、res_list（OP含む）
+                # から1引いて単位を揃える（揃えないと+Nが1レス分遅れて表示される）
+                self._settings.catalog_read_counts[thread.url] = max(0, len(thread.res_list) - 1)
                 self._settings.save()
             self._thread_ready.emit(thread)
         else:
