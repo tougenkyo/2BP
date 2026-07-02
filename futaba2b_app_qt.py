@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.195"
+APP_VER = "0.9.196"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -9627,6 +9627,7 @@ class ImageTabView(QWidget):
         if not self.isVisible():
             return
         js = (
+            "window._fitMode=true;"
             "var el=document.getElementById('img');"
             "function doFit(){"
             "  var vw=window.innerWidth,vh=window.innerHeight;"
@@ -9649,7 +9650,7 @@ class ImageTabView(QWidget):
             "}"
             "if(el&&!el.classList.contains('actual')){"
             "  if(el.complete&&el.naturalWidth)doFit();"
-            "  else el.onload=doFit;"
+            "  else el.onload=function(){if(window._fitMode)doFit();};"
             "}"
         )
         try:
@@ -10117,10 +10118,16 @@ class ImageTabView(QWidget):
                 f"'__hover__:{_hover_cmt}';")
             import json as _json
             # 読込完了時に適用するサイズ指定JS片（前回ズームを継承）
+            # window._fitMode はページ内の「現在フィットモードか」の生きた状態。
+            # フィット表示時に #img へ恒久登録される load リスナー(doFit)が、
+            # %表示へ切替後の src 差し替え（前へ/次へ）でも発火してフィットサイズに
+            # 上書きする（→一瞬フィット表示→220ms後に%へ戻る、のちらつき）ため、
+            # 全サイズ適用JSでこのフラグを同期し、リスナー側はフィット時のみ動作させる。
             if _prev_zoom == "画面に合わせる":
                 _size_js = ("var s=Math.min(vw/nw,vh/nh);"
                             "el.style.width=Math.round(nw*s)+'px';el.style.height='auto';"
-                            "el.classList.remove('actual');window._zoomState='fit';")
+                            "el.classList.remove('actual');window._zoomState='fit';"
+                            "window._fitMode=true;")
             else:
                 try:
                     _pct = int(_prev_zoom.rstrip('%'))
@@ -10128,10 +10135,12 @@ class ImageTabView(QWidget):
                     _pct = 100
                 if _pct == 100:
                     _size_js = ("el.style.width=nw+'px';el.style.height='auto';"
-                                "el.classList.add('actual');window._zoomState='100';")
+                                "el.classList.add('actual');window._zoomState='100';"
+                                "window._fitMode=false;")
                 else:
                     _size_js = (f"el.style.width=Math.round(nw*{_pct}/100)+'px';el.style.height='auto';"
-                                f"el.classList.remove('actual');window._zoomState='fit';")
+                                f"el.classList.remove('actual');window._zoomState='fit';"
+                                f"window._fitMode=false;")
             if self._img_page_ready:
                 _esc = _json.dumps(url)
                 # プリロード＋アトミック差し替え:
@@ -10420,6 +10429,7 @@ class ImageTabView(QWidget):
         if text == "画面に合わせる":
             # 画像・動画をビューポートにフィット（上限なし＝画面より小さい画像も拡大）
             js = (
+                "window._fitMode=true;"
                 "var el=document.querySelector('img,video');"
                 "if(el){"
                 "  el.classList.remove('actual');"
@@ -10448,6 +10458,7 @@ class ImageTabView(QWidget):
             self._zoom_last_pct = pct
             # %はnaturalWidth基準のpx指定に変換（ビューポート幅基準だと縦長画像が切れる）
             js = (
+                f"window._fitMode=false;"
                 f"var el=document.querySelector('img,video');"
                 f"if(el){{"
                 f"  var nw=el.naturalWidth||el.videoWidth||0;"
@@ -10509,6 +10520,7 @@ class ImageTabView(QWidget):
             except ValueError:
                 pct = 100
             jspz = (
+                f"window._fitMode=false;"
                 f"var el=document.getElementById('img');"
                 f"function applyZ(){{"
                 f"  var nw=el.naturalWidth||0;"
@@ -10533,6 +10545,7 @@ f"  el.style.visibility='visible';}}"
                 # 最初のクリックが空振り（100%表示なのに拡大されない）になる。
                 # 先に 'fit' を入れ、load/即時/遅延の複数経路で doFit を確実に当てる。
                 "  window._zoomState='fit';"
+                "  window._fitMode=true;"
                 "  function doFit(){"
                 "    var vw=window.innerWidth,vh=window.innerHeight;"
                 "    var nw=el.naturalWidth||el.videoWidth||0;"
@@ -10551,10 +10564,13 @@ f"  el.style.visibility='visible';}}"
                 "    el.style.display='block';el.style.margin='auto';"
                 "    el.style.visibility='visible';"
                 "  }"
-                "  el.addEventListener('load',doFit);"
+                # loadリスナーはページ再利用（src差し替えナビ）後も残り続けるため、
+                # %表示へ切替後に発火してフィットへ上書きしないよう _fitMode で
+                # ガードする（登録解除はできないのでフラグ制御）
+                "  el.addEventListener('load',function(){if(window._fitMode)doFit();});"
                 "  if(el.complete&&el.naturalWidth)doFit();"
-                "  setTimeout(function(){if(el.naturalWidth&&!el.classList.contains('actual'))doFit();},60);"
-                "  setTimeout(function(){if(el.naturalWidth&&!el.classList.contains('actual'))doFit();},250);"
+                "  setTimeout(function(){if(window._fitMode&&el.naturalWidth&&!el.classList.contains('actual'))doFit();},60);"
+                "  setTimeout(function(){if(window._fitMode&&el.naturalWidth&&!el.classList.contains('actual'))doFit();},250);"
                 "}"
             )
             self._view.page().runJavaScript(js)
