@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.196"
+APP_VER = "0.9.197"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3425,6 +3425,7 @@ class ThreadView(QWidget):
             return
         thread.url = url
         self._remap_log_media(thread, html, board.base_url, media_base_url, media_map)
+        self._fill_log_media_meta(thread)
         # 全レス既読扱い（新着赤帯を出さない）
         for r in thread.res_list:
             r.is_new = False
@@ -3507,6 +3508,38 @@ class ThreadView(QWidget):
                 if r.thumb_url in media_map: r.thumb_url = media_map[r.thumb_url]
             if _w and not r.thumb_w: r.thumb_w = _w
             if _h and not r.thumb_h: r.thumb_h = _h
+
+    def _fill_log_media_meta(self, thread):
+        """ログで欠けがちな image_name / file_size_bytes を補完する。
+        保存ログはメディアhrefがローカル化されて /src/ を含まず、パーサの
+        ファイル名・サイズ抽出（-(N B)リンク検出）が効かない。また no_thumb 保存の
+        補完(_remap_log_media 2)はURLのみ埋める。このままだと画像モードの
+        拡張子/サイズ表示が「? / ?」になるため、URL・ローカルファイルから補完する。"""
+        import os as _os
+        from urllib.parse import urlparse as _up, unquote as _uq
+        for r in thread.res_list:
+            u = r.image_url or ""
+            if not u:
+                continue
+            # 拡張子表示用のファイル名: URL末尾から補完（data: はMIMEのみで名前が無い）
+            if not r.image_name and not u.startswith("data:"):
+                r.image_name = _uq(u.split("?")[0].rstrip("/").rsplit("/", 1)[-1])
+            if r.file_size_bytes > 0:
+                continue
+            if u.startswith("file://"):
+                p = _uq(_up(u).path)
+                if len(p) >= 3 and p[0] == "/" and p[2] == ":":
+                    p = p[1:]   # Windows: /C:/... → C:/...
+                try:
+                    if _os.path.exists(p):
+                        r.file_size_bytes = _os.path.getsize(p)
+                except OSError:
+                    pass
+            elif u.startswith("data:"):
+                # base64長からバイト数を概算（=3/4、パディング分を減算）
+                b64 = u.split(",", 1)[1] if "," in u else ""
+                if b64:
+                    r.file_size_bytes = max(0, len(b64) * 3 // 4 - b64[-2:].count("="))
 
     def _notify_title_updated(self):
         """スレ読み込み完了後、BoardPaneのスレタイラベルを更新する"""
