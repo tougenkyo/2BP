@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.197"
+APP_VER = "0.9.198"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -10267,6 +10267,11 @@ class ImageTabView(QWidget):
         ・無ければ優先DLを開始し None を返す（完了後 _on_media_dl_done が再描画）
         ・DL失敗済みURLはリモートURLのまま返す（再DLループ防止）"""
         lo = (url or "").lower()
+        if lo.startswith("data:"):
+            # MHTログ内蔵メディア: data:のまま表示すると数MBのbase64を表示のたびに
+            # setHtml/runJavaScriptでレンダラへ送ることになり非常に遅い →
+            # 一時ファイルへ実体化して file:// で表示する（初回のみ変換）
+            return self._dataurl_to_file(url)
         if not lo.startswith(("http://", "https://")):
             return url
         base = lo.split("?", 1)[0]
@@ -10299,6 +10304,43 @@ class ImageTabView(QWidget):
             self._media_dl_done.emit(_seq, _url, _kind, ok, "")
         _th.Thread(target=_dl, daemon=True).start()
         return None
+
+    def _dataurl_to_file(self, url: str) -> str:
+        """data:URI（MHTログ内蔵メディア）を一時ファイルへ実体化して file:// URL を返す。
+        変換は初回のみ: URL文字列キーのメモ（同一str再利用でハッシュはキャッシュ済み）＋
+        内容ハッシュ名ファイルの存在チェックで、←→ナビの再表示はファイル参照だけになる。
+        変換に失敗した場合は従来どおり data: のまま返す（表示は可能・遅いだけ）。"""
+        memo = getattr(self, '_dataurl_memo', None)
+        if memo is None:
+            memo = self._dataurl_memo = {}
+        hit = memo.get(url)
+        if hit:
+            return hit
+        try:
+            import base64 as _b64, hashlib as _hl, os as _os, tempfile as _tf
+            head, b64 = url.split(",", 1)
+            mime = head[5:].split(";", 1)[0].strip().lower()
+            ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+                   "image/webp": ".webp", "image/bmp": ".bmp", "image/avif": ".avif",
+                   "video/webm": ".webm", "video/mp4": ".mp4",
+                   "video/quicktime": ".mov"}.get(mime, ".bin")
+            # 内容ハッシュ: 全量md5は数MBで無駄なので 長さ+先頭4KB+末尾64B で同定
+            sig = (str(len(b64)) + b64[:4096] + b64[-64:]).encode("ascii", "ignore")
+            name = _hl.md5(sig).hexdigest()
+            d = _os.path.join(_tf.gettempdir(), "2bp_logmedia")
+            _os.makedirs(d, exist_ok=True)
+            p = _os.path.join(d, name + ext)
+            if not _os.path.exists(p):
+                raw = _b64.b64decode(b64)
+                tmp = p + f".{threading.get_ident()}.part"
+                with open(tmp, "wb") as f:
+                    f.write(raw)
+                _os.replace(tmp, p)
+            res = QUrl.fromLocalFile(p).toString()
+            memo[url] = res
+            return res
+        except Exception:
+            return url
 
     def _on_media_dl_progress(self, seq: int, downloaded: int, total: int):
         """優先DLの進捗をプログレスバーに反映（総量不明時は砂時計のまま）。"""

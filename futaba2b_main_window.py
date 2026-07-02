@@ -107,7 +107,14 @@ class MainWindow(QMainWindow):
             for r in getattr(self._settings, "recent_closed_list", [])
         ]
         # 最近開いた画像: [{url, name, board_name, board_url}, ...]
-        self._recent_images: list[dict] = list(getattr(self._settings, "recent_images_list", []))
+        # 過去バージョンで data:URI（MHTログの数MB base64）が記録されていると
+        # settings.json が肥大化して全保存が遅くなるため、読み込み時に除去する
+        self._recent_images: list[dict] = [
+            r for r in getattr(self._settings, "recent_images_list", [])
+            if not str(r.get("url", "")).startswith("data:")
+        ]
+        # 浄化結果を settings 側にも即反映（次の save() から肥大が消える）
+        self._settings.recent_images_list = list(self._recent_images)
 
         self._build_ui()
         self._build_menu()
@@ -2491,6 +2498,12 @@ class MainWindow(QMainWindow):
 
     def _record_recent_image(self, url: str, img_list: list, idx: int):
         """最近開いた画像を記録する"""
+        # data:URI（MHTログ内蔵画像）は数MBのbase64文字列そのもの。記録すると
+        # recent_images_list 経由で settings.json が肥大化し、以後の settings.save()
+        # （スレ表示・カタログ更新のたび）が巨大JSON書き出しになってアプリ全体が
+        # 遅くなるため記録しない（メニューから開き直す用途にも適さない）。
+        if (url or "").startswith("data:"):
+            return
         name = img_list[idx].get("name", "") if img_list and 0 <= idx < len(img_list) else ""
         # アクティブ板の情報を取得
         pane = self._active_inner()
