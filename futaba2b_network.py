@@ -1843,6 +1843,12 @@ class FutabaFetcher:
                 self._prefetch_seen.discard(url)   # 再表示で再投入可能に
                 return
             tmp.replace(p)   # 完了後にアトミックに本パスへ
+            # サーバ絞り対策: 連続DLの間隔を空け、表示系（スレHTML取得・サムネ
+            # 読み込み）と同一サーバの接続/帯域を占有し続けないようにする。
+            # ディスクキャッシュ済みで exists スキップした場合は待たない。
+            import time as _time
+            if cancel is None or not cancel.is_set():
+                _time.sleep(0.3)
         except Exception:
             try: tmp.unlink(missing_ok=True)
             except (OSError, NameError, UnboundLocalError): pass

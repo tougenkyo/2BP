@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.198"
+APP_VER = "0.9.199"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3813,26 +3813,38 @@ class ThreadView(QWidget):
 
     def _maybe_prefetch_images(self, thread):
         """表示中スレの本画像を先読みキャッシュへ投入（設定ON時）。
-        スレ落ち自動保存で未閲覧画像が404欠落するのを防ぐ。動画は対象外。"""
+        スレ落ち自動保存で未閲覧画像が404欠落するのを防ぐ。動画は対象外。
+        投入はページ描画が落ち着いてから（3秒遅延）行う。表示と同時に大量DLを
+        開始すると、スレHTML取得・サムネ読み込みと同一サーバの帯域/接続を
+        奪い合い、画像が多いスレの表示が遅くなる（特に閉じて開き直した時、
+        前回中断分の先読みが表示より先に再開されて競合していた）。"""
         if not getattr(self._settings, 'prefetch_open_thread_images', True):
             return
         if self._is_log or not thread or not thread.res_list:
             return
-        urls = []
-        for r in thread.res_list:
-            u = r.image_url
-            if not u:
-                continue
-            if u.lower().rsplit('?', 1)[0].endswith(self._PREFETCH_VID_EXT):
-                continue   # 動画は巨大なので先読みしない
-            urls.append(u)
-        if urls:
-            _grp = thread.url or ""
-            self._pf_group_holder[0] = _grp   # destroyed時のキャンセル対象を記録
-            try:
-                self._fetcher.prefetch_images(urls, group=_grp)
-            except Exception:
-                pass
+        _tno = thread.no
+        def _submit(_v=self, _t=thread, _no=_tno):
+            # 遅延中にタブが閉じられた／別スレへ切り替わった場合は投入しない
+            if _sb_valid is not None and not _sb_valid(_v):
+                return
+            if _v._thread is None or _v._thread.no != _no:
+                return
+            urls = []
+            for r in _t.res_list:
+                u = r.image_url
+                if not u:
+                    continue
+                if u.lower().rsplit('?', 1)[0].endswith(_v._PREFETCH_VID_EXT):
+                    continue   # 動画は巨大なので先読みしない
+                urls.append(u)
+            if urls:
+                _grp = _t.url or ""
+                _v._pf_group_holder[0] = _grp   # destroyed時のキャンセル対象を記録
+                try:
+                    _v._fetcher.prefetch_images(urls, group=_grp)
+                except Exception:
+                    pass
+        QTimer.singleShot(3000, _submit)
 
     def _show_impl(self, thread):
         import time as _t
@@ -5007,6 +5019,25 @@ class ThreadView(QWidget):
                 parts.append(frag)
         return ''.join(parts)
 
+    def _respool_inject_js(self, pool_inner_html: str) -> str:
+        """隠しプール(_respool)の中身を後注入するJSを返す。
+        画像/引用モードのbody入替に全レスのプールHTML(1000レス規模)を含めると
+        innerHTML の同期DOMパースで切替が数百ms〜秒単位で固まるため、
+        入替時は空プレースホルダのみ入れ、ペイント後にこのJSで流し込む。
+        注入後に▼被引用インジケータ構築＋ポップアップ再フックを行う
+        （従来swap内にあったrAF遅延処理をこちらへ移動。プール注入前に走ると
+        プール内レスの▼が付かないため順序が重要）。"""
+        import json as _json
+        return (
+            "(function(){var rp=document.getElementById('_respool');"
+            "if(rp){rp.innerHTML=" + _json.dumps(pool_inner_html, ensure_ascii=False) + ";}"
+            "})();\n"
+            "requestAnimationFrame(function(){requestAnimationFrame(function(){"
+            "if(typeof _rebuildQuoteIndicators==='function')_rebuildQuoteIndicators();"
+            "if(typeof window._hookPopupQuoteInd==='function')window._hookPopupQuoteInd(document);"
+            "});});\n"
+        )
+
     def _expiry_line_html(self, thread) -> str:
         """スレ落ち予定（「○時頃消えます」）をフッター直上に左寄せ表示するHTML。
         赤字スレ(is_expiring)は赤、仮赤字(保存残1/10以下)はピンク、それ以外は灰色。
@@ -5337,11 +5368,13 @@ class ThreadView(QWidget):
             render_node(r.no, "", True, 0)
         rows.append('<div class="qt-sep"></div>')
 
-        # ポップアップ用 _respool も更新
+        # ポップアップ用 _respool も更新。切替を速くするため、body入替には空の
+        # プレースホルダのみ入れ、重い全レスプールHTMLのDOMパースは初回ペイント後に
+        # 後注入する（_respool_inject_js）。画像/引用切替が「固まる」主因は
+        # このプール(1000レス規模)を innerHTML で同時パースしていたことによる。
         res_pool_html = self._build_respool_html(res_list)
         res_pool = ('<div id="_respool" style="position:absolute;left:-9999px;width:520px;'
-                    'visibility:hidden;pointer-events:none;">'
-                    + res_pool_html + '</div>')
+                    'visibility:hidden;pointer-events:none;"></div>')
 
         body_html = (getattr(self, "_error_banner_html", "") + "\n".join(rows)
                      + self._expiry_banner_html(self._thread)
@@ -5356,16 +5389,13 @@ class ThreadView(QWidget):
             f"document.body.innerHTML = {body_js};\n"
             "document.body.dataset.mode='quote';\n"
             f"window.scrollTo(0, {int(scroll_y)});\n"
-            # ▼インジケータ構築はペイント後に回す（切替の「▼待ち」固まりを裏へ）。
-            # 構築後に明示再フック（hookQuoteInd は data-hooked ガードで多重防止）。
-            "requestAnimationFrame(function(){requestAnimationFrame(function(){"
-            "if(typeof _rebuildQuoteIndicators==='function')_rebuildQuoteIndicators();"
-            "if(typeof window._hookPopupQuoteInd==='function')window._hookPopupQuoteInd(document);"
-            "});});\n"
         )
+        _pool_js = self._respool_inject_js(res_pool_html)
         self._loaded_page_mode = 'quote'
+        # swap（即ペイント）→ プール後注入＋▼構築 → ポップアップJS注入 の直列実行
         self._view.page().runJavaScript(js,
-            lambda _: QTimer.singleShot(50, self._inject_popup_js))
+            lambda _r: self._view.page().runJavaScript(_pool_js,
+                lambda _r2: QTimer.singleShot(50, self._inject_popup_js)))
 
     def _render_image_mode(self):
         if not self._thread: return
@@ -5484,9 +5514,10 @@ class ThreadView(QWidget):
                 '<div class="gs">'+info+'</div>'
                 '</div>'
             )
+        # 切替を速くするため、body入替には空のプレースホルダのみ入れ、重い全レス
+        # プールHTMLのDOMパースは初回ペイント後に後注入する（_respool_inject_js）。
         res_pool = ('<div id="_respool" style="position:absolute;left:-9999px;width:520px;'
-                    'visibility:hidden;pointer-events:none;">'
-                    + _respool_inner + '</div>')
+                    'visibility:hidden;pointer-events:none;"></div>')
         grid_html = (getattr(self, "_error_banner_html", "")
                      + '<div class="wrap"><div class="grid">'
                      + ''.join(items)
@@ -5509,19 +5540,13 @@ class ThreadView(QWidget):
             "document.body.dataset.mode='image';\n"
             "window._galleryList = " + gallery_js + ";\n"
             "window.scrollTo(0, " + str(int(scroll_y)) + ");\n"
-            # body差替ではDOMContentLoaded非発火のため、隠しプールのレスに
-            # ▼被引用インジケータが付与されない。明示的に再構築し、続く
-            # _inject_popup_js のフック付与で有効化する。
-            # ▼インジケータ構築はペイント後に回す（切替の「▼待ち」固まりを裏へ）。
-            # 構築後に明示再フック（hookQuoteInd は data-hooked ガードで多重防止）。
-            "requestAnimationFrame(function(){requestAnimationFrame(function(){"
-            "if(typeof _rebuildQuoteIndicators==='function')_rebuildQuoteIndicators();"
-            "if(typeof window._hookPopupQuoteInd==='function')window._hookPopupQuoteInd(document);"
-            "});});\n"
         )
+        _pool_js = self._respool_inject_js(_respool_inner)
         self._loaded_page_mode = 'image'
+        # swap（即ペイント）→ プール後注入＋▼構築 → ポップアップJS注入 の直列実行
         self._view.page().runJavaScript(js,
-            lambda _: QTimer.singleShot(50, self._inject_popup_js))
+            lambda _r: self._view.page().runJavaScript(_pool_js,
+                lambda _r2: QTimer.singleShot(50, self._inject_popup_js)))
 
     def _on_gallery_img(self, idx: int):
         lst = getattr(self, '_gallery_list', [])
