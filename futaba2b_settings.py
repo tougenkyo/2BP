@@ -1318,6 +1318,36 @@ class NgFilter:
     def is_reverse_ng(self, res: "ResData") -> bool:
         return self.classify_res(res) == "reverse_ng"
 
+    def get_matched_ng_words(self, res: "ResData") -> list[str]:
+        """レスがNG(ng_type='ng')にマッチしたパターン文字列のリストを返す。
+        classify_res と同じ適用範囲・判定でマッチした全パターンを列挙する。
+        No.クリックポップアップの「NG理由」表示用（NGレスに対してのみ呼ぶ想定）。"""
+        self._ensure_flat()
+        body    = res.comment_text or ""
+        name    = res.name or ""
+        trip    = res.trip or ""
+        subject = res.subject if hasattr(res, "subject") else ""
+        mail    = res.email or ""
+        id_str  = res.id_str or ""
+        out: list[str] = []
+        for rxp, pat, ng_type, scope in self._flat_words:
+            if ng_type != "ng":
+                continue
+            targets = []
+            if scope[0] and body:    targets.append(body)
+            if scope[1]:
+                if name: targets.append(name)
+                if trip: targets.append(trip)
+            if scope[2] and subject: targets.append(subject)
+            if scope[3] and mail:    targets.append(mail)
+            if scope[4] and id_str:  targets.append(id_str)
+            if not targets:
+                continue
+            if any(bool(rxp.search(t)) if rxp else pat.lower() in t.lower()
+                   for t in targets):
+                out.append(pat)
+        return out
+
 
     # ── NGワード: カタログエントリ判定（フラット化キャッシュ使用） ────────────
     def _classify_ng_catalog_1pass(self, entry, title_chars: int = -1) -> tuple[bool, bool]:
@@ -1452,8 +1482,38 @@ class NgFilter:
 
     def get_ng_image_hide_mode(self, res: "ResData") -> str:
         """NG画像にマッチしたエントリの hide_mode を返す ('image' or 'res')"""
+        e = self._find_matched_ng_image(res)
+        return e.get("hide_mode", "image") if e else "image"
+
+    def get_matched_ng_image_desc(self, res: "ResData") -> str:
+        """NG画像にマッチしたエントリの内容要約を返す（NG理由表示用）。未マッチは空文字。
+        MD5/ファイル指定は登録ファイル名とMD5先頭、タイプ/サイズ指定は条件を要約する。"""
+        e = self._find_matched_ng_image(res)
+        if not e:
+            return ""
+        import os
+        if e.get("method", "md5") == "type_size":
+            p = []
+            t = (e.get("image_type") or "").upper()
+            if t and t != "ANY":
+                p.append(t)
+            w, h = e.get("width", 0), e.get("height", 0)
+            if w or h:
+                p.append(f"{w or '?'}×{h or '?'}")
+            smin, smax = e.get("size_min", 0), e.get("size_max", 0)
+            if smin or smax:
+                p.append(f"{smin or 0}〜{smax or ''}B")
+            return "種類/サイズ指定" + (f"({' '.join(p)})" if p else "")
+        md5 = e.get("md5", "")
+        name = os.path.basename(e.get("file_path", "") or "")
+        if name:
+            return name + (f" (MD5 {md5[:10]}…)" if md5 else "")
+        return f"MD5 {md5[:16]}…" if md5 else "MD5指定"
+
+    def _find_matched_ng_image(self, res: "ResData") -> "dict | None":
+        """NG画像(非逆NG)にマッチした最初のエントリを返す（hide_mode/NG理由表示用）"""
         if not res.image_url:
-            return "image"
+            return None
         url = res.image_url
         size = res.file_size_bytes
         for img_ng in self._settings.ng_images:
@@ -1496,8 +1556,8 @@ class NgFilter:
                     if file_md5 is not None and file_md5 == stored_md5:
                         matched = True
             if matched:
-                return img_ng.get("hide_mode", "image")
-        return "image"
+                return img_ng
+        return None
 
     # ── 内部: レスフィールドマッチ ────────────────────────────────────────────
 

@@ -605,6 +605,16 @@ function delRes(no, el) {
     var _dsec   = document.getElementById('del-delsec');
     if (_reqsec) _reqsec.style.background = _mine ? '#d0d0d0' : '';
     if (_dsec)   _dsec.style.background   = _mine ? '' : '#d0d0d0';
+    // NGレスなら「どのNGワード/NG画像でNGに入ったか」を最下部に表示
+    // （返信モードはレスdiv、引用モードはqt-rowの data-ng-info 属性から取得）
+    var _ngsec = document.getElementById('del-ngsec');
+    if (_ngsec) {
+        var _src  = (el && el.closest) ? el.closest('[data-ng-info]') : null;
+        var _info = (_src ? _src.getAttribute('data-ng-info') : '') ||
+                    (_resEl ? (_resEl.getAttribute('data-ng-info') || '') : '');
+        if (_info) { _ngsec.textContent = _info; _ngsec.style.display = 'block'; }
+        else _ngsec.style.display = 'none';
+    }
     const pop = document.getElementById('del-pop');
     pop.style.display = 'block';
     const btn = el || event.target;
@@ -645,7 +655,10 @@ function _ensureDelPop() {
       +     '<button onclick="delArticle()" style="flex:1;background:#F0E0D6;border:1px solid #800;padding:3px;cursor:pointer;font-size:9pt;">記事削除</button>'
       +     '<button onclick="delClose()" style="padding:3px 8px;cursor:pointer;font-size:9pt;">×</button>'
       +   '</div>'
-      + '</div>';
+      + '</div>'
+      + '<div id="del-ngsec" style="display:none;margin-top:5px;padding:3px;'
+      +   'border-top:1px dashed #b99;color:#1f9d1f;font-size:8pt;'
+      +   'max-width:260px;word-break:break-all;"></div>';
     document.body.appendChild(pop);
     document.addEventListener('click', function(e){
         const pop2 = document.getElementById('del-pop');
@@ -1644,6 +1657,36 @@ def _apply_replace_to_html(html: str, ng_filter) -> str:
     return "".join(result)
 
 
+def ng_info_text(res, ng_filter, ng_settings, manual_hidden: bool = False) -> str:
+    """NGレスが「どのNGワード/NG画像でNGに入ったか」を1行テキストで返す。
+    No.クリックポップアップ(del-pop)の最下部表示用。
+    NGワードマッチ（適用範囲考慮）→ マッチした全パターンを列挙。
+    NGワードが無ければNG画像 → マッチしたエントリの要約。
+    どちらも無く手動NGなら「手動NG」。非NGレスは空文字。"""
+    parts = []
+    if ng_filter is not None and not getattr(res, "is_op", False) \
+            and not getattr(res, "is_deleted", False):
+        _hide_name  = getattr(ng_settings, "ng_thread_hide_name",  True)
+        _hide_image = getattr(ng_settings, "ng_thread_hide_image", True)
+        try:
+            if _hide_name:
+                ws = ng_filter.get_matched_ng_words(res)
+                if ws:
+                    parts.append("NGワード: " + "、".join(f"「{w}」" for w in ws))
+        except Exception:
+            pass
+        try:
+            if not parts and _hide_image and res.image_url \
+                    and ng_filter.is_ng_image(res):
+                d = ng_filter.get_matched_ng_image_desc(res)
+                parts.append(f"NG画像: {d}" if d else "NG画像")
+        except Exception:
+            pass
+    if manual_hidden and not parts:
+        parts.append("手動NG（NGボタン/delによる非表示）")
+    return " ／ ".join(parts)
+
+
 def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
                ng_filter=None, ng_settings=None, hidden_nos: set = None,
                id_counts: dict = None, has_name_field: bool = True,
@@ -1688,6 +1731,9 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
     _is_ng_target = _is_ng_match or _manual_hidden
     if _is_ng_target:
         ng_class += " ng-band"
+    # NG理由詳細（No.クリックポップアップの最下部に表示。data-ng-info 属性で埋め込む）
+    _ng_info = ng_info_text(res, ng_filter, ng_settings, _manual_hidden) \
+               if _is_ng_target else ""
     if ng_reveal:
         # NG解除（表示）状態: NG対象を隠さず緑帯のみ（理由のみ表示/透明化/手動非表示も解除）
         _ng_reason = ""
@@ -1980,14 +2026,15 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
         style_attr = f' style="{";".join(_styles)}"' if _styles else ""
         if (_manual_hidden or _ng_reason) and "ng-hidden" not in ng_class:
             ng_class += " ng-hidden"
+        _ngi_attr = f' data-ng-info="{_e(_ng_info)}"' if _ng_info else ""
         if _ng_reason:
             # 理由のみ表示（本文・画像・フッターは出さない）
             ct_html = (f'<div class="content">'
                        f'<span class="del-reason">{_e(_ng_reason)}</span></div>')
             return (f'<div class="res {bg_class}{has_cls}{ng_class}" id="r{no}"'
-                    f'{img_attr}{style_attr}>{hdr_html}{ct_html}</div>\n')
+                    f'{img_attr}{style_attr}{_ngi_attr}>{hdr_html}{ct_html}</div>\n')
         ct_html = f'<div class="content">{img_html}<div class="comment">{com}</div></div>'
-        return f'<div class="res {bg_class}{has_cls}{ng_class}" id="r{no}"{img_attr}{style_attr}>{hdr_html}{fi_sub}{ct_html}{ft_html}</div>\n'
+        return f'<div class="res {bg_class}{has_cls}{ng_class}" id="r{no}"{img_attr}{style_attr}{_ngi_attr}>{hdr_html}{fi_sub}{ct_html}{ft_html}</div>\n'
 
 
 def res_fragment_html(res_list: list, img_list_base: list,

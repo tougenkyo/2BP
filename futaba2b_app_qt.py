@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.207"
+APP_VER = "0.9.208"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -5487,6 +5487,7 @@ class ThreadView(QWidget):
         rows = []
         seq = [0]
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
+        from futaba2b_html import ng_info_text as _ngit
 
         def render_node(no, prefix, is_last, depth):
             res = res_map[no]
@@ -5509,19 +5510,27 @@ class ThreadView(QWidget):
             if _ngm: _del_c += " ng-band"           # → 緑帯
             if _ngm and not _reveal:                # NG使う時は非表示、解除時は帯付き表示
                 _del_c += " ng-hidden"
+            _ngi = ""
+            if _ngm:
+                try:
+                    _ngi = _ngit(res, self._settings.ng_filter,
+                                 self._settings, no in _hidden)
+                except Exception:
+                    _ngi = ""
+            _ngi_attr = f' data-ng-info="{_esc(_ngi)}"' if _ngi else ""
             _dm = ' <span class="del-done">del済</span>' if no in _delnos else ''
 
             if depth == 0:
                 rows.append('<div class="qt-sep"></div>')
                 rows.append(
-                    f'<div class="qt-row qt-root{_del_c}">'
+                    f'<div class="qt-row qt-root{_del_c}"{_ngi_attr}>'
                     f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '
                     f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             else:
                 branch = "└" if is_last else "├"
                 rows.append(
-                    f'<div class="qt-row qt-child{_del_c}" style="margin-left:{depth*20}px">'
+                    f'<div class="qt-row qt-child{_del_c}"{_ngi_attr} style="margin-left:{depth*20}px">'
                     f'<span class="qt-branch">{branch}</span> '
                     f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '
                     f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
@@ -5634,6 +5643,7 @@ class ThreadView(QWidget):
         rows = []
         seq = [0]
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
+        from futaba2b_html import ng_info_text as _ngit
         def render_node(no, prefix, is_last, depth):
             res = res_map[no]
             # 連番は返信モードと同じ通し番号(res_idx)を使う
@@ -5655,16 +5665,24 @@ class ThreadView(QWidget):
             if _ngm: _del_c += " ng-band"
             if _ngm and not _reveal:
                 _del_c += " ng-hidden"
+            _ngi = ""
+            if _ngm:
+                try:
+                    _ngi = _ngit(res, self._settings.ng_filter,
+                                 self._settings, no in _hidden)
+                except Exception:
+                    _ngi = ""
+            _ngi_attr = f' data-ng-info="{_esc(_ngi)}"' if _ngi else ""
             _dm = ' <span class="del-done">del済</span>' if no in _delnos else ''
             if depth == 0:
                 rows.append('<div class="qt-sep"></div>')
                 rows.append(
-                    f'<div class="qt-row qt-root{_del_c}">'                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
+                    f'<div class="qt-row qt-root{_del_c}"{_ngi_attr}>'                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             else:
                 branch = "└" if is_last else "├"
                 rows.append(
-                    f'<div class="qt-row qt-child{_del_c}" style="margin-left:{depth*20}px">'                    f'<span class="qt-branch">{branch}</span> '                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
+                    f'<div class="qt-row qt-child{_del_c}"{_ngi_attr} style="margin-left:{depth*20}px">'                    f'<span class="qt-branch">{branch}</span> '                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             ch = children.get(no, [])
             for i, cno in enumerate(ch):
