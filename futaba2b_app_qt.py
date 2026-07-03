@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.199"
+APP_VER = "0.9.200"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3841,6 +3841,7 @@ class ThreadView(QWidget):
                 _grp = _t.url or ""
                 _v._pf_group_holder[0] = _grp   # destroyed時のキャンセル対象を記録
                 try:
+                    print(f"[PERF] prefetch submit {len(urls)}urls No.{_no}", flush=True)
                     _v._fetcher.prefetch_images(urls, group=_grp)
                 except Exception:
                     pass
@@ -3998,6 +3999,8 @@ class ThreadView(QWidget):
                                               pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
         _t1 = _t.time()
         html_bytes = html.encode('utf-8')
+        print(f"[PERF] show_impl build res={len(thread.res_list)} "
+              f"html={len(html_bytes)//1024}KB {int((_t1-_t0)*1000)}ms", flush=True)
 
         if _is_error:
             # network 側で error 文字列に既に「(キャッシュ表示)」が含まれる場合があり、
@@ -4274,11 +4277,15 @@ class ThreadView(QWidget):
         if '<head>' in html:
             html = html.replace('<head>', f'<head><base href="{base_href}">', 1)
 
+        from time import perf_counter as _pc
+        _tw0 = _pc()
         tmp = tempfile.NamedTemporaryFile(
             mode='w', suffix='.html', encoding='utf-8', delete=False)
         tmp.write(html)
         tmp.close()
         self._tmp_html_path = tmp.name
+        self._navload_t0 = _pc()   # loadFinishedまでの所要時間計測用
+        print(f"[PERF] tempfile write {len(html)//1024}KB {int((self._navload_t0-_tw0)*1000)}ms", flush=True)
         self._view.load(QUrl.fromLocalFile(tmp.name))
 
 
@@ -4845,7 +4852,11 @@ class ThreadView(QWidget):
         # 「delしたレスを非表示にする」チェックの記憶状態をJSへ渡す（delResで参照）
         _dh = 'true' if getattr(self._settings, 'del_hide_checked', True) else 'false'
         js = f"window._delHideDefault = {_dh};\n" + js
-        self._view.page().runJavaScript(js)
+        from time import perf_counter as _pc
+        _pj0 = _pc()
+        self._view.page().runJavaScript(
+            js, lambda _r, _t0=_pj0, _pc=_pc: print(
+                f"[PERF] popup_js done {int((_pc()-_t0)*1000)}ms", flush=True))
 
     def _on_thread_context_menu(self, pos):
         """スレッドビュー右クリックメニュー"""
@@ -4898,6 +4909,11 @@ class ThreadView(QWidget):
         """ページ読込完了後にスクロール位置を復元"""
         # スレッドページのDOMがロード完了 → モード切替をDOM入替で行える
         self._thread_page_live = True
+        _nt0 = getattr(self, '_navload_t0', None)
+        if _nt0 is not None:
+            self._navload_t0 = None
+            from time import perf_counter as _pc
+            print(f"[PERF] page loadFinished ok={_ok} {int((_pc()-_nt0)*1000)}ms", flush=True)
         if self._pending_scroll > 0:
             y = self._pending_scroll
             self._pending_scroll = 0
@@ -5001,22 +5017,29 @@ class ThreadView(QWidget):
         渡さない＝CSSクラスで制御）ためキャッシュ無効化は不要。"""
         # スレッド同一性ガード: ビューが別スレに切り替わった場合は res_no が衝突
         # しうるためキャッシュを破棄する（通常タブは1スレ固定なので発生しない保険）。
+        from time import perf_counter as _pc
+        _t0 = _pc()
         _tno = self._thread.no if self._thread else None
         if getattr(self, '_respool_cache_no', None) != _tno:
             self._respool_cache.clear()
             self._respool_cache_no = _tno
         cache = self._respool_cache
         parts = []
+        _hits = 0
         for r in res_list:
             idc = id_counts.get(r.id_str, 0) if (id_counts and r.id_str) else 0
             sig = (idc, id_warn, r.sodane, r.is_new, r.is_deleted, r.expiry_str)
             ent = cache.get(r.no)
             if ent is not None and ent[0] == sig:
+                _hits += 1
                 parts.append(ent[1])
             else:
                 frag = render_res(r, r.is_op, [], id_counts=id_counts, id_warn_count=id_warn)
                 cache[r.no] = (sig, frag)
                 parts.append(frag)
+        _ms = int((_pc() - _t0) * 1000)
+        if _ms >= 30:
+            print(f"[PERF] respool build {len(res_list)}res {_ms}ms (cache hit {_hits})", flush=True)
         return ''.join(parts)
 
     def _respool_inject_js(self, pool_inner_html: str) -> str:
@@ -5262,6 +5285,8 @@ class ThreadView(QWidget):
         if not getattr(self, '_thread_page_live', False):
             self._render_quote_mode()
             return
+        from time import perf_counter as _pc
+        _p0 = _pc()
         import re as _re, json as _json
         res_list = self._thread.res_list
         if not res_list: return
@@ -5392,10 +5417,16 @@ class ThreadView(QWidget):
         )
         _pool_js = self._respool_inject_js(res_pool_html)
         self._loaded_page_mode = 'quote'
+        print(f"[PERF] qt-swap build py={int((_pc()-_p0)*1000)}ms "
+              f"body={len(body_js)//1024}KB pool={len(res_pool_html)//1024}KB", flush=True)
         # swap（即ペイント）→ プール後注入＋▼構築 → ポップアップJS注入 の直列実行
-        self._view.page().runJavaScript(js,
-            lambda _r: self._view.page().runJavaScript(_pool_js,
-                lambda _r2: QTimer.singleShot(50, self._inject_popup_js)))
+        def _after_pool(_r2, _t0=_p0, _pc=_pc):
+            print(f"[PERF] qt-swap pool done +{int((_pc()-_t0)*1000)}ms", flush=True)
+            QTimer.singleShot(50, self._inject_popup_js)
+        def _after_swap(_r, _t0=_p0, _pc=_pc):
+            print(f"[PERF] qt-swap dom done +{int((_pc()-_t0)*1000)}ms", flush=True)
+            self._view.page().runJavaScript(_pool_js, _after_pool)
+        self._view.page().runJavaScript(js, _after_swap)
 
     def _render_image_mode(self):
         if not self._thread: return
@@ -5474,6 +5505,8 @@ class ThreadView(QWidget):
         if not getattr(self, '_thread_page_live', False):
             self._render_image_mode()
             return
+        from time import perf_counter as _pc
+        _p0 = _pc()
         # ── ギャラリーHTML断片を生成（body内コンテンツのみ） ──
         img_res = [(s+1,r) for s,r in enumerate(r for r in self._thread.res_list if r.image_url)]
         self._gallery_list = [{'url':r.image_url,'thumb':r.thumb_url,'res_no':r.no,'name':r.image_name}
@@ -5543,10 +5576,16 @@ class ThreadView(QWidget):
         )
         _pool_js = self._respool_inject_js(_respool_inner)
         self._loaded_page_mode = 'image'
+        print(f"[PERF] img-swap build py={int((_pc()-_p0)*1000)}ms "
+              f"grid={len(grid_js)//1024}KB pool={len(_respool_inner)//1024}KB", flush=True)
         # swap（即ペイント）→ プール後注入＋▼構築 → ポップアップJS注入 の直列実行
-        self._view.page().runJavaScript(js,
-            lambda _r: self._view.page().runJavaScript(_pool_js,
-                lambda _r2: QTimer.singleShot(50, self._inject_popup_js)))
+        def _after_pool(_r2, _t0=_p0, _pc=_pc):
+            print(f"[PERF] img-swap pool done +{int((_pc()-_t0)*1000)}ms", flush=True)
+            QTimer.singleShot(50, self._inject_popup_js)
+        def _after_swap(_r, _t0=_p0, _pc=_pc):
+            print(f"[PERF] img-swap dom done +{int((_pc()-_t0)*1000)}ms", flush=True)
+            self._view.page().runJavaScript(_pool_js, _after_pool)
+        self._view.page().runJavaScript(js, _after_swap)
 
     def _on_gallery_img(self, idx: int):
         lst = getattr(self, '_gallery_list', [])

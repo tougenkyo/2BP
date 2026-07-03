@@ -1843,6 +1843,11 @@ class FutabaFetcher:
                 self._prefetch_seen.discard(url)   # 再表示で再投入可能に
                 return
             tmp.replace(p)   # 完了後にアトミックに本パスへ
+            # 進行状況の可視化（20件ごと）。「DL完了後に重い」等の体感と
+            # コンソールの他イベントの時間関係を突き合わせるための計測ログ。
+            self._prefetch_done = getattr(self, '_prefetch_done', 0) + 1
+            if self._prefetch_done % 20 == 0:
+                print(f"[PERF] prefetch downloaded {self._prefetch_done} files", flush=True)
             # サーバ絞り対策: 連続DLの間隔を空け、表示系（スレHTML取得・サムネ
             # 読み込み）と同一サーバの接続/帯域を占有し続けないようにする。
             # ディスクキャッシュ済みで exists スキップした場合は待たない。
