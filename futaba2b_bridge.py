@@ -36,6 +36,7 @@ class ThreadBridge(QObject):
     copy_text_requested   = Signal(str)          # テキスト選択コピー
     ng_image_requested    = Signal(str)          # img_url
     url_open_external_requested = Signal(str)    # 外部ブラウザで直接開く
+    save_selected_images_requested = Signal(str, list)  # 画像モード一括保存 (folder, urls)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -98,6 +99,11 @@ class ThreadBridge(QObject):
     @Slot(int)
     def openGalleryImg(self, idx: int):
         self.gallery_img_requested.emit(idx)
+
+    @Slot(str, 'QVariantList')
+    def saveSelectedImages(self, folder: str, urls):
+        """JS: 画像モードで選択した画像の一括保存 (保存先フォルダ, 画像URL配列)"""
+        self.save_selected_images_requested.emit(folder, list(urls or []))
 
     @Slot(str)
     def playVideo(self, url: str):

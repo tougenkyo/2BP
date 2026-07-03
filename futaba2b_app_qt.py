@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.204"
+APP_VER = "0.9.205"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1067,7 +1067,68 @@ def _img_mode_css(cols: int) -> str:
             ".gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}"
             ".gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 4px 0 0 #1f9d1f}"
             ".gi-del{position:absolute;top:12px;left:1px;color:#cc1105;font-weight:bold;font-size:7pt;"
-            "line-height:1.1;background:rgba(255,255,255,0.85);padding:0 2px;border-radius:2px;z-index:3}")
+            "line-height:1.1;background:rgba(255,255,255,0.85);padding:0 2px;border-radius:2px;z-index:3}"
+            # ── 一括保存の選択UI ──
+            ".gi.sel{outline:3px solid #1a6fd4;outline-offset:-3px;background:#dbe9ff!important}"
+            "#_selmodebtn{position:fixed;top:8px;right:16px;z-index:9998;"
+            "background:rgba(255,255,255,.92);border:1px solid #800000;border-radius:4px;"
+            "padding:4px 10px;font-size:9pt;cursor:pointer;user-select:none;color:#800000}"
+            "#_selmodebtn.on{background:#1a6fd4;border-color:#1a6fd4;color:#fff;font-weight:bold}"
+            "#_selbar{position:fixed;left:0;right:0;bottom:0;display:none;gap:6px;align-items:center;"
+            "background:rgba(40,40,40,.92);color:#fff;padding:6px 10px;z-index:9998;"
+            "font-size:9pt;flex-wrap:wrap}"
+            "#_selbar button{cursor:pointer;padding:3px 10px;font-size:9pt}")
+
+
+# 画像モードの一括保存・選択UI用JS（window関数として定義・多重定義ガード付き。
+# フルレンダーでは<head>に、DOM入替(swap)では入替JSの先頭に含める）
+_GAL_SEL_JS = (
+    "(function(){"
+    "if(window._giClick)return;"
+    "window._selMode=false;"
+    "function _cnt(){return document.querySelectorAll('.gi.sel').length;}"
+    "window._selUpdate=function(){"
+    "  var b=document.getElementById('_selbar');if(!b)return;"
+    "  var n=_cnt();"
+    "  var lbl=document.getElementById('_selcnt');"
+    "  if(lbl)lbl.textContent=n+'件選択中';"
+    "  b.style.display=(window._selMode||n>0)?'flex':'none';"
+    "  var mb=document.getElementById('_selmodebtn');"
+    "  if(mb)mb.classList.toggle('on',window._selMode);"
+    "};"
+    # 開始ボタン: ONの間は通常クリック＝選択トグル（Ctrl押しっぱなし相当）
+    "window._selToggleMode=function(){"
+    "  window._selMode=!window._selMode;"
+    "  if(!window._selMode){window._selClear();return;}"
+    "  window._selUpdate();"
+    "};"
+    "window._giClick=function(ev,idx,el){"
+    "  if(window._selMode||ev.ctrlKey){"
+    "    el.classList.toggle('sel');"
+    "    window._selUpdate();"
+    "    ev.preventDefault();ev.stopPropagation();"
+    "    return;"
+    "  }"
+    "  try{openGalleryImg(idx)}catch(e){}"
+    "};"
+    "window._selAll=function(){"
+    "  document.querySelectorAll('.gi').forEach(function(g){g.classList.add('sel');});"
+    "  window._selUpdate();"
+    "};"
+    "window._selClear=function(){"
+    "  document.querySelectorAll('.gi.sel').forEach(function(g){g.classList.remove('sel');});"
+    "  window._selUpdate();"
+    "};"
+    "window._selSave=function(folder){"
+    "  var urls=[];"
+    "  document.querySelectorAll('.gi.sel').forEach(function(g){"
+    "    var u=g.getAttribute('data-img-url');if(u)urls.push(u);"
+    "  });"
+    "  if(!urls.length){if(typeof showDelMsg==='function')showDelMsg('画像が選択されていません');return;}"
+    "  _b('saveSelectedImages',[folder,urls]);"
+    "};"
+    "})();"
+)
 
 
 def _is_pseudo_red_thread(thread, settings) -> bool:
@@ -3008,6 +3069,7 @@ class ThreadView(QWidget):
     _ng_image_apply       = Signal(str, str)    # (img_url, hide_mode) NG画像即時反映
     _ng_image_md5_ready   = Signal(str, str)    # (img_url, md5) MD5取得完了→ダイアログ表示
     img_list_updated      = Signal(list)        # 更新後の img_list → 画像タブに反映
+    _bulk_save_msg        = Signal(str)         # 一括保存の進捗/完了トースト（BG→UI）
 
     def __init__(self, fetcher: FutabaFetcher, settings: AppSettings, parent=None):
         super().__init__(parent)
@@ -3182,8 +3244,10 @@ class ThreadView(QWidget):
         self._bridge.scroll_top_reached.connect(self._on_scroll_top)
         self._bridge.scroll_count_updated.connect(self._on_scroll_count)
         self._bridge.unread_state_changed.connect(self.unread_state_changed)
+        self._bridge.save_selected_images_requested.connect(self._save_selected_images)
         self._ng_image_apply.connect(self._apply_ng_image_dom)
         self._ng_image_md5_ready.connect(self._on_ng_image_md5_ready)
+        self._bulk_save_msg.connect(self._on_bulk_save_msg)
 
         _extract_key = (getattr(self._settings, 'shortcuts', {}) or {}).get("extract_focus", "") or "Ctrl+Shift+F"
         self._sc_extract = QShortcut(QKeySequence(_extract_key), self, self._focus_search)  # 抽出フォーカス
@@ -5049,6 +5113,125 @@ class ThreadView(QWidget):
             "});});\n"
         )
 
+    def _gal_sel_ui_html(self) -> str:
+        """画像モードの一括保存UI（選択モード開始ボタン＋下部選択バー）のHTML。
+        フォルダボタンは設定「画像保存」の image_save_folders（画像タブの💾バーと
+        同じ登録フォルダ）をフォルダ名で列挙する。"""
+        import json as _json, os as _os
+        from html import escape as _esc
+        folders = [f for f in getattr(self._settings, 'image_save_folders', [])
+                   if (f or '').strip()]
+        btns = []
+        for f in folders:
+            name = _os.path.basename(f.rstrip('\\/')) or f
+            # JS文字列は json.dumps でエスケープし、シングルクォートはHTML属性の
+            # 区切りと衝突するため文字参照化する
+            _fj = _json.dumps(f).replace("'", "&#39;")
+            btns.append(f"<button onclick='_selSave({_fj})'>💾 {_esc(name)}</button>")
+        if not btns:
+            btns.append('<span style="opacity:.7">保存先フォルダ未登録'
+                        '（画像タブの⚙または設定→画像保存で登録）</span>')
+        return (
+            '<div id="_selmodebtn" onclick="_selToggleMode()" '
+            'title="選択モード: ONの間はクリックで画像を選択（Ctrl+クリックは常時有効）">'
+            '☑ 選択</div>'
+            '<div id="_selbar">'
+            '<span id="_selcnt">0件選択中</span>'
+            + ''.join(btns) +
+            '<span style="flex:1"></span>'
+            '<button onclick="_selAll()">全選択</button>'
+            '<button onclick="_selClear()">解除</button>'
+            '</div>'
+        )
+
+    def _save_selected_images(self, folder: str, urls: list):
+        """画像モードで選択した画像を指定フォルダへ一括保存する（BGスレッド）。
+        先読みディスクキャッシュ(data/img)にあればコピー（再DLなし）、無ければDL。
+        保存先に同名ファイルがあればスキップ（ふたばのファイル名はユニーク）。"""
+        import os
+        folder = (folder or '').strip()
+        _urls = [u for u in (urls or []) if u]
+        if not folder or not _urls:
+            return
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as e:
+            self._on_bulk_save_msg(f"⚠ フォルダ作成失敗: {e}")
+            return
+
+        def _do():
+            import shutil
+            from urllib.parse import urlparse as _up, unquote as _uq
+            ok = skip = fail = 0
+            total = len(_urls)
+            for i, u in enumerate(_urls, 1):
+                try:
+                    if u.startswith("file://"):   # ログ(zip/html)のローカル画像
+                        src = _uq(_up(u).path)
+                        if len(src) >= 3 and src[0] == "/" and src[2] == ":":
+                            src = src[1:]
+                        name = os.path.basename(src)
+                        dest = os.path.join(folder, name)
+                        if not name or not os.path.exists(src):
+                            fail += 1
+                        elif os.path.exists(dest):
+                            skip += 1
+                        else:
+                            shutil.copyfile(src, dest)
+                            ok += 1
+                    else:
+                        name = u.split('/')[-1].split('?')[0]
+                        if not name:
+                            fail += 1
+                            continue
+                        dest = os.path.join(folder, name)
+                        if os.path.exists(dest):
+                            skip += 1
+                        else:
+                            _cp = None
+                            try:
+                                _p = self._fetcher._img_disk_path(u)
+                                if _p.exists():
+                                    _cp = str(_p)
+                            except Exception:
+                                _cp = None
+                            if _cp:
+                                shutil.copyfile(_cp, dest)
+                            else:
+                                r = self._fetcher.session.get(u, timeout=(15, 300))
+                                r.raise_for_status()
+                                with open(dest, 'wb') as f:
+                                    f.write(r.content)
+                            ok += 1
+                except Exception:
+                    fail += 1
+                if i % 5 == 0 and i < total:
+                    self._bulk_save_msg.emit(f"💾 保存中 {i}/{total}")
+            msg = f"✅ {ok}件保存"
+            if skip:
+                msg += f"（既存スキップ{skip}件）"
+            if fail:
+                msg += f"（失敗{fail}件）"
+            self._bulk_save_msg.emit(msg)
+            self._bulk_save_msg.emit("__CLEAR_SEL__")
+
+        _fname = os.path.basename(folder.rstrip('\\/')) or folder
+        self._on_bulk_save_msg(f"💾 {len(_urls)}件を保存開始 → {_fname}")
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_bulk_save_msg(self, msg: str):
+        """一括保存の進捗/完了をページ下部トースト(showDelMsg)で表示。
+        __CLEAR_SEL__ は完了後の選択解除指示。"""
+        try:
+            if msg == "__CLEAR_SEL__":
+                self._view.page().runJavaScript(
+                    "window._selClear&&window._selClear();")
+                return
+            safe = msg.replace("\\", "\\\\").replace('"', '\\"')
+            self._view.page().runJavaScript(f'showDelMsg("{safe}")')
+        except Exception:
+            pass
+
     def _expiry_line_html(self, thread) -> str:
         """スレ落ち予定（「○時頃消えます」）をフッター直上に左寄せ表示するHTML。
         赤字スレ(is_expiring)は赤、仮赤字(保存残1/10以下)はピンク、それ以外は灰色。
@@ -5444,8 +5627,8 @@ class ThreadView(QWidget):
                 _gi_cls += " ng-hidden"
             _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
             items.append(
-                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'"'
-                ' onclick="try{openGalleryImg('+str(idx)+')}catch(e){}"'
+                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'" data-img-url="'+r.image_url+'"'
+                ' onclick="_giClick(event,'+str(idx)+',this)"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 + _gi_del +
                 '<div class="gn">'+display_no+'</div>'
@@ -5456,7 +5639,7 @@ class ThreadView(QWidget):
         _cols = max(1, int(getattr(self._settings, "image_mode_cols", 6)))
         _img_add = _img_mode_css(_cols)
         # 画像モード固有関数のみ追加定義（_b/openImgBg/sodane/openUrl等はWEBCHANNEL_JSで共通定義）
-        _img_js = "function openGalleryImg(i){_b('openGalleryImg',[i]);}"
+        _img_js = "function openGalleryImg(i){_b('openGalleryImg',[i]);}" + _GAL_SEL_JS
         # 隠しレスプール（popup_js が getElementById('rNNNN') で参照する）
         res_pool = ('<div id="_respool" style="position:absolute;left:-9999px;width:520px;'
                     'visibility:hidden;pointer-events:none;">'
@@ -5472,6 +5655,7 @@ class ThreadView(QWidget):
               '<script>'+_img_js+'</script>'
               f'{_scroll_js_img}'
               f'</head><body>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
+              f'{self._gal_sel_ui_html()}'
               f'{self._expiry_banner_html(self._thread)}'
               f'{res_pool}{self._thread_footer_html(self._thread)}</body></html>')
         url=(self._thread.url if self._thread else None) or 'https://www.2chan.net/'
@@ -5518,8 +5702,8 @@ class ThreadView(QWidget):
                 _gi_cls += " ng-hidden"
             _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
             items.append(
-                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'"'
-                ' onclick="try{openGalleryImg('+str(idx)+')}catch(e){}"'
+                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'" data-img-url="'+r.image_url+'"'
+                ' onclick="_giClick(event,'+str(idx)+',this)"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 + _gi_del +
                 '<div class="gn">'+display_no+'</div>'
@@ -5535,6 +5719,7 @@ class ThreadView(QWidget):
                      + '<div class="wrap"><div class="grid">'
                      + ''.join(items)
                      + '</div></div>'
+                     + self._gal_sel_ui_html()
                      + self._expiry_banner_html(self._thread)
                      + res_pool
                      + self._thread_footer_html(self._thread))
@@ -5549,9 +5734,13 @@ class ThreadView(QWidget):
             "(function(){if(!document.getElementById('__imgcss')){"
             "var s=document.createElement('style');s.id='__imgcss';"
             "s.textContent=" + css_js + ";document.head.appendChild(s);}})();\n"
+            # 一括保存の選択UI関数（返信ページ由来のheadには無いため注入・多重ガード付き）
+            + _GAL_SEL_JS + "\n"
             "document.body.innerHTML = " + grid_js + ";\n"
             "document.body.dataset.mode='image';\n"
             "window._galleryList = " + gallery_js + ";\n"
+            # body入替で選択セルは消えるため、バー表示/ボタン状態を現状態に再同期
+            "window._selUpdate&&window._selUpdate();\n"
             "window.scrollTo(0, " + str(int(scroll_y)) + ");\n"
         )
         _pool_js = self._respool_inject_js(_respool_inner)
