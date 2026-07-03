@@ -8,7 +8,7 @@ import os
 import re
 import configparser
 
-from PySide6.QtCore    import Qt, QTimer, Signal, QSize, QPoint, QRect
+from PySide6.QtCore    import Qt, QTimer, Signal, QSize, QPoint, QRect, QEvent
 from PySide6.QtGui     import QPixmap, QIcon, QImage, QColor
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QGroupBox,
@@ -154,22 +154,55 @@ class ThreadHistoryPane(QWidget):
     thread_open_requested = Signal(dict)
     hide_requested        = Signal()
 
+    _MIN_H = 60    # 履歴テーブル高さの下限(px)
+    _MAX_H = 800   # 同上限(px)
+
     def __init__(self, settings: AppSettings, parent=None):
         super().__init__(parent)
         self._settings = settings
         self._build()
 
+    def eventFilter(self, obj, ev):
+        """ヘッダーバーの上下ドラッグで履歴パネル（テーブル）の高さを調整する。
+        パネルはウインドウ下部にあるため、上へドラッグ＝拡大。離した時に保存。
+        ×ボタンはヘッダーの子ウィジェットなのでこのフィルタを通らず影響しない。"""
+        if obj is getattr(self, "_hdr", None):
+            t = ev.type()
+            if (t == QEvent.Type.MouseButtonPress
+                    and ev.button() == Qt.MouseButton.LeftButton):
+                self._drag_y0 = ev.globalPosition().y()
+                self._drag_h0 = self._table.height()
+                return True
+            if t == QEvent.Type.MouseMove and self._drag_y0 is not None:
+                dy = self._drag_y0 - ev.globalPosition().y()
+                h = int(max(self._MIN_H, min(self._MAX_H, self._drag_h0 + dy)))
+                self._table.setFixedHeight(h)
+                return True
+            if t == QEvent.Type.MouseButtonRelease and self._drag_y0 is not None:
+                self._drag_y0 = None
+                self._settings.history_pane_height = self._table.height()
+                self._settings.save()
+                return True
+        return super().eventFilter(obj, ev)
+
     def _build(self):
         lay = QVBoxLayout(self); lay.setContentsMargins(0, 0, 0, 2); lay.setSpacing(0)
 
-        # ヘッダー
+        # ヘッダー（上下ドラッグで履歴パネルの高さを調整するハンドルを兼ねる）
         hdr = QWidget(); hdr.setStyleSheet(f"background:{_TM.ui('panel_header_bg','#B0B0B0')};")
+        hdr.setCursor(Qt.CursorShape.SizeVerCursor)
+        hdr.setToolTip("ドラッグで高さを調整")
         h_lay = QHBoxLayout(hdr); h_lay.setContentsMargins(6, 2, 2, 2)
         lbl = QLabel("スレッド履歴"); lbl.setStyleSheet("font-weight:bold;font-size:8pt;")
         h_lay.addWidget(lbl); h_lay.addStretch()
         close_btn = QPushButton("×"); close_btn.setFixedSize(20, 20)
         close_btn.setFlat(True); close_btn.clicked.connect(self.hide_requested.emit)
+        close_btn.setCursor(Qt.CursorShape.ArrowCursor)
         h_lay.addWidget(close_btn); lay.addWidget(hdr)
+        self._hdr = hdr
+        self._drag_y0 = None   # ドラッグ開始時のグローバルY（None=非ドラッグ中）
+        self._drag_h0 = 0      # ドラッグ開始時のテーブル高さ
+        hdr.installEventFilter(self)
 
         # テーブル
         self._table = QTableWidget(0, 4)
@@ -185,7 +218,9 @@ class ThreadHistoryPane(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
-        self._table.setMaximumHeight(120)
+        # 高さは固定値ではなく保存値（ヘッダーの上下ドラッグで調整・永続化）
+        _h = int(getattr(self._settings, "history_pane_height", 120) or 120)
+        self._table.setFixedHeight(max(self._MIN_H, min(self._MAX_H, _h)))
         self._table.verticalHeader().setDefaultSectionSize(17)
         self._table.cellDoubleClicked.connect(self._on_double)
         # デフォルト列幅

@@ -359,6 +359,7 @@ class AppSettings:
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
         self.recent_closed_max: int = 30     # 最近閉じたスレの保持件数
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
+        self.history_pane_height: int = 120  # スレッド履歴パネルの高さ(px・ヘッダードラッグで調整)
         self.cache_max_days: int = 7         # 画像キャッシュ保持日数（0=無制限）
         # ── キャッシュクリーンアップ設定（種別ごとに 日数 / サイズ上限） ──
         self.cache_img_days_enabled:    bool = True   # 画像: 日数で削除
@@ -749,6 +750,7 @@ class AppSettings:
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
             self.recent_images_max = min(100, max(1, int(raw.get("recent_images_max", 30))))
+            self.history_pane_height = min(800, max(60, int(raw.get("history_pane_height", 120))))
             self.cache_max_days = max(0, int(raw.get("cache_max_days", 7)))
             self.cache_img_days_enabled    = bool(raw.get("cache_img_days_enabled", True))
             self.cache_img_size_enabled    = bool(raw.get("cache_img_size_enabled", False))
@@ -933,6 +935,7 @@ class AppSettings:
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
                         "recent_images_max": self.recent_images_max,
+                        "history_pane_height": self.history_pane_height,
                         "cache_max_days": self.cache_max_days,
                         "cache_img_days_enabled":    self.cache_img_days_enabled,
                         "cache_img_size_enabled":    self.cache_img_size_enabled,
