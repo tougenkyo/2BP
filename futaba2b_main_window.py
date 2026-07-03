@@ -1849,6 +1849,10 @@ class MainWindow(QMainWindow):
         # 「 - ○○@ふたば」などのサフィックスを除去
         import re as _re
         label = _re.sub(r'\s*-\s*[^-]+@\S+$', '', label).strip()
+        # 保存ログとして開いていたタブは（ログ）を付記して区別する
+        # （再オープンは通常スレとして取得するため、落ちたスレは404になる）
+        if getattr(view, '_is_log', False):
+            label = f"{label}（ログ）"
         if thread_no:
             self._closed_tabs.append(
                 (board.url, board.name, thread_no, thread_url, label))
@@ -2718,7 +2722,16 @@ class MainWindow(QMainWindow):
         except Exception:
             op = None
         if op is not None:
-            for _l in (getattr(op, "comment_text", "") or "").splitlines():
+            _txt = getattr(op, "comment_text", "") or ""
+            # IP表示（・3・等）の先頭 [ホスト名] を除去。保存ログでは
+            # [<font>host</font>] の構造が get_text で「[」「host」「]」に行分割され、
+            # 行単位のスキップ（下のフルライン判定）をすり抜けて先頭行が「[」になる
+            # ため、改行を跨いだ括弧ブロックごと取り除く。誤除去防止のため内容は
+            # ASCIIのホスト/IP形状＝「ドット1個以上（host/IPv4）またはコロン2個
+            # 以上（IPv6）」に限定（[雑談]や[2:22]のようなタイトル括弧は保持）。
+            _txt = _re.sub(
+                r'^\s*\[\s*(?=[^\]]*(?:\.|:[^\]]*:))[A-Za-z0-9.\-:\s]+\]\s*', '', _txt)
+            for _l in _txt.splitlines():
                 _s = _l.strip()
                 if _s and not _re.match(r'^\[[\w.\-:]+\]$', _s):
                     return _s[:80]
