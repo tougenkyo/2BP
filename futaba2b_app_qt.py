@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.200"
+APP_VER = "0.9.201"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3268,6 +3268,14 @@ class ThreadView(QWidget):
         from futaba2b_dialogs import NgImageEditDialog
         fname = _re.search(r'/([^/?#]+)(?:[?#]|$)', img_url)
         desc = fname.group(1) if fname else img_url
+        # 表示中スレのモデルからファイルサイズを取得（-(N B)由来）。
+        # MD5照合前のサイズ事前フィルタ（NgFilter._check_image）に使う。
+        _sz = 0
+        if self._thread:
+            for _r in self._thread.res_list:
+                if _r.image_url == img_url:
+                    _sz = getattr(_r, 'file_size_bytes', 0) or 0
+                    break
         preset = {
             "enabled": True, "method": "md5", "md5": md5,
             "description": desc, "last_hit": "", "expires": "無制限",
@@ -3276,6 +3284,7 @@ class ThreadView(QWidget):
             "size_min": 0, "size_max": 0, "file_path": "",
             "hide_mode": "image",
             "known_urls": [img_url],
+            "size": _sz,
         }
         # 既登録チェック（同MD5）
         for img in self._settings.ng_images:
@@ -3293,8 +3302,10 @@ class ThreadView(QWidget):
         new_entry = dlg.get_result()
         if not new_entry:
             return
-        # known_urlsを引き継ぐ
+        # known_urls・size（サイズ事前フィルタ用）を引き継ぐ
         new_entry.setdefault("known_urls", [img_url])
+        if preset.get("size"):
+            new_entry.setdefault("size", preset["size"])
         self._settings.ng_images.append(new_entry)
         self._settings.invalidate_ng_cache()
         self._settings.save()

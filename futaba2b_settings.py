@@ -1177,6 +1177,9 @@ class NgFilter:
         self._flat_words:   list | None = None
         self._flat_replaces: list | None = None
         self._cat_cls_cache: dict[tuple, tuple[bool, bool]] = {}  # (title,title_chars) → (is_ng,is_rev) カタログ分類メモ
+        # NG画像判定用: ディスクキャッシュ画像の URL→MD5 メモ。画像は不変のため
+        # invalidate_cache() では消さない（NG設定変更に依存しない事実キャッシュ）。
+        self._file_md5_memo: dict[str, str] = {}
 
     def invalidate_cache(self) -> None:
         """ng_words/ng_images変更後にキャッシュをすべてクリアする"""
@@ -1446,7 +1449,7 @@ class NgFilter:
         if not res.image_url:
             return "image"
         url = res.image_url
-        import hashlib
+        size = res.file_size_bytes
         for img_ng in self._settings.ng_images:
             if not img_ng.get("enabled", True):
                 continue
@@ -1458,7 +1461,7 @@ class NgFilter:
             matched = False
             if method == "type_size":
                 ext = (url.rsplit(".", 1)[-1].upper() if "." in url else "")
-                size, width, height = res.file_size_bytes, res.thumb_w, res.thumb_h
+                width, height = res.thumb_w, res.thumb_h
                 ng_type = img_ng.get("image_type", "ANY").upper()
                 ng_w = img_ng.get("width", 0); ng_h = img_ng.get("height", 0)
                 ng_smin = img_ng.get("size_min", 0); ng_smax = img_ng.get("size_max", 0)
@@ -1479,14 +1482,13 @@ class NgFilter:
                 if url in known_urls:
                     matched = True
                 else:
-                    cached_path = self._get_cached_path(url)
-                    if cached_path:
-                        try:
-                            with open(cached_path, "rb") as f:
-                                if hashlib.md5(f.read()).hexdigest().lower() == stored_md5:
-                                    matched = True
-                        except OSError:
-                            pass
+                    # _check_image と同じ最適化: サイズ事前フィルタ＋URL→MD5メモ
+                    _esz = img_ng.get("size", 0)
+                    if _esz > 0 and size > 0 and _esz != size:
+                        continue
+                    file_md5 = self._file_md5_for(url)
+                    if file_md5 is not None and file_md5 == stored_md5:
+                        matched = True
             if matched:
                 return img_ng.get("hide_mode", "image")
         return "image"
@@ -1495,7 +1497,7 @@ class NgFilter:
 
     # ── 内部: 画像マッチ（LastHit更新） ──────────────────────────────────────
     def _check_image(self, res: "ResData", is_reverse: bool) -> bool:
-        import hashlib, datetime
+        import datetime
         url = res.image_url
         ext = (url.rsplit(".", 1)[-1].upper() if "." in url else "")
         size, width, height = res.file_size_bytes, res.thumb_w, res.thumb_h
@@ -1535,19 +1537,21 @@ class NgFilter:
                 if url in known_urls:
                     matched = True
                 else:
-                    # 2) ディスクキャッシュが存在すればMD5で照合
-                    cached_path = self._get_cached_path(url)
-                    if cached_path:
-                        try:
-                            with open(cached_path, "rb") as f:
-                                file_md5 = hashlib.md5(f.read()).hexdigest()
-                            if file_md5.lower() == stored_md5:
-                                matched = True
-                                # URL を known_urls に追記して次回は高速照合
-                                if url not in known_urls:
-                                    img_ng.setdefault("known_urls", []).append(url)
-                        except OSError:
-                            pass
+                    # 2) サイズ事前フィルタ: エントリに登録済みサイズがあり、レスの
+                    #    ファイルサイズ(-(N B)由来)と不一致ならMD5計算自体を省略
+                    _esz = img_ng.get("size", 0)
+                    if _esz > 0 and size > 0 and _esz != size:
+                        continue
+                    # 3) ディスクキャッシュが存在すればMD5で照合（URL→MD5はメモ化）
+                    file_md5 = self._file_md5_for(url)
+                    if file_md5 is not None and file_md5 == stored_md5:
+                        matched = True
+                        # URL を known_urls に追記して次回は高速照合
+                        if url not in known_urls:
+                            img_ng.setdefault("known_urls", []).append(url)
+                        # サイズを学習して次回以降の事前フィルタに使う
+                        if not img_ng.get("size") and size > 0:
+                            img_ng["size"] = size
 
             if matched:
                 # LastHit 日時を更新
@@ -1566,6 +1570,31 @@ class NgFilter:
         except Exception:
             return None
         return str(p) if os.path.exists(p) else None
+
+    def _file_md5_for(self, url: str) -> str | None:
+        """URLのディスクキャッシュ画像のMD5を返す（未キャッシュならNone）。
+        画像は不変なので URL→MD5 をセッション内でメモ化する。
+        従来はレンダリングのたび・NG画像エントリのたびにファイル全体を読んで
+        MD5計算しており、先読みで数百枚がディスクに揃うとスレ表示/モード切替が
+        十数秒固まる主因になっていた（1001レス×2判定×エントリ数のファイルIO）。
+        未キャッシュ(None)はメモ化しない（先読み完了後に判定できるようにする）。"""
+        memo = self._file_md5_memo
+        hit = memo.get(url)
+        if hit is not None:
+            return hit
+        cached_path = self._get_cached_path(url)
+        if not cached_path:
+            return None
+        try:
+            import hashlib
+            with open(cached_path, "rb") as f:
+                val = hashlib.md5(f.read()).hexdigest().lower()
+        except OSError:
+            return None
+        if len(memo) > 20000:   # 長時間運用の肥大防止
+            memo.clear()
+        memo[url] = val
+        return val
 
     # ── 置換・芝刈り置換（フラット化キャッシュ使用） ────────────────────────
     _MOW_PAT = re.compile(
