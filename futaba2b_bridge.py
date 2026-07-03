@@ -37,6 +37,9 @@ class ThreadBridge(QObject):
     ng_image_requested    = Signal(str)          # img_url
     url_open_external_requested = Signal(str)    # 外部ブラウザで直接開く
     save_selected_images_requested = Signal(str, list)  # 画像モード一括保存 (folder, urls)
+    browse_save_selected_requested = Signal(str, list)  # 一括保存「…」フォルダ選択 (start_folder, urls)
+    subfolder_save_requested       = Signal(str, list)  # 一括保存「▼」サブフォルダメニュー (folder, urls)
+    gal_save_close_changed         = Signal(bool)       # 一括保存「保存後に閉じる」チェック変更
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -104,6 +107,21 @@ class ThreadBridge(QObject):
     def saveSelectedImages(self, folder: str, urls):
         """JS: 画像モードで選択した画像の一括保存 (保存先フォルダ, 画像URL配列)"""
         self.save_selected_images_requested.emit(folder, list(urls or []))
+
+    @Slot(str, 'QVariantList')
+    def browseSaveSelected(self, folder: str, urls):
+        """JS: 一括保存の「…」→ フォルダ選択ダイアログで保存先を指定"""
+        self.browse_save_selected_requested.emit(folder, list(urls or []))
+
+    @Slot(str, 'QVariantList')
+    def subfolderSaveMenu(self, folder: str, urls):
+        """JS: 一括保存の「▼」→ サブフォルダ選択メニューを表示"""
+        self.subfolder_save_requested.emit(folder, list(urls or []))
+
+    @Slot(bool)
+    def setGalSaveClose(self, on: bool):
+        """JS: 一括保存の「保存後に閉じる」チェック変更"""
+        self.gal_save_close_changed.emit(bool(on))
 
     @Slot(str)
     def playVideo(self, url: str):

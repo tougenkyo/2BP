@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.206"
+APP_VER = "0.9.207"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1077,7 +1077,10 @@ def _img_mode_css(cols: int) -> str:
             "#_selbar{position:fixed;left:0;right:0;bottom:0;display:none;gap:6px;align-items:center;"
             "background:rgba(40,40,40,.92);color:#fff;padding:6px 10px;z-index:9998;"
             "font-size:9pt;flex-wrap:wrap}"
-            "#_selbar button{cursor:pointer;padding:3px 10px;font-size:9pt}")
+            "#_selbar button{cursor:pointer;padding:3px 10px;font-size:9pt}"
+            "#_selbar ._selgrp{display:inline-flex}"
+            "#_selbar ._selgrp button{padding:3px 7px}"
+            "#_selbar label{cursor:pointer;user-select:none;white-space:nowrap}")
 
 
 # 画像モードの一括保存・選択UI用JS（window関数として定義・多重定義ガード付き。
@@ -1119,16 +1122,77 @@ _GAL_SEL_JS = (
     "  document.querySelectorAll('.gi.sel').forEach(function(g){g.classList.remove('sel');});"
     "  window._selUpdate();"
     "};"
-    "window._selSave=function(folder){"
+    "function _selUrls(){"
     "  var urls=[];"
     "  document.querySelectorAll('.gi.sel').forEach(function(g){"
     "    var u=g.getAttribute('data-img-url');if(u)urls.push(u);"
     "  });"
-    "  if(!urls.length){if(typeof showDelMsg==='function')showDelMsg('画像が選択されていません');return;}"
+    "  if(!urls.length&&typeof showDelMsg==='function')showDelMsg('画像が選択されていません');"
+    "  return urls;"
+    "}"
+    "window._selSave=function(folder){"
+    "  var urls=_selUrls();if(!urls.length)return;"
     "  _b('saveSelectedImages',[folder,urls]);"
+    "};"
+    "window._selBrowse=function(folder){"
+    "  var urls=_selUrls();if(!urls.length)return;"
+    "  _b('browseSaveSelected',[folder,urls]);"
+    "};"
+    "window._selSub=function(folder){"
+    "  var urls=_selUrls();if(!urls.length)return;"
+    "  _b('subfolderSaveMenu',[folder,urls]);"
     "};"
     "})();"
 )
+
+
+def _has_subdir(path: str) -> bool:
+    """直下にサブフォルダがあるか（保存先「▼」ボタンの表示判定用）"""
+    import os
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        return True
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return False
+
+
+def _populate_subfolder_menu(menu, folder: str, on_pick) -> None:
+    """menu に folder 直下のサブフォルダを列挙する。孫フォルダを持つものは
+    サブメニュー化（先頭に「ここに保存」項目）し、開かれた時に遅延展開する。
+    on_pick(path) が保存先確定時に呼ばれる。"""
+    import os
+    try:
+        subs = sorted((e.path for e in os.scandir(folder)
+                       if e.is_dir(follow_symlinks=False)),
+                      key=lambda p: os.path.basename(p).lower())
+    except OSError:
+        subs = []
+    if not subs:
+        act = menu.addAction("(サブフォルダなし)")
+        act.setEnabled(False)
+        return
+    for p in subs:
+        name = os.path.basename(p)
+        if _has_subdir(p):
+            sub = menu.addMenu(name)
+            head = sub.addAction("ここに保存")
+            head.triggered.connect(lambda _=False, pp=p: on_pick(pp))
+            sub.addSeparator()
+            def _fill(sm=sub, pp=p):
+                if sm.property("_subs_filled"):
+                    return
+                sm.setProperty("_subs_filled", True)
+                _populate_subfolder_menu(sm, pp, on_pick)
+            sub.aboutToShow.connect(_fill)
+        else:
+            act = menu.addAction(name)
+            act.triggered.connect(lambda _=False, pp=p: on_pick(pp))
 
 
 def _is_pseudo_red_thread(thread, settings) -> bool:
@@ -3245,6 +3309,9 @@ class ThreadView(QWidget):
         self._bridge.scroll_count_updated.connect(self._on_scroll_count)
         self._bridge.unread_state_changed.connect(self.unread_state_changed)
         self._bridge.save_selected_images_requested.connect(self._save_selected_images)
+        self._bridge.browse_save_selected_requested.connect(self._browse_save_selected)
+        self._bridge.subfolder_save_requested.connect(self._subfolder_save_menu)
+        self._bridge.gal_save_close_changed.connect(self._on_gal_save_close_changed)
         self._ng_image_apply.connect(self._apply_ng_image_dom)
         self._ng_image_md5_ready.connect(self._on_ng_image_md5_ready)
         self._bulk_save_msg.connect(self._on_bulk_save_msg)
@@ -5115,22 +5182,32 @@ class ThreadView(QWidget):
 
     def _gal_sel_ui_html(self) -> str:
         """画像モードの一括保存UI（選択モード開始ボタン＋下部選択バー）のHTML。
-        フォルダボタンは設定「画像保存」の image_save_folders（画像タブの💾バーと
-        同じ登録フォルダ）をフォルダ名で列挙する。"""
+        設定「画像保存」の image_save_folders（画像タブのバーと同じ登録フォルダ）を
+        [名前|…|▼] のグループで列挙する: 名前=そのフォルダへ即保存、
+        …=フォルダ選択ダイアログ、▼=サブフォルダメニュー（サブフォルダがある時のみ）。"""
         import json as _json, os as _os
         from html import escape as _esc
         folders = [f for f in getattr(self._settings, 'image_save_folders', [])
                    if (f or '').strip()]
+        label_len = getattr(self._settings, 'image_save_label_len', 0)
         btns = []
         for f in folders:
-            name = _os.path.basename(f.rstrip('\\/')) or f
+            base = _os.path.basename(f.rstrip('\\/')) or f
+            name = base[:label_len] if label_len > 0 else base
             # JS文字列は json.dumps でエスケープし、シングルクォートはHTML属性の
             # 区切りと衝突するため文字参照化する
             _fj = _json.dumps(f).replace("'", "&#39;")
-            btns.append(f"<button onclick='_selSave({_fj})'>💾 {_esc(name)}</button>")
+            g = (f"<span class='_selgrp'>"
+                 f"<button onclick='_selSave({_fj})' title='{_esc(f)} に保存'>{_esc(name)}</button>"
+                 f"<button onclick='_selBrowse({_fj})' title='保存先フォルダを選択して保存'>…</button>")
+            if _has_subdir(f):
+                g += f"<button onclick='_selSub({_fj})' title='サブフォルダを選んで保存'>▼</button>"
+            g += "</span>"
+            btns.append(g)
         if not btns:
             btns.append('<span style="opacity:.7">保存先フォルダ未登録'
                         '（画像タブの⚙または設定→画像保存で登録）</span>')
+        _chk = 'checked ' if getattr(self._settings, 'img_bulk_close_on_save', True) else ''
         return (
             '<div id="_selmodebtn" onclick="_selToggleMode()" '
             'title="選択モード: ONの間はクリックで画像を選択（Ctrl+クリックは常時有効）">'
@@ -5139,6 +5216,9 @@ class ThreadView(QWidget):
             '<span id="_selcnt">0件選択中</span>'
             + ''.join(btns) +
             '<span style="flex:1"></span>'
+            '<label title="保存を開始したら選択モードを閉じる">'
+            '<input type="checkbox" id="_selclosechk" ' + _chk +
+            'onchange="_b(\'setGalSaveClose\',[this.checked])">保存後に閉じる</label>'
             '<button onclick="_selAll()">全選択</button>'
             '<button onclick="_selClear()">解除</button>'
             '</div>'
@@ -5206,7 +5286,7 @@ class ThreadView(QWidget):
                 except Exception:
                     fail += 1
                 if i % 5 == 0 and i < total:
-                    self._bulk_save_msg.emit(f"💾 保存中 {i}/{total}")
+                    self._bulk_save_msg.emit(f"保存中 {i}/{total}")
             msg = f"✅ {ok}件保存"
             if skip:
                 msg += f"（既存スキップ{skip}件）"
@@ -5216,8 +5296,41 @@ class ThreadView(QWidget):
             self._bulk_save_msg.emit("__CLEAR_SEL__")
 
         _fname = os.path.basename(folder.rstrip('\\/')) or folder
-        self._on_bulk_save_msg(f"💾 {len(_urls)}件を保存開始 → {_fname}")
+        self._on_bulk_save_msg(f"{len(_urls)}件を保存開始 → {_fname}")
+        # 「保存後に閉じる」ON: 保存開始が確定したら選択モードを終了してバーを閉じる
+        if getattr(self._settings, 'img_bulk_close_on_save', True):
+            try:
+                self._view.page().runJavaScript(
+                    "window._selMode=false;window._selClear&&window._selClear();")
+            except Exception:
+                pass
         threading.Thread(target=_do, daemon=True).start()
+
+    def _browse_save_selected(self, folder: str, urls: list):
+        """一括保存の「…」: フォルダ選択ダイアログで保存先を指定して保存"""
+        import os
+        from PySide6.QtWidgets import QFileDialog
+        start = folder if folder and os.path.isdir(folder) else ""
+        d = QFileDialog.getExistingDirectory(self, "保存先フォルダを選択", start)
+        if d:
+            self._save_selected_images(d, urls)
+
+    def _subfolder_save_menu(self, folder: str, urls: list):
+        """一括保存の「▼」: サブフォルダ選択メニューをカーソル位置に表示して保存"""
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QCursor
+        menu = QMenu(self)
+        _populate_subfolder_menu(menu, folder,
+                                 lambda p: self._save_selected_images(p, urls))
+        menu.exec(QCursor.pos())
+
+    def _on_gal_save_close_changed(self, on: bool):
+        """一括保存の「保存後に閉じる」チェック状態を設定へ保存"""
+        self._settings.img_bulk_close_on_save = bool(on)
+        try:
+            self._settings.save()
+        except Exception:
+            pass
 
     def _on_bulk_save_msg(self, msg: str):
         """一括保存の進捗/完了をページ下部トースト(showDelMsg)で表示。
@@ -9574,15 +9687,15 @@ class ImageTabView(QWidget):
         self._folder_bar_lay = QHBoxLayout(self._folder_bar)
         self._folder_bar_lay.setContentsMargins(4, 2, 4, 2)
         self._folder_bar_lay.setSpacing(3)
-        self._folder_bar_lay.addWidget(QLabel("💾"))
         self._folder_bar_lay.addStretch()
         self._fetcher_ref = fetcher  # _save_to_folder用
         self._settings_ref = None    # MainWindowから設定参照を後でセットする
-        # ⚙ ボタン（フォルダバー右端）
-        cfg_btn = QPushButton("⚙"); cfg_btn.setFixedWidth(28); cfg_btn.setFixedHeight(22)
-        cfg_btn.setToolTip("画像保存の設定")
-        cfg_btn.clicked.connect(self.open_settings.emit)
-        self._folder_bar_lay.addWidget(cfg_btn)
+        # ⚙ ボタン（フォルダバー右端、_rebuild_folder_bar で使い回す）
+        self._cfg_btn = QPushButton("⚙")
+        self._cfg_btn.setFixedWidth(28); self._cfg_btn.setFixedHeight(22)
+        self._cfg_btn.setToolTip("画像保存の設定")
+        self._cfg_btn.clicked.connect(self.open_settings.emit)
+        self._folder_bar_lay.addWidget(self._cfg_btn)
         lay.addWidget(self._folder_bar)
         ctrl = QWidget(); ctrl.setFixedHeight(32)
         ctrl_lay = QHBoxLayout(ctrl)
@@ -11129,27 +11242,66 @@ class ImageTabView(QWidget):
             QTimer.singleShot(0, self._reposition_overlays)
 
     def _rebuild_folder_bar(self):
-        """設定からフォルダ保存ボタンを再構築"""
-        # 既存ボタンを削除（ラベルとStretchは残す）
-        while self._folder_bar_lay.count() > 1:  # 先頭のQLabelを残す
-            item = self._folder_bar_lay.takeAt(1)
-            if item.widget():
-                item.widget().deleteLater()
-        if not self._settings_ref:
-            return
-        folders   = getattr(self._settings_ref, "image_save_folders", [])
+        """設定からフォルダ保存ボタンを再構築。各フォルダは [名前|…|▼] のグループ:
+        名前=そのフォルダへ即保存、…=フォルダ選択ダイアログ、
+        ▼=サブフォルダメニュー（サブフォルダがある時のみ表示）。"""
+        import os
+        # ⚙ボタン以外を全て取り外して作り直す
+        while self._folder_bar_lay.count():
+            item = self._folder_bar_lay.takeAt(0)
+            w = item.widget()
+            if w is not None and w is not self._cfg_btn:
+                w.deleteLater()
+        _btn_css = "QPushButton{font-size:8pt;padding:0 6px;}"
+        folders = [f for f in getattr(self._settings_ref, "image_save_folders", [])
+                   if (f or '').strip()] if self._settings_ref else []
         label_len = getattr(self._settings_ref, "image_save_label_len", 0)
         for folder in folders:
-            import os
-            base = os.path.basename(folder) or folder
+            base = os.path.basename(folder.rstrip('\\/')) or folder
             lbl  = (base[:label_len] if label_len > 0 else base)
-            btn  = QPushButton(lbl)
+            grp  = QWidget()
+            gl   = QHBoxLayout(grp)
+            gl.setContentsMargins(0, 0, 0, 0)
+            gl.setSpacing(0)
+            btn = QPushButton(lbl)
             btn.setToolTip(f"保存先: {folder}")
             btn.setFixedHeight(22)
-            btn.setStyleSheet("QPushButton{font-size:8pt;padding:0 6px;}")
+            btn.setStyleSheet(_btn_css)
             btn.clicked.connect(lambda _=None, f=folder: self._save_to_folder(f))
-            self._folder_bar_lay.addWidget(btn)
+            gl.addWidget(btn)
+            dots = QPushButton("…")
+            dots.setToolTip("保存先フォルダを選択して保存")
+            dots.setFixedHeight(22); dots.setFixedWidth(20)
+            dots.setStyleSheet(_btn_css)
+            dots.clicked.connect(lambda _=None, f=folder: self._save_to_folder_browse(f))
+            gl.addWidget(dots)
+            if _has_subdir(folder):
+                dd = QPushButton("▼")
+                dd.setToolTip("サブフォルダを選んで保存")
+                dd.setFixedHeight(22); dd.setFixedWidth(20)
+                dd.setStyleSheet(_btn_css)
+                dd.clicked.connect(lambda _=None, f=folder, b=dd: self._folder_dd_menu(f, b))
+                gl.addWidget(dd)
+            self._folder_bar_lay.addWidget(grp)
         self._folder_bar_lay.addStretch()
+        self._folder_bar_lay.addWidget(self._cfg_btn)
+
+    def _save_to_folder_browse(self, folder: str):
+        """「…」: フォルダ選択ダイアログで保存先を指定して現在画像を保存"""
+        import os
+        from PySide6.QtWidgets import QFileDialog
+        start = folder if folder and os.path.isdir(folder) else ""
+        d = QFileDialog.getExistingDirectory(self, "保存先フォルダを選択", start)
+        if d:
+            self._save_to_folder(d)
+
+    def _folder_dd_menu(self, folder: str, btn):
+        """「▼」: サブフォルダ選択メニューをボタン直下に表示して現在画像を保存"""
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtCore import QPoint
+        menu = QMenu(self)
+        _populate_subfolder_menu(menu, folder, self._save_to_folder)
+        menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
 
     def _save_to_folder(self, folder: str):
         """現在表示中の画像をダイアログなしで指定フォルダに保存"""
@@ -11174,7 +11326,7 @@ class ImageTabView(QWidget):
             except Exception as e:
                 self._sig_save_status.emit(f"⚠ 保存失敗: {e}")
 
-        self._info.setText(f"💾 保存中... {name}")
+        self._info.setText(f"保存中... {name}")
         threading.Thread(target=_do_save, daemon=True).start()
 
     # ── 情報オーバーレイ ─────────────────────────────────────────────────
