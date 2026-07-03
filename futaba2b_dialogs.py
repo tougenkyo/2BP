@@ -194,7 +194,19 @@ class ThreadHistoryPane(QWidget):
         hdr.setToolTip("ドラッグで高さを調整")
         h_lay = QHBoxLayout(hdr); h_lay.setContentsMargins(6, 2, 2, 2)
         lbl = QLabel("スレッド履歴"); lbl.setStyleSheet("font-weight:bold;font-size:8pt;")
-        h_lay.addWidget(lbl); h_lay.addStretch()
+        h_lay.addWidget(lbl)
+        # スレッド名フィルタ（入力即時で絞り込み。ヘッダードラッグの高さ調整は
+        # 子ウィジェットのため影響を受けない）
+        self._filter_edit = QLineEdit()
+        self._filter_edit.setPlaceholderText("スレッド名で絞り込み")
+        self._filter_edit.setClearButtonEnabled(True)
+        self._filter_edit.setFixedWidth(220)
+        self._filter_edit.setFixedHeight(20)
+        self._filter_edit.setStyleSheet("font-size:8pt;")
+        self._filter_edit.textChanged.connect(self._apply_filter)
+        h_lay.addSpacing(8)
+        h_lay.addWidget(self._filter_edit)
+        h_lay.addStretch()
         close_btn = QPushButton("×"); close_btn.setFixedSize(20, 20)
         close_btn.setFlat(True); close_btn.clicked.connect(self.hide_requested.emit)
         close_btn.setCursor(Qt.CursorShape.ArrowCursor)
@@ -240,6 +252,16 @@ class ThreadHistoryPane(QWidget):
             self._table.setItem(row, 1, QTableWidgetItem(h.get("title", "")))
             self._table.setItem(row, 2, QTableWidgetItem(h.get("time", "")))
             self._table.setItem(row, 3, QTableWidgetItem(h.get("posted", "")))
+        self._apply_filter()   # 再構築後もフィルタを維持
+
+    def _apply_filter(self, *_):
+        """フィルタボックスの内容でスレッド名（タイトル列）を即時絞り込み。
+        行の非表示のみでインデックスは変えない（ダブルクリックの行→履歴対応を維持）。"""
+        q = (self._filter_edit.text() if hasattr(self, "_filter_edit") else "").strip().lower()
+        for row in range(self._table.rowCount()):
+            it = self._table.item(row, 1)
+            title = (it.text() if it else "").lower()
+            self._table.setRowHidden(row, bool(q) and q not in title)
 
     def _on_double(self, row: int, _col: int):
         if row < len(self._settings.thread_history):
