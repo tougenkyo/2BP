@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.201"
+APP_VER = "0.9.202"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -10113,8 +10113,12 @@ class ImageTabView(QWidget):
             "overflow:auto;box-sizing:border-box;}"
             "img,video{display:block;cursor:zoom-in;visibility:hidden;user-select:none;-webkit-user-drag:none;}"
             "#img.actual{max-width:none!important;max-height:none!important;"
-            "width:auto!important;cursor:grab;}"
-            "#img.actual.dragging{cursor:grabbing;}"
+            "width:auto!important;}"
+            # pannable = ドラッグで表示位置を動かせる状態（100%含む全ての%表示）。
+            # 従来は actual(=100%専用) にカーソル/ドラッグが結合しており、
+            # 200%/400%等でも手アイコンにならずパンできなかった。
+            "#img.pannable{cursor:grab;}"
+            "#img.pannable.dragging{cursor:grabbing;}"
         )
         # user.css をハードコードCSSの後に連結（後勝ちで user.css 側が優先適用される）
         _ucss_b = _load_user_css(self._settings_ref) if self._settings_ref else ""
@@ -10181,7 +10185,7 @@ class ImageTabView(QWidget):
                 "  var _dragMoved=false;"
                 "  el.addEventListener('mousedown',function(e){"
                 "    if(e.button!==0) return;"
-                "    if(!el.classList.contains('actual')) return;"  # fit時はドラッグ無効
+                "    if(!el.classList.contains('pannable')) return;"  # fit時はドラッグ無効（%表示は全て可）
                 "    _dragMoved=false;"
                 "    var startX=e.clientX,startY=e.clientY;"
                 "    var startSX=window.scrollX,startSY=window.scrollY;"
@@ -10234,7 +10238,8 @@ class ImageTabView(QWidget):
             if _prev_zoom == "画面に合わせる":
                 _size_js = ("var s=Math.min(vw/nw,vh/nh);"
                             "el.style.width=Math.round(nw*s)+'px';el.style.height='auto';"
-                            "el.classList.remove('actual');window._zoomState='fit';"
+                            "el.classList.remove('actual');el.classList.remove('pannable');"
+                            "window._zoomState='fit';"
                             "window._fitMode=true;")
             else:
                 try:
@@ -10243,11 +10248,13 @@ class ImageTabView(QWidget):
                     _pct = 100
                 if _pct == 100:
                     _size_js = ("el.style.width=nw+'px';el.style.height='auto';"
-                                "el.classList.add('actual');window._zoomState='100';"
+                                "el.classList.add('actual');el.classList.add('pannable');"
+                                "window._zoomState='100';"
                                 "window._fitMode=false;")
                 else:
                     _size_js = (f"el.style.width=Math.round(nw*{_pct}/100)+'px';el.style.height='auto';"
-                                f"el.classList.remove('actual');window._zoomState='fit';"
+                                f"el.classList.remove('actual');el.classList.add('pannable');"
+                                f"window._zoomState='fit';"
                                 f"window._fitMode=false;")
             if self._img_page_ready:
                 _esc = _json.dumps(url)
@@ -10582,7 +10589,7 @@ class ImageTabView(QWidget):
                 "window._fitMode=true;"
                 "var el=document.querySelector('img,video');"
                 "if(el){"
-                "  el.classList.remove('actual');"
+                "  el.classList.remove('actual');el.classList.remove('pannable');"
                 "  var vw=window.innerWidth,vh=window.innerHeight;"
                 "  var nw=el.naturalWidth||el.videoWidth||vw;"
                 "  var nh=el.naturalHeight||el.videoHeight||vh;"
@@ -10622,6 +10629,7 @@ class ImageTabView(QWidget):
                 f"  }}"
                 f"  if({pct}===100){{el.classList.add('actual');window._zoomState='100';}}"
                 f"  else{{el.classList.remove('actual');}}"
+                f"  el.classList.add('pannable');"
                 f"  el.style.display='block';el.style.margin='auto';"
                 f"  el.style.visibility='visible';"
                 f"}}"
@@ -10679,7 +10687,8 @@ class ImageTabView(QWidget):
                 f"  el.style.height='auto';el.style.display='block';el.style.margin='auto';"
                 f"  if({pct}===100){{el.classList.add('actual');window._zoomState='100';}}"
                 f"  else{{el.classList.remove('actual');}}"
-f"  el.style.visibility='visible';}}"
+                f"  el.classList.add('pannable');"
+                f"  el.style.visibility='visible';}}"
                 f"if(el){{if(el.complete&&el.naturalWidth)applyZ();else el.onload=applyZ;}}"
             )
             self._view.page().runJavaScript(jspz)
