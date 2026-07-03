@@ -1598,7 +1598,10 @@ class FutabaFetcher:
                 thumb_url=thumb,
                 image_name=iname,
                 image_size=rd.get("w", 0) * rd.get("h", 0),  # ピクセル数
-                thumb_w=0, thumb_h=0,
+                # JSONの w/h はサムネの表示寸法（HTMLの<img width/height>と同値）。
+                # 0のままだと差分由来レスだけ width/height 属性なしで描画され、
+                # flexレイアウト内でサムネが実寸より小さく表示されることがある。
+                thumb_w=rd.get("w", 0), thumb_h=rd.get("h", 0),
                 sodane=0,
                 is_op=False,
                 res_idx=rsc,

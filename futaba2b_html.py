@@ -214,6 +214,9 @@ a.nm:hover { text-decoration: underline; }
     gap: 8px;
     margin: 2px 0 3px 0;
 }
+/* flexレイアウト(.content)内でコメントに押されてサムネが実寸より
+   縮小されないようにする（ふたば本家と同様、サムネは常に実寸表示） */
+.thumb { flex-shrink: 0; }
 .thumb img {
     cursor: pointer;
     display: block;
