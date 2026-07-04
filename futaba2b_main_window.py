@@ -3470,6 +3470,12 @@ class MainWindow(QMainWindow):
 
         def _on_metrics(res):
             try:
+                # Qt6.11のQtWebEngineは配列/オブジェクトの戻り値がコールバックに
+                # 空文字列で渡される（数値・文字列は正常）ため、JSON文字列で受けて
+                # Python側でデコードする。list で来る環境（旧Qt）もそのまま扱える。
+                if isinstance(res, str):
+                    import json as _json
+                    res = _json.loads(res)
                 total, vh, sy = int(res[0]), int(res[1]), int(res[2])
             except Exception:
                 _finish(False, "ページ情報の取得に失敗しました。"); return
@@ -3484,9 +3490,9 @@ class MainWindow(QMainWindow):
             "var s=document.createElement('style');s.id='_sscap';"
             "s.textContent='::-webkit-scrollbar{display:none!important}';"
             "document.head.appendChild(s);"
-            "return [Math.max(document.body.scrollHeight,"
+            "return JSON.stringify([Math.max(document.body.scrollHeight,"
             "document.documentElement.scrollHeight),"
-            "window.innerHeight, window.scrollY];})()",
+            "window.innerHeight, window.scrollY]);})()",
             _on_metrics)
 
     def _save_html_view(self, view, thread):

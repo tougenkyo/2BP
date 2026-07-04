@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.209"
+APP_VER = "0.9.210"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6859,7 +6859,7 @@ class _FindBar(QWidget):
         js = f"""
 (function() {{
     var pat;
-    try {{ pat = new RegExp({pat_json}, 'i'); }} catch(e) {{ return {{count:0,cur:0}}; }}
+    try {{ pat = new RegExp({pat_json}, 'i'); }} catch(e) {{ return JSON.stringify({{count:0,cur:0}}); }}
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
     var nodes = [], node;
     while (node = walker.nextNode()) {{
@@ -6867,7 +6867,7 @@ class _FindBar(QWidget):
         if (pat.test(node.nodeValue)) nodes.push(node);
     }}
     var count = nodes.length;
-    if (count === 0) return {{count:0, cur:0}};
+    if (count === 0) return JSON.stringify({{count:0, cur:0}});
     var fwd = {direction};
     var wrap = {wrap_js};
     // インデックス管理: __rgxIdx を body に付ける
@@ -6887,13 +6887,21 @@ class _FindBar(QWidget):
     var targetNode = nodes[body.__rgxIdx];
     var el = targetNode.parentNode;
     if (el && el.scrollIntoView) el.scrollIntoView({{block:'center', behavior:'smooth'}});
-    return {{count:count, cur:body.__rgxIdx + 1}};
+    return JSON.stringify({{count:count, cur:body.__rgxIdx + 1}});
 }})()
 """
         page.runJavaScript(js, lambda r: self._on_regex_result(r))
 
     def _on_regex_result(self, result):
-        if not result or result.get("count", 0) == 0:
+        # Qt6.11のQtWebEngineはオブジェクトの戻り値がコールバックに空文字列で
+        # 渡されるため、JS側は JSON.stringify で返しここでデコードする
+        if isinstance(result, str) and result:
+            try:
+                import json as _json
+                result = _json.loads(result)
+            except Exception:
+                result = None
+        if not isinstance(result, dict) or result.get("count", 0) == 0:
             self._lbl_count.setStyleSheet("color: #cc0000;")
             self._lbl_count.setText("見つかりません")
         else:
