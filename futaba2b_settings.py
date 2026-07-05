@@ -408,6 +408,7 @@ class AppSettings:
         self.image_save_label_len: int = 0   # ボタンラベルの最大文字数（0=全表示）
         self.img_bulk_close_on_save: bool = True  # 画像モード一括保存: 保存したら選択モードを閉じる
         self.extract_popup: bool = True  # 抽出: ON=右上パネルにポップアップ表示 / OFF=スレ内を絞り込み
+        self.show_post_heatmap: bool = False  # レス内右下に書き込み時間分布ヒートマップを表示
         # 保存ボタン左クリックの保存形式（前回選んだ種類を記憶。初期値=zip）
         self.last_save_format: str = "zip"   # "html" | "mht" | "zip"
         # ログファイル命名テンプレート
@@ -797,6 +798,7 @@ class AppSettings:
             # 旧キー extract_in_thread(v0.9.212のみ) からの引き継ぎ: in_thread=True → popup=False
             self.extract_popup = raw.get(
                 "extract_popup", not raw.get("extract_in_thread", False))
+            self.show_post_heatmap = raw.get("show_post_heatmap", False)
             _lsf = str(raw.get("last_save_format", "zip")).lower()
             self.last_save_format = _lsf if _lsf in ("html", "mht", "zip") else "zip"
             self.log_filename_template = raw.get("log_filename_template", "{date}/{date}_No.{no}_{title}")
@@ -978,6 +980,7 @@ class AppSettings:
                         "image_save_label_len": self.image_save_label_len,
                         "img_bulk_close_on_save": self.img_bulk_close_on_save,
                         "extract_popup":        self.extract_popup,
+                        "show_post_heatmap":    self.show_post_heatmap,
                         "last_save_format":     self.last_save_format,
                         "log_filename_template": self.log_filename_template,
                         "bouyomi_enabled": self.bouyomi_enabled,

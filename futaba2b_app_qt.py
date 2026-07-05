@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.215"
+APP_VER = "0.9.216"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1209,6 +1209,127 @@ def _is_pseudo_red_thread(thread, settings) -> bool:
         remain = thread.no + ms - o
         return remain <= ms // 10
     return False
+
+
+# ── 書き込み時間ヒートマップ ─────────────────────────────────────────────────
+import datetime as _hm_dt
+_HM_EPOCH0 = _hm_dt.datetime(2000, 1, 1)
+_HM_DT_RE = re.compile(
+    r'(\d{2})/(\d{2})/(\d{2})\([^)]*\)(\d{1,2}):(\d{2})(?::(\d{2}))?')
+# 棒の高さ・列幅などのレイアウト定数
+_HM_BARH = 48
+_HM_COLW = 14
+_HM_CANDS = [60, 120, 300, 600, 900, 1800, 3600, 7200,
+             10800, 21600, 43200, 86400]
+
+
+def _hm_parse_dt(s: str):
+    """ふたばの日時文字列 '26/07/03(金)22:02:51' を datetime に。失敗時 None。"""
+    m = _HM_DT_RE.search(s or "")
+    if not m:
+        return None
+    y, mo, d, h, mi, se = m.groups()
+    try:
+        return _hm_dt.datetime(2000 + int(y), int(mo), int(d),
+                               int(h), int(mi), int(se or 0))
+    except ValueError:
+        return None
+
+
+def _hm_buckets(secs: list, target: int = 22, max_buckets: int = 60):
+    """秒値リストから (bucket_sec, start_sec, counts[]) を返す。
+    バケット幅は _HM_CANDS から時間スパンに応じて自動選択する。"""
+    if not secs:
+        return None
+    lo, hi = min(secs), max(secs)
+    span = hi - lo
+    if span <= 0:
+        bucket = 60
+    else:
+        raw = span / target
+        bucket = next((c for c in _HM_CANDS if c >= raw), _HM_CANDS[-1])
+        # 列が多すぎる場合は1段大きいバケットへ
+        while span / bucket > max_buckets and bucket < _HM_CANDS[-1]:
+            bucket = _HM_CANDS[_HM_CANDS.index(bucket) + 1]
+    start = int(lo // bucket) * bucket
+    n = int((hi - start) // bucket) + 1
+    counts = [0] * n
+    for s in secs:
+        idx = int((s - start) // bucket)
+        if 0 <= idx < n:
+            counts[idx] += 1
+    return bucket, start, counts
+
+
+def _hm_unit_label(bucket: int) -> str:
+    if bucket < 3600:
+        return f"{bucket // 60}分"
+    if bucket < 86400:
+        return f"{bucket // 3600}時間"
+    return f"{bucket // 86400}日"
+
+
+def _build_heatmap_panel_html(res_list) -> str:
+    """レス群から書き込み時間分布ヒートマップのパネルHTML(fixed配置)を返す。
+    各列は上から「日付・時刻・縦棒(件数)」。日時が1件も取れなければ空文字。"""
+    secs = []
+    for r in res_list:
+        dt = _hm_parse_dt(getattr(r, "datetime_str", ""))
+        if dt is not None:
+            secs.append((dt - _HM_EPOCH0).total_seconds())
+    if not secs:
+        return ""
+    res = _hm_buckets(secs)
+    if not res:
+        return ""
+    bucket, start, counts = res
+    total = len(secs)
+    mx = max(counts) or 1
+    daily = bucket >= 86400
+    cols = []
+    prev_date = None
+    for i, c in enumerate(counts):
+        bstart = _HM_EPOCH0 + _hm_dt.timedelta(seconds=start + i * bucket)
+        date_lbl = f"{bstart.month:02d}/{bstart.day:02d}"
+        if daily:
+            time_lbl = date_lbl
+            show_date = ""
+        else:
+            time_lbl = f"{bstart.hour:02d}:{bstart.minute:02d}"
+            show_date = date_lbl if date_lbl != prev_date else ""
+        prev_date = date_lbl
+        if c > 0:
+            h = max(2, round(c / mx * _HM_BARH))
+            light = int(68 - 40 * (c / mx))   # 件数が多いほど濃く
+            color = f"hsl(210,75%,{light}%)"
+        else:
+            h = 0
+            color = "transparent"
+        cols.append(
+            f'<div style="display:flex;flex-direction:column;align-items:center;'
+            f'width:{_HM_COLW}px;flex:0 0 auto;">'
+            f'<div style="height:24px;writing-mode:vertical-rl;font-size:7px;'
+            f'line-height:1;color:#a33;white-space:nowrap;overflow:hidden;">{show_date}</div>'
+            f'<div style="height:30px;writing-mode:vertical-rl;font-size:7px;'
+            f'line-height:1;color:#555;white-space:nowrap;overflow:hidden;">{time_lbl}</div>'
+            f'<div title="{time_lbl} — {c}件" style="height:{_HM_BARH}px;width:100%;'
+            f'display:flex;align-items:flex-end;justify-content:center;'
+            f'border-bottom:1px solid #ccc;">'
+            f'<div style="width:9px;height:{h}px;background:{color};"></div></div>'
+            f'</div>'
+        )
+    header = (f'<div style="font-weight:bold;font-size:9px;margin-bottom:3px;'
+              f'color:#800000;white-space:nowrap;">書き込み分布 '
+              f'（{_hm_unit_label(bucket)}/枠・全{total}件）</div>')
+    return (
+        '<div id="_heatmap_panel" style="position:fixed;right:8px;bottom:8px;'
+        'z-index:9500;background:rgba(255,255,255,.94);border:1px solid #800000;'
+        'border-radius:4px;padding:4px 6px 5px;box-shadow:2px 2px 8px rgba(0,0,0,.3);'
+        'max-width:78vw;overflow-x:auto;pointer-events:auto;">'
+        + header
+        + '<div style="display:flex;align-items:flex-end;gap:1px;">'
+        + ''.join(cols) + '</div></div>'
+    )
 
 
 # ── テーマアイコン読み込み ───────────────────────────────────────────────────
@@ -2362,6 +2483,13 @@ class BoardPane(QWidget):
             w._chk_extract_popup.blockSignals(False)
         if saved:
             w._do_extract(saved)   # 現在の抽出モード（スレ内/パネル）で再適用
+        # ヒートマップ チェックの表示を設定と同期し、パネルを再適用
+        if isinstance(w, ThreadView) and hasattr(w, '_chk_heatmap'):
+            w._chk_heatmap.blockSignals(True)
+            w._chk_heatmap.setChecked(
+                getattr(w._settings, 'show_post_heatmap', False))
+            w._chk_heatmap.blockSignals(False)
+            w._apply_heatmap()
 
         # ── 棒読み・スクロールチェックボックスをARエントリと同期 ──
         if isinstance(w, ThreadView) and hasattr(w, '_chk_ar_bouyomi'):
@@ -3287,6 +3415,15 @@ class ThreadView(QWidget):
         self._chk_ar_bouyomi.setFixedHeight(24)
         self._chk_ar_bouyomi.stateChanged.connect(self._on_bouyomi_chk_changed)
         tb.addWidget(self._chk_ar_bouyomi)
+        # ── ヒートマップ（書き込み時間分布）チェックボックス ──
+        self._chk_heatmap = QCheckBox("ヒートマップ")
+        self._chk_heatmap.setToolTip(
+            "スレ内の書き込み回数を時間別にレス内右下へ表示する")
+        self._chk_heatmap.setFixedHeight(24)
+        self._chk_heatmap.setChecked(
+            getattr(self._settings, 'show_post_heatmap', False))
+        self._chk_heatmap.toggled.connect(self._on_heatmap_chk_changed)
+        tb.addWidget(self._chk_heatmap)
         lay.addWidget(tb)
 
         # WebEngineView
@@ -3403,6 +3540,49 @@ class ThreadView(QWidget):
         ポップアップも閉じる。フォーカスは移さない。"""
         if hasattr(self, "_search_edit") and self._search_edit.text():
             self._search_edit.clear()
+
+    def _on_heatmap_chk_changed(self, on: bool):
+        """ヒートマップ チェック切替 → 設定に保存して即反映"""
+        self._settings.show_post_heatmap = bool(on)
+        try:
+            self._settings.save()
+        except Exception:
+            pass
+        self._apply_heatmap()
+
+    def _apply_heatmap(self):
+        """書き込み時間ヒートマップのパネルをDOMへ反映（OFF/データ無しなら除去）。
+        パネルは position:fixed の独立オーバーレイなので全モード共通で動く。
+        (url, レス数) が変わらなければHTMLを再計算しない。"""
+        import json as _json
+        _remove = ("var e=document.getElementById('_heatmap_panel');"
+                   "if(e)e.remove();")
+        if not getattr(self._settings, 'show_post_heatmap', False) or not self._thread:
+            try:
+                self._view.page().runJavaScript(_remove)
+            except Exception:
+                pass
+            return
+        key = (self._thread.url, len(self._thread.res_list))
+        if getattr(self, '_hm_key', None) == key:
+            html = getattr(self, '_hm_html', "")
+        else:
+            html = _build_heatmap_panel_html(self._thread.res_list)
+            self._hm_key = key
+            self._hm_html = html
+        if not html:
+            try:
+                self._view.page().runJavaScript(_remove)
+            except Exception:
+                pass
+            return
+        js = ("(function(){" + _remove +
+              "if(document.body)document.body.insertAdjacentHTML('beforeend',"
+              + _json.dumps(html) + ");})();")
+        try:
+            self._view.page().runJavaScript(js)
+        except Exception:
+            pass
 
     def _on_bottom_seen(self):
         """JS: スレ末尾まで表示した → 既読数を現在のレス数に同期する。
@@ -4376,6 +4556,10 @@ class ThreadView(QWidget):
         # スレタイラベルを更新（BoardPaneが現在このviewを表示中の場合）
         QTimer.singleShot(0, self._notify_title_updated)
         self._emit_status_info(thread, new_count, "スレッド読み込み完了")
+        # 差分更新（ページ再読込なし）ではヒートマップを直接更新する。
+        # 全描画時は body 未確定なので _inject_popup_js 側の再適用に任せる。
+        if skip_mode_reload:
+            self._apply_heatmap()
         # 「タブを開いた直後の初回読み込みで既に死んでいた（404/1000到達）」かを記録する。
         # _first_load_done がまだ False の時点で is_error/is_full なら、開いた瞬間に
         # 既に死んでいたスレ → 自動クローズ対象から除外する（_on_thread_dead で参照）。
@@ -5062,6 +5246,9 @@ class ThreadView(QWidget):
         _dh = 'true' if getattr(self._settings, 'del_hide_checked', True) else 'false'
         js = f"window._delHideDefault = {_dh};\n" + js
         self._view.page().runJavaScript(js)
+        # ヒートマップは position:fixed の独立オーバーレイなので、全描画・モード
+        # 切替のたびにbodyが作り直される → ここ（描画完了フック）で再適用する。
+        self._apply_heatmap()
 
     def _on_thread_context_menu(self, pos):
         """スレッドビュー右クリックメニュー"""
@@ -9053,6 +9240,8 @@ class AutoRefreshManager(QObject):
                 self._speak_bouyomi(thread.res_list[_base2:])
             view._notify_ng_word_match(new_res)
             view._check_self_res_notifications(thread, new_res)
+            if hasattr(view, '_apply_heatmap'):
+                view._apply_heatmap()   # 新着でヒートマップの分布を更新
             return
 
         # ── 全体再描画（フォールバック） ──────────────────────────────────
