@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.217"
+APP_VER = "0.9.218"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1234,8 +1234,12 @@ _HM_EPOCH0 = _hm_dt.datetime(2000, 1, 1)
 _HM_DT_RE = re.compile(
     r'(\d{2})/(\d{2})/(\d{2})\([^)]*\)(\d{1,2}):(\d{2})(?::(\d{2}))?')
 # 棒の高さ・列幅などのレイアウト定数
-_HM_BARH = 48
-_HM_COLW = 14
+_HM_BARH = 56    # 棒グラフの最大高さ(px)
+_HM_COLW = 20    # 1列の幅(px)。縦書きラベルが潰れない幅を確保
+_HM_BARW = 13    # 棒の幅(px)
+_HM_FONT = 11    # 日付・時刻ラベルの文字サイズ(px)
+_HM_DATE_H = 46  # 日付セルの高さ(px)。"MM/DD" 5文字が縦に収まる
+_HM_TIME_H = 52  # 時刻セルの高さ(px)。"HH:MM" 5文字が縦に収まる
 _HM_CANDS = [60, 120, 300, 600, 900, 1800, 3600, 7200,
              10800, 21600, 43200, 86400]
 
@@ -1325,17 +1329,19 @@ def _build_heatmap_panel_html(res_list) -> str:
         cols.append(
             f'<div style="display:flex;flex-direction:column;align-items:center;'
             f'width:{_HM_COLW}px;flex:0 0 auto;">'
-            f'<div style="height:24px;writing-mode:vertical-rl;font-size:7px;'
-            f'line-height:1;color:#a33;white-space:nowrap;overflow:hidden;">{show_date}</div>'
-            f'<div style="height:30px;writing-mode:vertical-rl;font-size:7px;'
-            f'line-height:1;color:#555;white-space:nowrap;overflow:hidden;">{time_lbl}</div>'
+            f'<div style="height:{_HM_DATE_H}px;writing-mode:vertical-rl;'
+            f'font-size:{_HM_FONT}px;line-height:1.05;color:#a33;'
+            f'white-space:nowrap;overflow:hidden;">{show_date}</div>'
+            f'<div style="height:{_HM_TIME_H}px;writing-mode:vertical-rl;'
+            f'font-size:{_HM_FONT}px;line-height:1.05;color:#555;'
+            f'white-space:nowrap;overflow:hidden;">{time_lbl}</div>'
             f'<div title="{time_lbl} — {c}件" style="height:{_HM_BARH}px;width:100%;'
             f'display:flex;align-items:flex-end;justify-content:center;'
             f'border-bottom:1px solid #ccc;">'
-            f'<div style="width:9px;height:{h}px;background:{color};"></div></div>'
+            f'<div style="width:{_HM_BARW}px;height:{h}px;background:{color};"></div></div>'
             f'</div>'
         )
-    header = (f'<div style="font-weight:bold;font-size:9px;margin-bottom:3px;'
+    header = (f'<div style="font-weight:bold;font-size:12px;margin-bottom:4px;'
               f'color:#800000;white-space:nowrap;">書き込み分布 '
               f'（{_hm_unit_label(bucket)}/枠・全{total}件）</div>')
     return (
