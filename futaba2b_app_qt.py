@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.212"
+APP_VER = "0.9.213"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2354,12 +2354,12 @@ class BoardPane(QWidget):
         w._search_edit.setText(saved)
         w._search_edit.blockSignals(False)
         self._search_edit.blockSignals(False) if hasattr(self, '_search_edit') else None
-        # 「スレ内」チェックの表示を設定と同期（他タブで切り替えた場合）
-        if hasattr(w, '_chk_extract_in'):
-            w._chk_extract_in.blockSignals(True)
-            w._chk_extract_in.setChecked(
-                getattr(w._settings, 'extract_in_thread', False))
-            w._chk_extract_in.blockSignals(False)
+        # 「ポップアップ」チェックの表示を設定と同期（他タブで切り替えた場合）
+        if hasattr(w, '_chk_extract_popup'):
+            w._chk_extract_popup.blockSignals(True)
+            w._chk_extract_popup.setChecked(
+                getattr(w._settings, 'extract_popup', True))
+            w._chk_extract_popup.blockSignals(False)
         if saved:
             w._do_extract(saved)   # 現在の抽出モード（スレ内/パネル）で再適用
 
@@ -3244,15 +3244,15 @@ class ThreadView(QWidget):
         self._search_edit.returnPressed.connect(
             lambda: self._do_extract(self._search_edit.text()))
         tb.addWidget(self._search_edit)
-        # ── 抽出先の切替: ON=スレ内絞り込み / OFF=右上パネル ──
-        self._chk_extract_in = QCheckBox("スレ内")
-        self._chk_extract_in.setToolTip(
-            "ON: マッチしないレスを非表示にしてスレ内で抽出\n"
-            "OFF: 右上のパネルに抽出結果をポップアップ表示")
-        self._chk_extract_in.setChecked(
-            getattr(self._settings, 'extract_in_thread', False))
-        self._chk_extract_in.toggled.connect(self._on_extract_mode_toggled)
-        tb.addWidget(self._chk_extract_in)
+        # ── 抽出先の切替: ON=右上パネルにポップアップ / OFF=スレ内絞り込み ──
+        self._chk_extract_popup = QCheckBox("ポップアップ")
+        self._chk_extract_popup.setToolTip(
+            "ON: 右上のパネルに抽出結果をポップアップ表示\n"
+            "OFF: マッチしないレスを非表示にしてスレ内で抽出")
+        self._chk_extract_popup.setChecked(
+            getattr(self._settings, 'extract_popup', True))
+        self._chk_extract_popup.toggled.connect(self._on_extract_mode_toggled)
+        tb.addWidget(self._chk_extract_popup)
         tb.addSeparator()
         # ── NG トグルボタン ──
         self._btn_ng_toggle = QPushButton("NG解除")
@@ -5933,14 +5933,14 @@ class ThreadView(QWidget):
 
     def _do_extract(self, query: str = ""):
         """テキストにマッチするレスを抽出する（空のとき解除）。
-        「スレ内」チェックONならスレ本文を絞り込み(extractPosts)、
-        OFFなら従来どおり右上のパネルに表示(extractPostsPopup)。
-        スレ内絞り込みは返信モード専用のため、画像/引用モード中はONでも
+        「ポップアップ」チェックONなら右上のパネルに表示(extractPostsPopup)、
+        OFFならスレ本文を絞り込み(extractPosts)。
+        スレ内絞り込みは返信モード専用のため、画像/引用モード中はOFFでも
         パネル表示にフォールバックする。切替時の残留を防ぐため常に
         もう一方のモードを解除してから適用する。"""
         q = (query if isinstance(query, str) else self._search_edit.text()).strip()
         js_q = q.replace("\\", "\\\\").replace('"', '\\"')
-        in_thread = (getattr(self._settings, 'extract_in_thread', False)
+        in_thread = (not getattr(self._settings, 'extract_popup', True)
                      and not getattr(self, '_loaded_page_mode', ''))
         if in_thread:
             js = f'try{{extractPostsPopup("");extractPosts("{js_q}");}}catch(e){{}}'
@@ -5949,8 +5949,8 @@ class ThreadView(QWidget):
         self._view.page().runJavaScript(js)
 
     def _on_extract_mode_toggled(self, on: bool):
-        """抽出の「スレ内」チェック切替 → 設定に保存し、現在の抽出を再適用"""
-        self._settings.extract_in_thread = bool(on)
+        """抽出の「ポップアップ」チェック切替 → 設定に保存し、現在の抽出を再適用"""
+        self._settings.extract_popup = bool(on)
         try:
             self._settings.save()
         except Exception:

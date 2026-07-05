@@ -407,7 +407,7 @@ class AppSettings:
         self.image_save_btn_wrap: int = 3    # フォルダボタンの折り返し列数
         self.image_save_label_len: int = 0   # ボタンラベルの最大文字数（0=全表示）
         self.img_bulk_close_on_save: bool = True  # 画像モード一括保存: 保存したら選択モードを閉じる
-        self.extract_in_thread: bool = False  # 抽出: ON=スレ内を絞り込み / OFF=右上パネルに表示
+        self.extract_popup: bool = True  # 抽出: ON=右上パネルにポップアップ表示 / OFF=スレ内を絞り込み
         # 保存ボタン左クリックの保存形式（前回選んだ種類を記憶。初期値=zip）
         self.last_save_format: str = "zip"   # "html" | "mht" | "zip"
         # ログファイル命名テンプレート
@@ -794,7 +794,9 @@ class AppSettings:
             self.image_save_btn_wrap = int(raw.get("image_save_btn_wrap", 3))
             self.image_save_label_len = int(raw.get("image_save_label_len", 0))
             self.img_bulk_close_on_save = raw.get("img_bulk_close_on_save", True)
-            self.extract_in_thread = raw.get("extract_in_thread", False)
+            # 旧キー extract_in_thread(v0.9.212のみ) からの引き継ぎ: in_thread=True → popup=False
+            self.extract_popup = raw.get(
+                "extract_popup", not raw.get("extract_in_thread", False))
             _lsf = str(raw.get("last_save_format", "zip")).lower()
             self.last_save_format = _lsf if _lsf in ("html", "mht", "zip") else "zip"
             self.log_filename_template = raw.get("log_filename_template", "{date}/{date}_No.{no}_{title}")
@@ -975,7 +977,7 @@ class AppSettings:
                         "image_save_btn_wrap":  self.image_save_btn_wrap,
                         "image_save_label_len": self.image_save_label_len,
                         "img_bulk_close_on_save": self.img_bulk_close_on_save,
-                        "extract_in_thread":    self.extract_in_thread,
+                        "extract_popup":        self.extract_popup,
                         "last_save_format":     self.last_save_format,
                         "log_filename_template": self.log_filename_template,
                         "bouyomi_enabled": self.bouyomi_enabled,

@@ -7,7 +7,7 @@ import sys, os, re, threading, webbrowser
 from futaba2b_app_qt import _open_url
 from pathlib import Path
 
-from PySide6.QtCore    import Qt, QUrl, QTimer, QObject, Signal, Slot, QSize, QRect
+from PySide6.QtCore    import Qt, QUrl, QTimer, QObject, Signal, Slot, QSize, QRect, QPoint
 from PySide6.QtGui     import QAction, QKeySequence, QColor, QShortcut, QIcon, QPixmap, QImage, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter, QVBoxLayout, QHBoxLayout,
@@ -69,35 +69,81 @@ _UPDATE_ZIP_URL       = f"https://codeload.github.com/{_UPDATE_REPO}/zip/refs/he
 class _RegionSelectOverlay(QWidget):
     """スクリーンショットの範囲選択オーバーレイ。
     対象ビュー(tview)の上にWebビュー(web)と同じ領域で重ね、ドラッグで矩形選択する。
-    確定で on_done(QRect[webローカル座標])、Esc/右クリックで on_done(None)。"""
+    page を渡すと、ドラッグ中に上下端へ近づいたときページを自動スクロールして
+    ビューポートを超える縦長の範囲も選択できる。
+    確定で on_done(QRect)、Esc/右クリックで on_done(None)。rect は
+    「オーバーレイ表示時点のスクロール位置(scroll_base)を原点とした」ページ座標
+    （スクロールしなければWebビューのローカル座標と同値）。"""
 
-    def __init__(self, tview: QWidget, web: QWidget, on_done):
+    _EDGE = 36       # 自動スクロールが始まる上下端マージン(px)
+    _STEP_MAX = 48   # 1tickの最大スクロール量(px)
+
+    def __init__(self, tview: QWidget, web: QWidget, on_done,
+                 page=None, scroll_base: int = 0):
         super().__init__(tview)
         from PySide6.QtCore import QPoint, QRect
         self._on_done = on_done
-        self._origin = None
-        self._cur = None
+        self._page = page
+        self._scroll_base = int(scroll_base)
+        self._delta = 0          # 表示時点からのスクロール増分(px)
+        self._origin = None      # ページ座標（表示時scrollY原点）
+        self._cur = None         # ビュー座標
+        self._drag = False
         pos = web.mapTo(tview, QPoint(0, 0))
         self.setGeometry(QRect(pos, web.size()))
         self.setCursor(Qt.CursorShape.CrossCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setInterval(50)
+        self._scroll_timer.timeout.connect(self._auto_scroll_tick)
         self.show()
         self.raise_()
         self.setFocus()
 
     def _finish(self, rect):
+        self._scroll_timer.stop()
         cb, self._on_done = self._on_done, None
         self.close()
         if cb:
             cb(rect)
+
+    def _to_page(self, view_pt):
+        """ビュー座標 → ページ座標（表示時scrollY原点、yのみスクロール補正）"""
+        from PySide6.QtCore import QPoint
+        return QPoint(view_pt.x(), view_pt.y() + self._delta)
+
+    def _auto_scroll_tick(self):
+        """ドラッグ中、カーソルが上下端に近ければページをスクロールする"""
+        if not self._drag or self._page is None:
+            return
+        from PySide6.QtGui import QCursor
+        pos = self.mapFromGlobal(QCursor.pos())
+        h = self.height()
+        step = 0
+        if pos.y() > h - self._EDGE:
+            step = min(self._STEP_MAX, (pos.y() - (h - self._EDGE)) * 2 + 8)
+        elif pos.y() < self._EDGE:
+            step = -min(self._STEP_MAX, (self._EDGE - pos.y()) * 2 + 8)
+        if not step:
+            return
+        def _upd(y):
+            try:
+                self._delta = int(y) - self._scroll_base
+            except Exception:
+                return
+            self._cur = self.mapFromGlobal(QCursor.pos())
+            self.update()
+        self._page.runJavaScript(f"window.scrollBy(0,{step});window.scrollY", _upd)
 
     def paintEvent(self, ev):
         from PySide6.QtGui import QPainter, QColor, QPen
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(0, 0, 0, 90))
         if self._origin is not None and self._cur is not None:
-            r = QRect(self._origin, self._cur).normalized()
+            # 選択矩形をビュー座標で描画（スクロール分を補正）
+            o_view = QPoint(self._origin.x(), self._origin.y() - self._delta)
+            r = QRect(o_view, self._cur).normalized().intersected(self.rect())
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
             p.fillRect(r, QColor(0, 0, 0, 0))
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
@@ -108,13 +154,17 @@ class _RegionSelectOverlay(QWidget):
             p.setPen(QColor(255, 255, 255))
             p.drawText(self.rect().adjusted(0, 8, 0, 0),
                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                       "ドラッグで範囲を選択（Esc/右クリックでキャンセル）")
+                       "ドラッグで範囲を選択（画面の上下端で自動スクロール"
+                       "／Esc・右クリックでキャンセル）")
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.MouseButton.RightButton:
             self._finish(None); return
-        self._origin = ev.position().toPoint()
-        self._cur = self._origin
+        self._cur = ev.position().toPoint()
+        self._origin = self._to_page(self._cur)
+        self._drag = True
+        if self._page is not None:
+            self._scroll_timer.start()
         self.update()
 
     def mouseMoveEvent(self, ev):
@@ -125,7 +175,10 @@ class _RegionSelectOverlay(QWidget):
     def mouseReleaseEvent(self, ev):
         if ev.button() != Qt.MouseButton.LeftButton or self._origin is None:
             return
-        r = QRect(self._origin, ev.position().toPoint()).normalized()
+        self._drag = False
+        self._scroll_timer.stop()
+        cur_page = self._to_page(ev.position().toPoint())
+        r = QRect(self._origin, cur_page).normalized()
         self._finish(r if r.width() >= 3 and r.height() >= 3 else None)
 
     def keyPressEvent(self, ev):
@@ -3479,29 +3532,118 @@ class MainWindow(QMainWindow):
         self._hide_scrollbar_then(page, _shot)
 
     def _capture_region(self, tview, default_path: str, to_clipboard: bool):
-        """表示部分をキャプチャしてから範囲選択オーバーレイで切り出して保存/コピー"""
+        """範囲選択オーバーレイで指定した範囲をキャプチャして保存/コピー。
+        ドラッグで画面の上下端に近づくとページが自動スクロールし、
+        1画面を超える縦長の範囲も選択できる（スクロールしながら結合撮影）。"""
         web = tview._view
         page = web.page()
-        def _shot():
-            pm = web.grab()
+        def _begin():
+            def _with_scroll(y0):
+                try:
+                    y0 = int(y0 or 0)
+                except Exception:
+                    y0 = 0
+                def _done(rect):
+                    if rect is None:
+                        # キャンセル: 自動スクロールした分を元に戻す
+                        self._restore_scrollbar(page)
+                        page.runJavaScript(f"window.scrollTo(0,{y0});")
+                        return
+                    self._capture_page_region(tview, rect, y0,
+                                              default_path, to_clipboard)
+                _RegionSelectOverlay(tview, web, _done,
+                                     page=page, scroll_base=y0)
+            page.runJavaScript("window.scrollY", _with_scroll)
+        self._hide_scrollbar_then(page, _begin)
+
+    def _capture_page_region(self, tview, rect, y0: int,
+                             default_path: str, to_clipboard: bool):
+        """ページ座標(表示時scrollY=y0原点)の矩形 rect をスクロールしながら
+        キャプチャして1枚に結合し、保存/コピーする。撮影後は y0 に復帰。"""
+        import math
+        from PySide6.QtGui import QImage, QPainter
+        web = tview._view
+        page = web.page()
+        SEG_MAX = 28000   # 出力1枚の最大高さ（デバイスpx。QImage/PNG上限の安全圏）
+        WAIT = 250        # スクロール後の描画待ち(ms)
+        top_abs = y0 + rect.top()
+        bottom_abs = y0 + rect.bottom() + 1
+        st = {"img": None, "painter": None, "dev_y": 0, "k": 1.0,
+              "pos": top_abs, "first": True, "trunc": False, "x_dev": 0, "w_dev": 0}
+
+        def _finish(ok: bool, msg: str = ""):
+            try:
+                if st["painter"]:
+                    st["painter"].end(); st["painter"] = None
+            except Exception:
+                pass
             self._restore_scrollbar(page)
-            if pm.isNull() or pm.height() == 0:
-                QMessageBox.warning(self, "スクリーンショット",
-                                    "画面のキャプチャに失敗しました。")
+            page.runJavaScript(f"window.scrollTo(0,{y0});")
+            if not ok:
+                if msg:
+                    QMessageBox.warning(self, "スクリーンショット", msg)
                 return
-            dpr = web.devicePixelRatioF()
-            def _done(rect):
-                if rect is None:
-                    return
-                crop = QRect(int(rect.x() * dpr), int(rect.y() * dpr),
-                             int(rect.width() * dpr), int(rect.height() * dpr)
-                             ).intersected(pm.rect())
-                if crop.isEmpty():
-                    return
-                self._output_pixmap(pm.copy(crop), default_path,
-                                    to_clipboard, "選択範囲")
-            _RegionSelectOverlay(tview, web, _done)
-        self._hide_scrollbar_then(page, _shot)
+            out = st["img"]
+            if out is None:
+                return
+            if st["dev_y"] < out.height():
+                out = out.copy(0, 0, out.width(), max(1, st["dev_y"]))
+            what = "選択範囲" + ("（下端は上限で打ち切り）" if st["trunc"] else "")
+            self._output_pixmap(QPixmap.fromImage(out), default_path,
+                                to_clipboard, what)
+
+        def _grab_at(y_act: float):
+            nonlocal bottom_abs
+            try:
+                y_act = int(y_act)
+            except Exception:
+                y_act = 0
+            pm = web.grab()
+            if pm.isNull() or pm.height() == 0:
+                _finish(False, "画面のキャプチャに失敗しました。"); return
+            if st["first"]:
+                st["first"] = False
+                st["k"] = pm.height() / max(1, web.height())
+                k = st["k"]
+                st["x_dev"] = max(0, int(rect.left() * k))
+                st["w_dev"] = min(pm.width() - st["x_dev"],
+                                  max(1, int(math.ceil(rect.width() * k))))
+                h_dev = int(math.ceil((bottom_abs - top_abs) * k))
+                if h_dev > SEG_MAX:
+                    h_dev = SEG_MAX
+                    bottom_abs = top_abs + int(SEG_MAX / k)
+                    st["trunc"] = True
+                img = QImage(max(1, st["w_dev"]), max(1, h_dev),
+                             QImage.Format.Format_RGB32)
+                img.fill(0xFF222222)
+                st["img"] = img
+                st["painter"] = QPainter(img)
+            k = st["k"]
+            # このgrabに写っている範囲は [y_act, y_act+ビュー高]。必要位置 pos が
+            # 末尾クランプ等でgrab上部より下にある場合は crop_top で切り出す
+            crop_top = int(round((st["pos"] - y_act) * k))
+            if crop_top >= pm.height():
+                _finish(True); return   # これ以上進めない（保険）
+            avail = pm.height() - max(0, crop_top)
+            need = st["img"].height() - st["dev_y"]
+            draw_h = min(avail, need)
+            if draw_h > 0:
+                st["painter"].drawPixmap(
+                    0, st["dev_y"], pm,
+                    st["x_dev"], max(0, crop_top), st["w_dev"], draw_h)
+                st["dev_y"] += draw_h
+                st["pos"] += draw_h / k
+            if st["dev_y"] >= st["img"].height() or st["pos"] >= bottom_abs - 0.5:
+                _finish(True)
+            else:
+                _scroll_step()
+
+        def _scroll_step():
+            page.runJavaScript(f"window.scrollTo(0,{int(st['pos'])});")
+            QTimer.singleShot(WAIT, lambda: page.runJavaScript(
+                "window.scrollY", _grab_at))
+
+        _scroll_step()
 
     def _output_pixmap(self, pm, default_path: str, to_clipboard: bool, what: str):
         """QPixmap をクリップボードまたはPNGファイルへ出力する"""
