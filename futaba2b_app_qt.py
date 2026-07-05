@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.213"
+APP_VER = "0.9.214"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -6014,9 +6014,11 @@ class ThreadView(QWidget):
                 hit_nos = set()
 
                 # ① 数字引用: 行頭 >数字 / >No.数字
+                # 引用は必ず過去のレス宛て（n < r.no）。開き直し等で先行レスが
+                # 新着扱いになった時、後から書いた自分のレスへの誤判定を防ぐ。
                 for m in _re.findall(r'^>+(?:No\.)?(\d+)\s*$', ct, _re.MULTILINE):
                     n = int(m)
-                    if n in my_nos:
+                    if n in my_nos and n < r.no:
                         hit_nos.add(n)
 
                 # ② テキスト/画像/ID引用: comment_html の <font color="#789922"> を解析
@@ -6048,22 +6050,28 @@ class ThreadView(QWidget):
                             if not content:
                                 continue
                             cl = content.lower()
+                            # ※以下すべて: 引用は必ず過去のレス宛て（自分レス番号 < r.no）。
+                            #   先に書かれたレスが後の自分のレスを引用したと誤判定しない。
                             # 画像引用: >タイムスタンプ.拡張子 形式
                             if _re.match(r'\d{10,}\.(jpe?g|png|gif|webp|bmp|mp4|webm)$', cl):
-                                if cl in my_fnames:
-                                    hit_nos.add(my_fnames[cl])
+                                _n = my_fnames.get(cl)
+                                if _n is not None and _n < r.no:
+                                    hit_nos.add(_n)
                                 continue
                             # ID引用: >ID:xxxxxxxx 形式（自分レスのIDと完全一致なら自分宛て）。
                             # IDは大小文字を区別するため content をそのまま使う。
                             _idm = _re.match(r'ID:(\S+)$', content)
                             if _idm:
                                 for _n in my_ids.get(_idm.group(1), []):
-                                    hit_nos.add(_n)
+                                    if _n < r.no:
+                                        hit_nos.add(_n)
                                 continue
                             # テキスト引用: 自分レスの「行」と照合。
                             #   ・どの行とも完全一致なら自分宛て（引用行 >X への >>X 返信を含む）。
                             #   ・地の文（>で始まらない行）に限り部分一致も許容（部分引用対策）。
                             for no, lines in my_res_lines.items():
+                                if no >= r.no:
+                                    continue
                                 for ln in lines:
                                     if content == ln or (not ln.startswith(">") and content in ln):
                                         hit_nos.add(no)
