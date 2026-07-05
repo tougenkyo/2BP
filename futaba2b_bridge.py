@@ -24,6 +24,7 @@ class ThreadBridge(QObject):
     futaba_thread_open_requested = Signal(str)  # ふたばスレをタブで開く
     reply_window_needed   = Signal()             # レスウィンドウを開く
     unread_state_changed  = Signal(bool)           # new-res有無通知
+    bottom_seen           = Signal()               # 末尾まで表示した（既読数同期用）
     del_requested         = Signal(int)          # del リンク
     report_del_requested  = Signal(int, bool)    # 削除依頼 (no, hide)
     delete_res_requested  = Signal(int, str, bool, bool)  # 記事削除 (no, pwd, onlyimg, hide)
@@ -182,6 +183,11 @@ class ThreadBridge(QObject):
     def notifyUnread(self, has_unread: bool):
         """new-res（赤帯）が1件以上あるかどうかを通知"""
         self.unread_state_changed.emit(has_unread)
+
+    @Slot()
+    def bottomSeen(self):
+        """スレ末尾まで表示した → 既読数を同期（カタログ+Nのリセット等）"""
+        self.bottom_seen.emit()
 
 
 class CatalogBridge(QObject):

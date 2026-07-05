@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.214"
+APP_VER = "0.9.215"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -3342,6 +3342,7 @@ class ThreadView(QWidget):
         self._bridge.scroll_top_reached.connect(self._on_scroll_top)
         self._bridge.scroll_count_updated.connect(self._on_scroll_count)
         self._bridge.unread_state_changed.connect(self.unread_state_changed)
+        self._bridge.bottom_seen.connect(self._on_bottom_seen)
         self._bridge.save_selected_images_requested.connect(self._save_selected_images)
         self._bridge.browse_save_selected_requested.connect(self._browse_save_selected)
         self._bridge.subfolder_save_requested.connect(self._subfolder_save_menu)
@@ -3402,6 +3403,30 @@ class ThreadView(QWidget):
         ポップアップも閉じる。フォーカスは移さない。"""
         if hasattr(self, "_search_edit") and self._search_edit.text():
             self._search_edit.clear()
+
+    def _on_bottom_seen(self):
+        """JS: スレ末尾まで表示した → 既読数を現在のレス数に同期する。
+        更新（再取得）を待たずにカタログの+Nが0になり、次回表示でも赤帯が
+        付かなくなる（DOM上の赤帯除去はJS側 _checkUnreadAtBottom が行う）。"""
+        th = getattr(self, "_thread", None)
+        if not th or not th.url or not th.res_list:
+            return
+        s = self._settings
+        # モデル側の新着フラグも落とす（モード切替・再描画での赤帯復活防止）
+        for r in th.res_list:
+            if r.is_new:
+                r.is_new = False
+        n_thread = len(th.res_list)
+        n_cat = max(0, n_thread - 1)   # カタログの+Nは返信数（OP除外）単位
+        if (s.thread_read_counts.get(th.url) == n_thread
+                and s.catalog_read_counts.get(th.url) == n_cat):
+            return   # 変化なし（末尾滞在中の多重呼び出し対策）
+        s.thread_read_counts[th.url] = n_thread
+        s.catalog_read_counts[th.url] = n_cat
+        try:
+            s.save()
+        except Exception:
+            pass
 
     def _on_copy_text(self, text: str):
         """テキスト選択メニューの「コピー」→ クリップボードにコピー"""
@@ -4983,16 +5008,31 @@ class ThreadView(QWidget):
     };
     document.addEventListener('contextmenu', window._thumbCtx);
 
-    /* ── スクロール時: タブ青背景の制御（新着の帯は末尾では消さない） ── */
+    /* ── スクロール時: 末尾表示の検知（タブ青背景・赤帯・既読数の同期） ── */
     /*    末尾を表示したら「既読（_unreadSeen）」とみなしタブ青背景をデフォルトに   */
-    /*    戻す。新着の帯（.new-res / .new-res-divider / .qt-new）はここでは消さず、  */
-    /*    更新時（appendNewReplies 側）に既読化する。                              */
+    /*    戻し、新着の帯（.new-res）と仕切り線も既読化、bridge.bottomSeen で       */
+    /*    Python側の既読数を同期する（更新しなくてもカタログの+Nが0に戻る）。       */
     /*    _unreadSeen は新着到着時に false へリセットされる（青背景を再表示可能に）。 */
     function _checkUnreadAtBottom() {
         var fromBottom = document.documentElement.scrollHeight
                          - window.scrollY - window.innerHeight;
         if (fromBottom <= 80) {
-            window._unreadSeen = true;   /* 末尾を表示＝既読扱い（帯は消さない） */
+            window._unreadSeen = true;   /* 末尾を表示＝既読扱い */
+            /* 実際に見えている時だけ既読化する（バックグラウンドタブの
+               自動スクロール等で「見ていないのに既読」になるのを防ぐ）。
+               bottomSeen はPython側で冪等（既読数に変化がなければ何もしない）。 */
+            if (!document.hidden) {
+                var newones = document.querySelectorAll('.res.new-res');
+                if (newones.length) {
+                    newones.forEach(function(el) { el.classList.remove('new-res'); });
+                    if (typeof _updateNewResDivider === 'function') {
+                        try { _updateNewResDivider(); } catch(e) {}
+                    }
+                }
+                if (typeof bridge !== 'undefined' && bridge && bridge.bottomSeen) {
+                    bridge.bottomSeen();
+                }
+            }
         }
         var has = (!window._unreadSeen)
                   && (document.querySelectorAll('.res.new-res').length > 0);
