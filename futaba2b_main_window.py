@@ -5105,6 +5105,23 @@ class MainWindow(QMainWindow):
             pass
 
     def closeEvent(self, event):
+        # ── 終了処理の最初にバックグラウンド更新を全停止する ──────────────────
+        # 1日運用でタブ（＝WebEngineプロファイル）が多いと破棄に時間がかかり、
+        # その間も自動更新スレッドが破棄途中のビューを触ってクラッシュ
+        # (0xC0000005) していた。終了フラグを立て、自動更新タイマーと先読みを
+        # 止めて、以後のバックグラウンド由来のビュー操作を黙らせる。
+        from futaba2b_app_qt import set_app_shutting_down
+        set_app_shutting_down()
+        try:
+            if getattr(self, "_ar_mgr", None) is not None:
+                self._ar_mgr.stop()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_fetcher", None) is not None:
+                self._fetcher.shutdown_prefetch()
+        except Exception:
+            pass
         self._save_tab_state()          # ← タブ状態を保存
         # 最近閉じたスレ・最近開いた画像を永続化
         self._settings.recent_closed_list = [

@@ -1793,6 +1793,27 @@ class FutabaFetcher:
         if ev is not None:
             ev.set()
 
+    def shutdown_prefetch(self) -> None:
+        """全ての先読みを中断してプールを畳む（アプリ終了時に呼ぶ）。
+        未着手タスクをキャンセルし実行中DLも中断させることで、終了処理中に
+        バックグラウンドのネットワーク/ディスクI/Oが走り続けるのを止め、
+        プロセス終了を速める。"""
+        for ev in list(self._prefetch_cancel.values()):
+            try:
+                ev.set()
+            except Exception:
+                pass
+        self._prefetch_cancel.clear()
+        pool = self._prefetch_pool
+        self._prefetch_pool = None
+        if pool is not None:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except TypeError:   # Python 3.8 以前は cancel_futures 未対応
+                pool.shutdown(wait=False)
+            except Exception:
+                pass
+
     def _get_prefetch_pool(self):
         if self._prefetch_pool is None:
             from concurrent.futures import ThreadPoolExecutor

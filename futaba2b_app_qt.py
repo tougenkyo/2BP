@@ -121,7 +121,24 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.216"
+APP_VER = "0.9.217"
+
+# ── アプリ終了中フラグ ───────────────────────────────────────────────────────
+# 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
+# メインスレッドのビューを触る」処理は、終了中はWebEnginePage/Profileが破棄され
+# つつあり、isValid=True でも実体が壊れかけているためアクセスするとネイティブ
+# クラッシュ(0xC0000005)を起こす。各コールバックの冒頭でこのフラグを見て黙る。
+_APP_SHUTTING_DOWN = False
+
+
+def app_is_shutting_down() -> bool:
+    return _APP_SHUTTING_DOWN
+
+
+def set_app_shutting_down(flag: bool = True) -> None:
+    global _APP_SHUTTING_DOWN
+    _APP_SHUTTING_DOWN = flag
+
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -8527,7 +8544,7 @@ class AutoRefreshManager(QObject):
         self._catalog_reload.connect(self._do_catalog_reload)
         self._fetching_done.connect(lambda u: self._fetching.discard(u))
         def _on_thread_dead_sig(v, u):
-            if not v:
+            if not v or app_is_shutting_down():
                 return
             try:
                 from shiboken6 import isValid
@@ -8548,7 +8565,7 @@ class AutoRefreshManager(QObject):
         self._thread_dead_sig.connect(_on_thread_dead_sig)
 
         def _on_errband_sig(v, text):
-            if not v:
+            if not v or app_is_shutting_down():
                 return
             try:
                 from shiboken6 import isValid
@@ -8568,7 +8585,7 @@ class AutoRefreshManager(QObject):
         self._errband_sig.connect(_on_errband_sig)
 
         def _on_thread_full_sig(v, u):
-            if not v:
+            if not v or app_is_shutting_down():
                 return
             try:
                 from shiboken6 import isValid
@@ -8676,6 +8693,10 @@ class AutoRefreshManager(QObject):
 
     # ── 1秒ごと ──
     def _tick(self):
+        # 終了処理中は自動更新を完全停止（破棄中ビューへのアクセスによるクラッシュ防止）
+        if app_is_shutting_down():
+            self._timer.stop()
+            return
         # 遅延保存フラッシュ（メインスレッド・5秒スロットル）
         if self._settings_dirty and (time.monotonic() - self._last_settings_save) >= 5.0:
             self._settings_dirty = False
@@ -8728,6 +8749,8 @@ class AutoRefreshManager(QObject):
 
     def _do_refresh(self, idx: int):
         import threading
+        if app_is_shutting_down():
+            return
         entry = self._entries[idx]
         # 同一エントリが既にフェッチ中なら投入しない（URLキー: BG実行中に他エントリが
         # remove()されてもindexがズレず、完了通知の取りこぼしが起きない）
@@ -9043,7 +9066,7 @@ class AutoRefreshManager(QObject):
 
     def _apply_sd_to_view(self, view, sd: dict):
         """そうだね数をDOMに反映し通知チェック（メインスレッドで実行）"""
-        if not sd:
+        if not sd or app_is_shutting_down():
             return
         try:
             from shiboken6 import isValid
@@ -9058,6 +9081,8 @@ class AutoRefreshManager(QObject):
             view._check_self_res_notifications(th, [])
 
     def _update_view(self, view, thread, scroll, bouyomi=False):
+        if app_is_shutting_down():
+            return
         try:
             from shiboken6 import isValid
             if not isValid(view):
@@ -9321,6 +9346,8 @@ class AutoRefreshManager(QObject):
 
     def _do_catalog_reload(self, view):
         """カタログビューを安全にリロードする（メインスレッド）"""
+        if app_is_shutting_down():
+            return
         try:
             if view:
                 view.reload()
