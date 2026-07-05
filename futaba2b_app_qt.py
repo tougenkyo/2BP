@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.210"
+APP_VER = "0.9.211"
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -2025,6 +2025,19 @@ class BoardPane(QWidget):
         save_menu.addAction("HTMLとして保存",        self._save_html_current)
         save_menu.addAction("MHTMLとして保存(S)",    self._save_mht_current)
         save_menu.addAction("ZIPとして保存",         self._save_zip_current)
+        ss_menu = save_menu.addMenu("スクリーンショット(PNG)")
+        for _lbl, _k, _d in (
+                ("ファイルに全体を保存…",           "full",   "file"),
+                ("ファイルに選択範囲を保存…",       "region", "file"),
+                ("ファイルに表示部分を保存…",       "view",   "file"),
+                (None, None, None),
+                ("クリップボードに全体をコピー",     "full",   "clip"),
+                ("クリップボードに選択範囲をコピー", "region", "clip"),
+                ("クリップボードに表示部分をコピー", "view",   "clip")):
+            if _lbl is None:
+                ss_menu.addSeparator()
+                continue
+            ss_menu.addAction(_lbl, lambda k=_k, d=_d: self._screenshot_current(k, d))
         self._btn_save.setMenu(save_menu)
         self._btn_save.clicked.connect(self._save_current_default)  # 左クリック = 前回の保存種類（初期値zip）
 
@@ -2523,6 +2536,12 @@ class BoardPane(QWidget):
         self._remember_save_format("zip")
         w = self._tabs.currentWidget()
         if isinstance(w, ThreadView): w.save_as_zip()
+
+    def _screenshot_current(self, kind: str, dest: str):
+        """保存ボタンメニューのスクリーンショット → MainWindowの共通処理へ委譲"""
+        w = self.window()
+        if hasattr(w, '_screenshot_action'):
+            w._screenshot_action(kind, dest)
 
     def _scroll_next_bookmark(self): pass
 

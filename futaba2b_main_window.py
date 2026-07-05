@@ -66,6 +66,75 @@ _UPDATE_VERSION_URL   = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/{_UPD
 _UPDATE_ZIP_URL       = f"https://codeload.github.com/{_UPDATE_REPO}/zip/refs/heads/{_UPDATE_BRANCH}"
 
 
+class _RegionSelectOverlay(QWidget):
+    """スクリーンショットの範囲選択オーバーレイ。
+    対象ビュー(tview)の上にWebビュー(web)と同じ領域で重ね、ドラッグで矩形選択する。
+    確定で on_done(QRect[webローカル座標])、Esc/右クリックで on_done(None)。"""
+
+    def __init__(self, tview: QWidget, web: QWidget, on_done):
+        super().__init__(tview)
+        from PySide6.QtCore import QPoint, QRect
+        self._on_done = on_done
+        self._origin = None
+        self._cur = None
+        pos = web.mapTo(tview, QPoint(0, 0))
+        self.setGeometry(QRect(pos, web.size()))
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.show()
+        self.raise_()
+        self.setFocus()
+
+    def _finish(self, rect):
+        cb, self._on_done = self._on_done, None
+        self.close()
+        if cb:
+            cb(rect)
+
+    def paintEvent(self, ev):
+        from PySide6.QtGui import QPainter, QColor, QPen
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(0, 0, 0, 90))
+        if self._origin is not None and self._cur is not None:
+            r = QRect(self._origin, self._cur).normalized()
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+            p.fillRect(r, QColor(0, 0, 0, 0))
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            pen = QPen(QColor("#1a6fd4")); pen.setWidth(2)
+            p.setPen(pen)
+            p.drawRect(r)
+        else:
+            p.setPen(QColor(255, 255, 255))
+            p.drawText(self.rect().adjusted(0, 8, 0, 0),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       "ドラッグで範囲を選択（Esc/右クリックでキャンセル）")
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.RightButton:
+            self._finish(None); return
+        self._origin = ev.position().toPoint()
+        self._cur = self._origin
+        self.update()
+
+    def mouseMoveEvent(self, ev):
+        if self._origin is not None:
+            self._cur = ev.position().toPoint()
+            self.update()
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() != Qt.MouseButton.LeftButton or self._origin is None:
+            return
+        r = QRect(self._origin, ev.position().toPoint()).normalized()
+        self._finish(r if r.width() >= 3 and r.height() >= 3 else None)
+
+    def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key.Key_Escape:
+            self._finish(None)
+        else:
+            super().keyPressEvent(ev)
+
+
 class MainWindow(QMainWindow):
     _bbsmenu_signal   = Signal(list)   # スレッド→UIの安全な橋渡し
     _tab_icon_signal  = Signal(object, object, bytes)  # (inner, view, data) タブアイコン設定
@@ -393,8 +462,21 @@ class MainWindow(QMainWindow):
                                    triggered=lambda: self._save_log("mht")))
         log_menu.addAction(QAction("ZIP として保存…", self,
                                    triggered=lambda: self._save_log("zip")))
-        log_menu.addAction(QAction("スクリーンショット(PNG) として保存…", self,
-                                   triggered=self._save_log_screenshot))
+        ss_menu = log_menu.addMenu("スクリーンショット(PNG)")
+        for _lbl, _kind, _dest in (
+                ("ファイルに全体を保存…",           "full",   "file"),
+                ("ファイルに選択範囲を保存…",       "region", "file"),
+                ("ファイルに表示部分を保存…",       "view",   "file"),
+                (None, None, None),
+                ("クリップボードに全体をコピー",     "full",   "clip"),
+                ("クリップボードに選択範囲をコピー", "region", "clip"),
+                ("クリップボードに表示部分をコピー", "view",   "clip")):
+            if _lbl is None:
+                ss_menu.addSeparator()
+                continue
+            ss_menu.addAction(QAction(
+                _lbl, self,
+                triggered=lambda _=False, k=_kind, d=_dest: self._screenshot_action(k, d)))
         bm.addAction(QAction("ログを開く(&O)…", self,
                              triggered=self._open_log_file,
                              shortcut=_sc("open_log")))
@@ -3314,27 +3396,134 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "保存エラー", str(e))
 
     # ── スクリーンショット保存 ────────────────────────────────────────────
-    def _save_log_screenshot(self):
-        """スレ全体をスクリーンショット(PNG)として保存。
-        長いスレ（1000レス等）は1ファイル最大高さで自動分割保存する。"""
-        cur, thread = self._get_thread_for_log()
-        if not thread: return
-        default_path = self._log_full_path(thread, "png")
+    def _get_view_for_screenshot(self):
+        """スクショ対象ビュー（ThreadView/CatalogView）と既定保存パスを返す。
+        対象タブでなければ (None, "")。"""
+        inner = self._active_inner()
+        cur = inner.currentWidget() if inner else None
+        if isinstance(cur, ThreadView):
+            thread = getattr(cur, '_thread', None)
+            if thread:
+                return cur, self._log_full_path(thread, "png")
+        elif isinstance(cur, CatalogView):
+            import re as _re, datetime as _dt
+            b = getattr(cur, '_board', None)
+            name = _re.sub(r'[\\/:*?"<>|]', '_', getattr(b, 'name', '') or 'catalog')
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            full = os.path.join(self._log_save_dir(), f"カタログ_{name}_{ts}.png")
+            try:
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+            except OSError:
+                pass
+            return cur, full
+        return None, ""
+
+    def _screenshot_action(self, kind: str, dest: str):
+        """スクリーンショット共通入口（メニューバー/保存ボタンメニューから）。
+        kind: full=全体（分割保存対応） / region=選択範囲 / view=表示部分
+        dest: file=PNG保存 / clip=クリップボード"""
+        tview, default_path = self._get_view_for_screenshot()
+        if not tview:
+            self.statusBar().showMessage(
+                "スレッドまたはカタログのタブで実行してください", 4000)
+            return
+        if kind == "full":
+            if dest == "clip":
+                self._capture_thread_screenshot(tview, "", to_clipboard=True)
+            else:
+                path = self._ask_screenshot_path(default_path)
+                if path:
+                    self._capture_thread_screenshot(tview, path)
+        elif kind == "view":
+            self._capture_viewport(tview, default_path, dest == "clip")
+        elif kind == "region":
+            self._capture_region(tview, default_path, dest == "clip")
+
+    def _ask_screenshot_path(self, default_path: str) -> str:
+        """PNG保存先を選ばせて返す（キャンセルは空文字）"""
         path, _ = QFileDialog.getSaveFileName(
             self, "スクリーンショットで保存", default_path,
             "PNG 画像 (*.png);;すべてのファイル (*)")
-        if not path: return
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-        except Exception:
-            pass
-        self._capture_thread_screenshot(cur, path)
+        if path:
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+            except Exception:
+                pass
+        return path
 
-    def _capture_thread_screenshot(self, tview, path):
+    def _hide_scrollbar_then(self, page, fn):
+        """スクロールバー非表示CSSを注入し、描画反映後に fn() を実行する（grab用）"""
+        page.runJavaScript(
+            "if(!document.getElementById('_sscap')){"
+            "var s=document.createElement('style');s.id='_sscap';"
+            "s.textContent='::-webkit-scrollbar{display:none!important}';"
+            "document.head.appendChild(s);}")
+        QTimer.singleShot(80, fn)
+
+    @staticmethod
+    def _restore_scrollbar(page):
+        page.runJavaScript("var e=document.getElementById('_sscap');if(e)e.remove();")
+
+    def _capture_viewport(self, tview, default_path: str, to_clipboard: bool):
+        """表示部分（ビューポート）を1枚キャプチャして保存/コピー"""
+        web = tview._view
+        page = web.page()
+        def _shot():
+            pm = web.grab()
+            self._restore_scrollbar(page)
+            if pm.isNull() or pm.height() == 0:
+                QMessageBox.warning(self, "スクリーンショット",
+                                    "画面のキャプチャに失敗しました。")
+                return
+            self._output_pixmap(pm, default_path, to_clipboard, "表示部分")
+        self._hide_scrollbar_then(page, _shot)
+
+    def _capture_region(self, tview, default_path: str, to_clipboard: bool):
+        """表示部分をキャプチャしてから範囲選択オーバーレイで切り出して保存/コピー"""
+        web = tview._view
+        page = web.page()
+        def _shot():
+            pm = web.grab()
+            self._restore_scrollbar(page)
+            if pm.isNull() or pm.height() == 0:
+                QMessageBox.warning(self, "スクリーンショット",
+                                    "画面のキャプチャに失敗しました。")
+                return
+            dpr = web.devicePixelRatioF()
+            def _done(rect):
+                if rect is None:
+                    return
+                crop = QRect(int(rect.x() * dpr), int(rect.y() * dpr),
+                             int(rect.width() * dpr), int(rect.height() * dpr)
+                             ).intersected(pm.rect())
+                if crop.isEmpty():
+                    return
+                self._output_pixmap(pm.copy(crop), default_path,
+                                    to_clipboard, "選択範囲")
+            _RegionSelectOverlay(tview, web, _done)
+        self._hide_scrollbar_then(page, _shot)
+
+    def _output_pixmap(self, pm, default_path: str, to_clipboard: bool, what: str):
+        """QPixmap をクリップボードまたはPNGファイルへ出力する"""
+        if to_clipboard:
+            QGuiApplication.clipboard().setPixmap(pm)
+            self.statusBar().showMessage(f"{what}をクリップボードにコピーしました", 5000)
+            return
+        path = self._ask_screenshot_path(default_path)
+        if not path:
+            return
+        if pm.save(path, "PNG"):
+            self.statusBar().showMessage(f"保存しました: {path}", 8000)
+        else:
+            QMessageBox.warning(self, "スクリーンショット", "PNGの保存に失敗しました。")
+
+    def _capture_thread_screenshot(self, tview, path, to_clipboard: bool = False):
         """WebEngineViewをスクロールしながら分割キャプチャしてPNG保存する。
         非同期ステートマシン（メインスレッドのみ・QTimer駆動）。
         1ファイルの最大高さは SEG_MAX デバイスpx（QImage/PNG上限32767の安全圏）。
-        超える場合は path_001.png, path_002.png ... に分割する。"""
+        超える場合は path_001.png, path_002.png ... に分割する。
+        to_clipboard=True なら保存せずクリップボードへ1枚コピーする
+        （SEG_MAXを超える長さは先頭部分のみ・打ち切りを通知）。"""
         import math
         from PySide6.QtGui import QImage, QPainter
         from PySide6.QtWidgets import QProgressDialog, QMessageBox
@@ -3349,6 +3538,7 @@ class MainWindow(QMainWindow):
             "prev_end": 0,            # キャプチャ済み末尾(JS px)
             "seg_img": None, "seg_painter": None,
             "seg_dev_y": 0, "seg_idx": 0, "files": [],
+            "clip_imgs": [], "clip_trunc": False,
             "orig_scroll": 0, "cancelled": False, "first": True,
         }
 
@@ -3385,12 +3575,15 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             if st["seg_img"] is not None:
-                fp = _seg_path(st["seg_idx"])
                 # 実際に書き込んだ高さまで切り出して保存
                 out = st["seg_img"] if st["seg_dev_y"] >= st["seg_img"].height() \
                       else st["seg_img"].copy(0, 0, st["seg_img"].width(), max(1, st["seg_dev_y"]))
-                out.save(fp, "PNG")
-                st["files"].append(fp)
+                if to_clipboard:
+                    st["clip_imgs"].append(out)
+                else:
+                    fp = _seg_path(st["seg_idx"])
+                    out.save(fp, "PNG")
+                    st["files"].append(fp)
                 st["seg_img"] = None
                 st["seg_idx"] += 1
 
@@ -3407,7 +3600,13 @@ class MainWindow(QMainWindow):
                 "var e=document.getElementById('_sscap');if(e)e.remove();"
                 f"window.scrollTo(0,{st['orig_scroll']});")
             dlg.close()
-            if ok and st["files"]:
+            if ok and to_clipboard and st["clip_imgs"]:
+                QGuiApplication.clipboard().setImage(st["clip_imgs"][0])
+                m = "全体をクリップボードにコピーしました"
+                if st["clip_trunc"]:
+                    m += "（長すぎるため先頭部分のみ）"
+                self.statusBar().showMessage(m, 6000)
+            elif ok and st["files"]:
                 n = len(st["files"])
                 self.statusBar().showMessage(
                     f"保存しました: {st['files'][0]}"
@@ -3430,6 +3629,11 @@ class MainWindow(QMainWindow):
                 st["first"] = False
                 st["k"] = pm.height() / max(1, st["vh"])
                 st["total_dev"] = int(math.ceil(st["total"] * st["k"]))
+                if to_clipboard and st["total_dev"] > SEG_MAX:
+                    # クリップボードは1枚のみ: SEG_MAX で打ち切り
+                    st["total_dev"] = SEG_MAX
+                    st["total"] = int(SEG_MAX / st["k"])
+                    st["clip_trunc"] = True
                 st["nfiles"] = max(1, math.ceil(st["total_dev"] / SEG_MAX))
                 _open_segment()
 
