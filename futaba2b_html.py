@@ -413,6 +413,8 @@ body.op-no-id .post-id.post-id-warn {
     opacity: 1 !important;
     filter: none !important;
 }
+/* ─ 抽出（スレ内絞り込み）で非表示にするレス ─ */
+.res._ext_hide { display: none !important; }
 .page-footer {
     font-size: 8pt; color: var(--footer-color); padding: 6px 8px 4px;
     border-top: 1px solid var(--footer-border); margin-top: 8px;
@@ -1052,26 +1054,33 @@ function playVideoInline(container) {
     });
 }
 
-// ── レス抽出 ──────────────────────────────────────────────────────────────
+// ── レス抽出（スレ内絞り込み） ─────────────────────────────────────────────
+// 非表示は _ext_hide クラスで行い、NG非表示等のインラインstyleには触れない。
 function extractPosts(query) {
     const op    = document.querySelector('.res.op');
-    const all   = document.querySelectorAll('.res.reply');
+    /* respool（ポップアップ用隠しプール）内のレスは対象外 */
+    const all   = Array.prototype.filter.call(
+        document.querySelectorAll('.res.reply'),
+        function(el) { return !el.closest('#_respool'); });
     let   noMsg = document.getElementById('_extract_no_result');
     if (!query) {
-        all.forEach(el => { el.style.display = ''; });
-        if (op) op.style.display = '';
+        all.forEach(el => el.classList.remove('_ext_hide'));
+        if (op) op.classList.remove('_ext_hide');
         if (noMsg) noMsg.remove();
         return;
     }
     const q = query.toLowerCase();
     let hits = 0;
     all.forEach(el => {
+        el.classList.remove('_ext_hide');
+        /* NG・削除等で元々非表示のレスは対象外（表示状態を変えない） */
+        if (window.getComputedStyle(el).display === 'none') return;
         const txt = el.textContent.toLowerCase();
-        if (txt.includes(q)) { el.style.display = ''; hits++; }
-        else                  { el.style.display = 'none'; }
+        if (txt.includes(q)) { hits++; }
+        else                  { el.classList.add('_ext_hide'); }
     });
     // OP（0レス目）はヒット数に応じて表示/非表示
-    if (op) op.style.display = hits > 0 ? '' : 'none';
+    if (op) op.classList.toggle('_ext_hide', hits === 0);
     // ヒット0件のとき赤字メッセージを表示
     if (hits === 0) {
         if (!noMsg) {
