@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.219"
+APP_VER = "0.9.220"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4641,12 +4641,19 @@ class ThreadView(QWidget):
         # 投稿後の最下部スクロール: reload完了（差分追記/全体再描画）後に確実に行う
         if getattr(self, '_scroll_bottom_after_update', False):
             self._scroll_bottom_after_update = False
+            # 自分の書き込みで末尾へ飛ぶ間は新着赤帯の既読化を抑制する
+            # （_checkUnreadAtBottom が window._suppressUnreadClear を参照）。
             def _scroll_to_bottom():
                 self._view.page().runJavaScript(
+                    "window._suppressUnreadClear=true;"
                     "window.scrollTo(0,document.body.scrollHeight);")
             # DOM追記・レイアウト確定を待ってからスクロール（複数回保険）
             QTimer.singleShot(120, _scroll_to_bottom)
             QTimer.singleShot(450, _scroll_to_bottom)
+            # 投稿後スクロールのデバウンス(200ms)が済む頃に抑制を解除する。
+            # 以後はユーザー自身が末尾までスクロールすれば通常どおり赤帯が消える。
+            QTimer.singleShot(900, lambda: self._view.page().runJavaScript(
+                "window._suppressUnreadClear=false;"))
 
     def _load_html_via_tempfile(self, html: str, base_url: QUrl):
         """HTMLを一時ファイル経由でロード（setContent の HTTPS ナビゲーション問題を回避）
@@ -5227,6 +5234,11 @@ class ThreadView(QWidget):
     /*    Python側の既読数を同期する（更新しなくてもカタログの+Nが0に戻る）。       */
     /*    _unreadSeen は新着到着時に false へリセットされる（青背景を再表示可能に）。 */
     function _checkUnreadAtBottom() {
+        /* 自分の書き込みで末尾へ自動スクロールした間は既読化しない。
+           （赤帯・仕切り線・カタログ+N・タブ青背景を維持し、まだ読んでいない
+           他人の新着レスを見落とさないようにする。投稿後スクロール中のみ
+           _suppressUnreadClear=true。ユーザー自身のスクロールでは解除される） */
+        if (window._suppressUnreadClear) return;
         var fromBottom = document.documentElement.scrollHeight
                          - window.scrollY - window.innerHeight;
         if (fromBottom <= 80) {
