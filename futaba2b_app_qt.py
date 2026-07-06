@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.222"
+APP_VER = "0.9.223"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1061,6 +1061,7 @@ _QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
                 ".qt-no{color:#0000EE;text-decoration:none;margin:0 4px;}"
                 ".qt-no:hover{text-decoration:underline;color:#cc1105;}"
                 ".qt-new{color:#cc1105;font-size:8pt;}"
+                ".qt-sod{color:#c55000;font-size:8pt;margin-left:2px;}"
                 ".qt-branch{color:#888;margin-right:2px;}"
                 ".qt-thumb{max-height:60px;max-width:80px;object-fit:contain;"
                 "vertical-align:middle;margin-left:4px;border:1px solid #aaa;cursor:pointer;}"
@@ -3399,10 +3400,12 @@ class ThreadView(QWidget):
         self._mode_grp.buttonClicked.connect(
             lambda b: self._set_view_mode(b.property("mode")))
         # ── そうだね順チェックボックス（モードボタンの右） ──
-        self._chk_sodane = QCheckBox("そうだね順")
+        self._chk_sodane = QCheckBox("そ順")
         self._chk_sodane.setToolTip(
-            "返信・画像モードをそうだね数の多い順に並べる\n"
-            "（引用モードはツリー構造のため対象外）")
+            "そうだね数の多い順に並べる\n"
+            "・返信/画像モード: 全体をそうだね降順\n"
+            "・引用モード: ツリーを保ったまま各階層内でそうだね降順"
+            "（No.の右にそうだね数を表示）")
         self._chk_sodane.setFixedHeight(24)
         self._chk_sodane.setChecked(getattr(self._settings, 'sort_by_sodane', False))
         self._chk_sodane.toggled.connect(self._on_sodane_toggled)
@@ -5822,6 +5825,7 @@ class ThreadView(QWidget):
         seq = [0]
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
         _my_nos = self._get_my_nos(self._thread)   # 自分のレス（青帯）用
+        _sort_sod = getattr(self._settings, 'sort_by_sodane', False)  # そ順
         from futaba2b_html import ng_info_text as _ngit
 
         def render_node(no, prefix, is_last, depth):
@@ -5840,6 +5844,8 @@ class ThreadView(QWidget):
                        if res.image_url and res.thumb_url else "")
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
+            _sod = (f'<span class="qt-sod">そうだね{res.sodane}</span>'
+                    if _sort_sod else '')
             _del_c = " deleted" if res.is_deleted else ""
             if no in _my_nos:   _del_c += " self-res"   # 自分のレス→青帯
             elif res.is_new:    _del_c += " new-res"    # 新着レス→赤帯
@@ -5861,7 +5867,7 @@ class ThreadView(QWidget):
                 rows.append('<div class="qt-sep"></div>')
                 rows.append(
                     f'<div class="qt-row qt-root{_del_c}"{_ngi_attr}>'
-                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '
+                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_sod}{_dm} '
                     f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             else:
@@ -5869,7 +5875,7 @@ class ThreadView(QWidget):
                 rows.append(
                     f'<div class="qt-row qt-child{_del_c}"{_ngi_attr} style="margin-left:{depth*20}px">'
                     f'<span class="qt-branch">{branch}</span> '
-                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '
+                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_sod}{_dm} '
                     f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
 
@@ -5878,6 +5884,13 @@ class ThreadView(QWidget):
                 render_node(cno, prefix, i == len(ch) - 1, depth + 1)
 
         roots = [r for r in res_list if r.no not in parent_of]
+        if _sort_sod:
+            # ツリーは保ったまま各階層内でそうだね降順（同数は投稿順=安定ソート）。
+            # まず親(ルート)を、次に各階層の子リストを入れ替える。
+            _sk = lambda n: res_map[n].sodane if n in res_map else 0
+            for _p in children:
+                children[_p].sort(key=_sk, reverse=True)
+            roots.sort(key=lambda r: r.sodane, reverse=True)
         for r in roots:
             render_node(r.no, "", True, 0)
         rows.append('<div class="qt-sep"></div>')
@@ -5981,6 +5994,7 @@ class ThreadView(QWidget):
         seq = [0]
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
         _my_nos = self._get_my_nos(self._thread)   # 自分のレス（青帯）用
+        _sort_sod = getattr(self._settings, 'sort_by_sodane', False)  # そ順
         from futaba2b_html import ng_info_text as _ngit
         def render_node(no, prefix, is_last, depth):
             res = res_map[no]
@@ -5998,6 +6012,8 @@ class ThreadView(QWidget):
                        if res.image_url and res.thumb_url else "")
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
+            _sod = (f'<span class="qt-sod">そうだね{res.sodane}</span>'
+                    if _sort_sod else '')
             _del_c = " deleted" if res.is_deleted else ""
             if no in _my_nos:   _del_c += " self-res"   # 自分のレス→青帯
             elif res.is_new:    _del_c += " new-res"    # 新着レス→赤帯
@@ -6017,18 +6033,25 @@ class ThreadView(QWidget):
             if depth == 0:
                 rows.append('<div class="qt-sep"></div>')
                 rows.append(
-                    f'<div class="qt-row qt-root{_del_c}"{_ngi_attr}>'                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
+                    f'<div class="qt-row qt-root{_del_c}"{_ngi_attr}>'                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_sod}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             else:
                 branch = "└" if is_last else "├"
                 rows.append(
-                    f'<div class="qt-row qt-child{_del_c}"{_ngi_attr} style="margin-left:{depth*20}px">'                    f'<span class="qt-branch">{branch}</span> '                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
+                    f'<div class="qt-row qt-child{_del_c}"{_ngi_attr} style="margin-left:{depth*20}px">'                    f'<span class="qt-branch">{branch}</span> '                    f'<span class="qt-idx">{sn}</span> {img_tag}{no_str}{_sod}{_dm} '                    f'<span class="qt-txt">{txt}</span>{new_tag}</div>'
                 )
             ch = children.get(no, [])
             for i, cno in enumerate(ch):
                 render_node(cno, prefix, i == len(ch) - 1, depth + 1)
 
         roots = [r for r in res_list if r.no not in parent_of]
+        if _sort_sod:
+            # ツリーは保ったまま各階層内でそうだね降順（同数は投稿順=安定ソート）。
+            # まず親(ルート)を、次に各階層の子リストを入れ替える。
+            _sk = lambda n: res_map[n].sodane if n in res_map else 0
+            for _p in children:
+                children[_p].sort(key=_sk, reverse=True)
+            roots.sort(key=lambda r: r.sodane, reverse=True)
         for r in roots:
             render_node(r.no, "", True, 0)
         rows.append('<div class="qt-sep"></div>')
