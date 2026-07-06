@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.218"
+APP_VER = "0.9.219"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1068,6 +1068,9 @@ _QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
                 "body.show-deleted .qt-row.deleted{display:block;}"
                 ".qt-row.ng-hidden{display:none;}"
                 ".qt-row.ng-band{border-left:4px solid #1f9d1f;padding-left:4px;}"
+                # 新着=赤帯 / 自分のレス=青帯（返信モードと同色。緑帯より後に定義して優先）
+                ".qt-row.new-res{border-left:4px solid #cc1105;padding-left:4px;}"
+                ".qt-row.self-res{border-left:4px solid #1a6fd4;padding-left:4px;}"
                 ".del-done{color:#cc1105;font-weight:bold;font-size:8pt;}")
 
 def _img_mode_css(cols: int) -> str:
@@ -1083,6 +1086,9 @@ def _img_mode_css(cols: int) -> str:
             ".gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
             ".gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}"
             ".gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 4px 0 0 #1f9d1f}"
+            # 新着=赤帯 / 自分のレス=青帯（緑帯より後に定義して優先）
+            ".gi.new-res{box-shadow:inset 4px 0 0 #cc1105}"
+            ".gi.self-res{box-shadow:inset 4px 0 0 #1a6fd4}"
             ".gi-del{position:absolute;top:12px;left:1px;color:#cc1105;font-weight:bold;font-size:7pt;"
             "line-height:1.1;background:rgba(255,255,255,0.85);padding:0 2px;border-radius:2px;z-index:3}"
             # ── 一括保存の選択UI ──
@@ -5771,6 +5777,7 @@ class ThreadView(QWidget):
         rows = []
         seq = [0]
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
+        _my_nos = self._get_my_nos(self._thread)   # 自分のレス（青帯）用
         from futaba2b_html import ng_info_text as _ngit
 
         def render_node(no, prefix, is_last, depth):
@@ -5790,6 +5797,8 @@ class ThreadView(QWidget):
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
             _del_c = " deleted" if res.is_deleted else ""
+            if no in _my_nos:   _del_c += " self-res"   # 自分のレス→青帯
+            elif res.is_new:    _del_c += " new-res"    # 新着レス→赤帯
             _ngm = _is_ng(res) or (no in _hidden)   # NG対象(NGワード/画像 or 手動NG/del登録)
             if _ngm: _del_c += " ng-band"           # → 緑帯
             if _ngm and not _reveal:                # NG使う時は非表示、解除時は帯付き表示
@@ -5927,6 +5936,7 @@ class ThreadView(QWidget):
         rows = []
         seq = [0]
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
+        _my_nos = self._get_my_nos(self._thread)   # 自分のレス（青帯）用
         from futaba2b_html import ng_info_text as _ngit
         def render_node(no, prefix, is_last, depth):
             res = res_map[no]
@@ -5945,6 +5955,8 @@ class ThreadView(QWidget):
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
             _del_c = " deleted" if res.is_deleted else ""
+            if no in _my_nos:   _del_c += " self-res"   # 自分のレス→青帯
+            elif res.is_new:    _del_c += " new-res"    # 新着レス→赤帯
             _ngm = _is_ng(res) or (no in _hidden)
             if _ngm: _del_c += " ng-band"
             if _ngm and not _reveal:
@@ -6019,6 +6031,7 @@ class ThreadView(QWidget):
             return f'{b}B' if b else '?'
         items=[]
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
+        _my_nos = self._get_my_nos(self._thread)   # 自分のレス（青帯）用
         # ポップアップ用に全レスを隠しプールへ（▼被引用の引用元が画像なしレスでも
         # ポップアップ表示・引用マップ計算ができるよう全件入れる）
         # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
@@ -6036,6 +6049,8 @@ class ThreadView(QWidget):
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             _gi_cls = "gi"
             if r.is_deleted:     _gi_cls += " deleted"
+            if r.no in _my_nos:  _gi_cls += " self-res"   # 自分のレス→青帯
+            elif r.is_new:       _gi_cls += " new-res"    # 新着レス→赤帯
             _ngm = _is_ng(r) or (r.no in _hidden)   # NG対象(NGワード/画像 or 手動NG/del登録)
             if _ngm:             _gi_cls += " ng-band"      # → 緑帯
             if _ngm and not _reveal:                        # NG使う時は非表示、解除時は帯付き表示
@@ -6096,6 +6111,7 @@ class ThreadView(QWidget):
             return f'{b}B' if b else '?'
         items=[]
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
+        _my_nos = self._get_my_nos(self._thread)   # 自分のレス（青帯）用
         # ポップアップ用に全レスを隠しプールへ（▼被引用対応のため全件）。
         # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
         _id_counts = {}
@@ -6111,6 +6127,8 @@ class ThreadView(QWidget):
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             _gi_cls = "gi"
             if r.is_deleted:     _gi_cls += " deleted"
+            if r.no in _my_nos:  _gi_cls += " self-res"   # 自分のレス→青帯
+            elif r.is_new:       _gi_cls += " new-res"    # 新着レス→赤帯
             _ngm = _is_ng(r) or (r.no in _hidden)   # NG対象(NGワード/画像 or 手動NG/del登録)
             if _ngm:             _gi_cls += " ng-band"      # → 緑帯
             if _ngm and not _reveal:                        # NG使う時は非表示、解除時は帯付き表示
