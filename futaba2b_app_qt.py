@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.220"
+APP_VER = "0.9.221"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10054,6 +10054,7 @@ class ImageTabView(QWidget):
         self._media_failed: set[str] = set()  # 優先DLに失敗しリモート表示にフォールバックしたURL
         self._fit_mode = True   # True=全体表示 False=等倍
         self._zoom_last_pct = 100  # 「画面に合わせる」↔%トグル用
+        self._zoom_center = None   # クリック拡大時に中心にする相対座標(fx,fy)。使用後None
         # インライン MP4 プレーヤー
         self._mp_player   = None
         self._mp_audio    = None
@@ -10857,7 +10858,14 @@ class ImageTabView(QWidget):
                 # fit/%/100% の3状態を持つと取り違えて空振り・ちらつきが起きるため、
                 # クリックは通知のみ行い、Python が現在の _fit_mode に基づき
                 # 「画面に合わせる ↔ 直近%」を切り替える。
-                "    document.title='__imgclick__';"
+                # クリック位置の相対座標(0〜1)も渡し、フィット→拡大時に
+                # その位置を中心にできるようにする。
+                "    var fx=0.5,fy=0.5,rw=el.clientWidth,rh=el.clientHeight;"
+                "    if(rw>0&&rh>0){"
+                "      fx=Math.min(1,Math.max(0,e.offsetX/rw));"
+                "      fy=Math.min(1,Math.max(0,e.offsetY/rh));"
+                "    }"
+                "    document.title='__imgclick__:'+fx.toFixed(4)+','+fy.toFixed(4);"
                 "  });"
                 "  el.addEventListener('mouseenter',function(){"
                 "    document.title='__hover__:{}';"
@@ -11260,6 +11268,20 @@ class ImageTabView(QWidget):
             except ValueError:
                 return
             self._zoom_last_pct = pct
+            # クリック位置中心スクロール（フィット→拡大クリック時のみセットされる）。
+            # サイズ確定後の getBoundingClientRect で実位置を測り、クリック相対点が
+            # 画面中心に来るよう scrollBy する。通常のコンボ/ホイール操作では None。
+            _ctr = getattr(self, "_zoom_center", None)
+            self._zoom_center = None
+            _center_js = ""
+            if _ctr:
+                _cfx, _cfy = _ctr
+                _center_js = (
+                    "  var _vw=window.innerWidth,_vh=window.innerHeight;"
+                    "  var _r=el.getBoundingClientRect();"
+                    f"  window.scrollBy(Math.round(_r.left+{_cfx}*_r.width-_vw/2),"
+                    f"    Math.round(_r.top+{_cfy}*_r.height-_vh/2));"
+                )
             # %はnaturalWidth基準のpx指定に変換（ビューポート幅基準だと縦長画像が切れる）
             js = (
                 f"window._fitMode=false;"
@@ -11279,6 +11301,7 @@ class ImageTabView(QWidget):
                 f"  el.classList.add('pannable');"
                 f"  el.style.display='block';el.style.margin='auto';"
                 f"  el.style.visibility='visible';"
+                + _center_js +
                 f"}}"
             )
             self._view.page().runJavaScript(js)
@@ -11400,11 +11423,20 @@ class ImageTabView(QWidget):
             if info:
                 self.open_image_tab_bg.emit(info.get("url", ""), self._img_list, self._idx)
             return
-        if title == "__imgclick__":
+        if title.startswith("__imgclick__"):
             # 画像クリック: 現在の表示状態に応じて「画面に合わせる ↔ 直近%」をトグル
             self._view.page().runJavaScript("document.title='';")
+            # クリック位置の相対座標(0〜1)。フィット→拡大時にその位置を中心にする。
+            _ctr = None
+            if title.startswith("__imgclick__:"):
+                try:
+                    _fx, _fy = title.split(":", 1)[1].split(",")
+                    _ctr = (float(_fx), float(_fy))
+                except (ValueError, IndexError):
+                    _ctr = None
             if getattr(self, "_fit_mode", True):
-                # フィット中 → 直近の% へ
+                # フィット中 → 直近の% へ（クリック位置を中心に拡大）
+                self._zoom_center = _ctr
                 pct = getattr(self, "_zoom_last_pct", 100) or 100
                 self._set_zoom_combo_value(pct)
                 self._on_zoom_combo(f"{pct}%")
