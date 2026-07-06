@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.221"
+APP_VER = "0.9.222"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2519,6 +2519,11 @@ class BoardPane(QWidget):
                 getattr(w._settings, 'show_post_heatmap', False))
             w._chk_heatmap.blockSignals(False)
             w._apply_heatmap()
+        # そうだね順 チェックの表示を設定と同期（他タブで切り替えた場合）
+        if isinstance(w, ThreadView) and hasattr(w, '_chk_sodane'):
+            w._chk_sodane.blockSignals(True)
+            w._chk_sodane.setChecked(getattr(w._settings, 'sort_by_sodane', False))
+            w._chk_sodane.blockSignals(False)
 
         # ── 棒読み・スクロールチェックボックスをARエントリと同期 ──
         if isinstance(w, ThreadView) and hasattr(w, '_chk_ar_bouyomi'):
@@ -3393,6 +3398,15 @@ class ThreadView(QWidget):
         self._mode_grp.buttons()[0].setChecked(True)  # 初期は「一覧」
         self._mode_grp.buttonClicked.connect(
             lambda b: self._set_view_mode(b.property("mode")))
+        # ── そうだね順チェックボックス（モードボタンの右） ──
+        self._chk_sodane = QCheckBox("そうだね順")
+        self._chk_sodane.setToolTip(
+            "返信・画像モードをそうだね数の多い順に並べる\n"
+            "（引用モードはツリー構造のため対象外）")
+        self._chk_sodane.setFixedHeight(24)
+        self._chk_sodane.setChecked(getattr(self._settings, 'sort_by_sodane', False))
+        self._chk_sodane.toggled.connect(self._on_sodane_toggled)
+        tb.addWidget(self._chk_sodane)
         tb.addSeparator()
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("抽出 (Ctrl+Shift+F)")
@@ -3569,6 +3583,24 @@ class ThreadView(QWidget):
         ポップアップも閉じる。フォーカスは移さない。"""
         if hasattr(self, "_search_edit") and self._search_edit.text():
             self._search_edit.clear()
+
+    def _on_sodane_toggled(self, on: bool):
+        """そうだね順 チェック切替 → 設定保存＋現在モードを再描画。
+        返信モードは _last_html を作り直して並べ替えを反映。画像モードも
+        再描画で反映（引用モードはツリー構造のため並べ替え対象外）。"""
+        self._settings.sort_by_sodane = bool(on)
+        try:
+            self._settings.save()
+        except Exception:
+            pass
+        if not self._thread:
+            return
+        self._last_html_dirty = True   # 返信HTMLの再生成を強制
+        mode = ""
+        if hasattr(self, '_mode_grp'):
+            b = self._mode_grp.checkedButton()
+            mode = b.property("mode") if b else ""
+        self._set_view_mode(mode)
 
     def _on_heatmap_chk_changed(self, on: bool):
         """ヒートマップ チェック切替 → 設定に保存して即反映"""
@@ -4380,7 +4412,7 @@ class ThreadView(QWidget):
                                                    scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                                    footer_html=_make_thread_footer(thread),
                                                    my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-                                                   pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
+                                                   pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
             self._last_html = _html
             self._last_html_dirty = False
             self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
@@ -4405,7 +4437,7 @@ class ThreadView(QWidget):
                                               scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                               footer_html=_make_thread_footer(thread),
                                               my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-                                              pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
+                                              pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
         _t1 = _t.time()
         html_bytes = html.encode('utf-8')
 
@@ -5430,7 +5462,7 @@ class ThreadView(QWidget):
             hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal, scroll_bottom_count=_sbc,
             footer_html=_footer(thread),
             my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-            pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
+            pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
         self._last_html = html
         self._last_html_dirty = False
 
@@ -6035,6 +6067,10 @@ class ThreadView(QWidget):
     def _render_image_mode(self):
         if not self._thread: return
         img_res = [(s+1,r) for s,r in enumerate(r for r in self._thread.res_list if r.image_url)]
+        if getattr(self._settings, 'sort_by_sodane', False):
+            # そうだね降順（同数は元の投稿順=安定）。seqを振り直し、ギャラリー/前後移動も同順にする
+            _srt = sorted((r for _, r in img_res), key=lambda r: r.sodane, reverse=True)
+            img_res = [(i + 1, r) for i, r in enumerate(_srt)]
         self._gallery_list = [{'url':r.image_url,'thumb':r.thumb_url,'res_no':r.no,'name':r.image_name}
                                for _,r in img_res]
         def _fmt(b):
@@ -6115,6 +6151,10 @@ class ThreadView(QWidget):
             return
         # ── ギャラリーHTML断片を生成（body内コンテンツのみ） ──
         img_res = [(s+1,r) for s,r in enumerate(r for r in self._thread.res_list if r.image_url)]
+        if getattr(self._settings, 'sort_by_sodane', False):
+            # そうだね降順（同数は元の投稿順=安定）。seqを振り直し、ギャラリー/前後移動も同順にする
+            _srt = sorted((r for _, r in img_res), key=lambda r: r.sodane, reverse=True)
+            img_res = [(i + 1, r) for i, r in enumerate(_srt)]
         self._gallery_list = [{'url':r.image_url,'thumb':r.thumb_url,'res_no':r.no,'name':r.image_name}
                                for _,r in img_res]
         def _fmt(b):
@@ -9170,7 +9210,7 @@ class AutoRefreshManager(QObject):
                                       footer_html=view._thread_footer_html(thread),
                                       my_nos=self._get_my_nos_for_view(view, thread),
                 id_warn_count=getattr(self._settings,'id_warn_count',5),
-                pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
+                pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
             _cn = '' if 'キャッシュ表示' in (thread.error or '') else ' (キャッシュ表示)'
             banner = (f'<div style="background:#a00;color:#fff;padding:6px 8px;'
                       f'font-size:9pt;font-weight:bold;text-align:center;">'
@@ -9312,7 +9352,7 @@ class AutoRefreshManager(QObject):
                                   scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
                                   footer_html=view._thread_footer_html(thread),
                                   my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-                                  pseudo_expiring=_is_pseudo_red_thread(thread, self._settings))
+                                  pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
         view._thread = thread
         view._known_res_count = len(thread.res_list)
         # _last_html を更新（モード切替・ログ保存で使われる）

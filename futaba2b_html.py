@@ -2102,10 +2102,18 @@ def thread_to_html(thread, show_deleted: bool = False,
                    scroll_top_count: int = 0,
                    del_nos: set = None,
                    ng_reveal: bool = False,
-                   pseudo_expiring: bool = False) -> tuple[str, list]:
+                   pseudo_expiring: bool = False,
+                   sort_by_sodane: bool = False) -> tuple[str, list]:
     """ThreadData → (HTML文字列, 画像リスト)"""
     img_list: list = []
     rows = []
+    # 描画順: そうだね順ONならOP先頭固定＋残りをそうだね降順（同数は投稿順=安定ソート）。
+    # 新着「ここから」仕切り線は並びが変わると位置が無意味なので出さない。
+    if sort_by_sodane and len(thread.res_list) > 1:
+        _draw_list = [thread.res_list[0]] + sorted(
+            thread.res_list[1:], key=lambda r: r.sodane, reverse=True)
+    else:
+        _draw_list = thread.res_list
     deleted_count = sum(1 for r in thread.res_list[1:] if r.is_deleted)
     # ID ごとの投稿件数を事前集計
     id_counts: dict[str, int] = {}
@@ -2114,7 +2122,7 @@ def thread_to_html(thread, show_deleted: bool = False,
             id_counts[r.id_str] = id_counts.get(r.id_str, 0) + 1
     _has_name = getattr(thread.board, 'has_name_field', True)
     # 新着件数を事前集計（仕切り線の N件 表示用）。ログ保存時は仕切り線を出さない
-    _new_count = 0 if for_save else sum(
+    _new_count = 0 if (for_save or sort_by_sodane) else sum(
         1 for r in thread.res_list if r.is_new and not r.is_op)
     _divider_inserted = False
     # OP直後から新着が始まる場合、仕切り線をOP内に埋め込む
@@ -2126,7 +2134,7 @@ def thread_to_html(thread, show_deleted: bool = False,
             f'</div>'
         )
         _divider_inserted = True
-    for i, res in enumerate(thread.res_list):
+    for i, res in enumerate(_draw_list):
         # 最初の is_new レスの直前に仕切り線を挿入（OP直後以外）
         if _new_count > 0 and not _divider_inserted and res.is_new and not res.is_op:
             rows.append(
