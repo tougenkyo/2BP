@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.223"
+APP_VER = "0.9.224"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4870,30 +4870,40 @@ class ThreadView(QWidget):
     function showNo(no, x, y, fromEl) {
         var s = document.getElementById('r' + no);
         if (s) showEl([s], x, y, fromEl);
+        else showMsg('引用元はありません', x, y, fromEl);
     }
     function showNos(nos, x, y, fromEl) {
         var ss = nos.map(function(n) { return document.getElementById('r' + n); }).filter(Boolean);
         if (ss.length) showEl(ss, x, y, fromEl);
+        else showMsg('引用元はありません', x, y, fromEl);
+    }
+    /* fromEl が属するレスのNo（引用元は必ずこれより前に投稿されたレス）。
+       そ順で並びが変わっても正しく辿れるよう、DOM位置ではなくレス番号で判定する。 */
+    function _selfNo(fromEl) {
+        var el = (fromEl && fromEl.closest) ? fromEl.closest('[id^="r"]') : null;
+        var n = el ? parseInt((el.id || '').slice(1)) : NaN;
+        return isNaN(n) ? Infinity : n;   /* 特定不能時は全レスを対象 */
     }
     function showText(q, x, y, fromEl) {
-        /* fromEl が属するレスを特定して、それより前のレスのみ検索対象にする */
+        /* 自分より前(No小)のレスで q を通常テキストとして含む、最も近い1件を表示 */
         var ql = q.toLowerCase();
-        var allRes = Array.from(document.querySelectorAll('.res'));
-        /* fromEl の祖先レスを探す */
-        var selfRes = (fromEl && fromEl.closest) ? fromEl.closest('.res') : null;
-        var selfIdx = selfRes ? allRes.indexOf(selfRes) : allRes.length;
-        /* 自分より前のレスで q を（引用でなく通常テキストとして）含むものを検索 */
-        var hits = [];
-        for (var i = 0; i < selfIdx; i++) {
-            var c = allRes[i].querySelector('.comment');
-            if (!c) continue;
+        var selfNo = _selfNo(fromEl);
+        var best = null, bestNo = -1, seen = {};
+        document.querySelectorAll('.res[id^="r"]').forEach(function(el) {
+            var no = parseInt(el.id.slice(1));
+            if (isNaN(no) || !(no < selfNo) || seen[no]) return;
+            seen[no] = 1;
+            var c = el.querySelector('.comment');
+            if (!c) return;
             /* span.qt（引用行）を除いたテキストで検索 */
             var clone = c.cloneNode(true);
             clone.querySelectorAll('span.qt').forEach(function(s) { s.remove(); });
-            if (clone.textContent.toLowerCase().indexOf(ql) >= 0) hits.push(allRes[i]);
-        }
-        /* 最も近い1件（末尾）のみ表示 */
-        if (hits.length) showEl([hits[hits.length - 1]], x, y, fromEl);
+            if (clone.textContent.toLowerCase().indexOf(ql) >= 0 && no > bestNo) {
+                best = el; bestNo = no;   /* 最も近い（No最大の）引用元 */
+            }
+        });
+        if (best) showEl([best], x, y, fromEl);
+        else showMsg('引用元はありません', x, y, fromEl);
     }
 
     function showEl(elems, x, y, fromEl) {
@@ -4938,6 +4948,15 @@ class ThreadView(QWidget):
         document.body.appendChild(p);
         posit(p, x, y);
         P.push(p);
+    }
+
+    /* 引用元が見つからない時の案内ポップアップ（引用ポップアップと同じ見た目） */
+    function showMsg(msg, x, y, fromEl) {
+        var d = document.createElement('div');
+        d.className = 'res reply';
+        d.innerHTML = '<div class="content" style="padding:6px 10px;color:#888;'
+                    + 'font-style:italic;white-space:nowrap;">' + msg + '</div>';
+        showEl([d], x, y, fromEl || null);
     }
 
     function hookNo(el, no, delay) {
@@ -5114,13 +5133,16 @@ class ThreadView(QWidget):
     /* ── 画像ファイル名引用ポップアップ ── */
     window.showImgRef = function(fname, x, y, fromEl) {
         fname = (fname || '').toLowerCase();
-        var hits = [];
-        /* fromElが属するレスを特定 */
-        var selfRes = (fromEl && fromEl.closest) ? fromEl.closest('.res') : null;
-        var allRes = Array.from(document.querySelectorAll('.res'));
-        var selfIdx = selfRes ? allRes.indexOf(selfRes) : allRes.length;
-        for (var i = 0; i < selfIdx; i++) {
-            var r = allRes[i];
+        /* 自分より前(No小)のレスから画像ファイル名一致を探す。そ順で並びが
+           変わっても正しく辿れるよう、DOM位置ではなくレス番号で判定する。 */
+        var selfNo = _selfNo(fromEl);
+        var arr = Array.from(document.querySelectorAll('.res[id^="r"]'));
+        arr.sort(function(a, b) { return parseInt(a.id.slice(1)) - parseInt(b.id.slice(1)); });
+        var hits = [], seen = {};
+        arr.forEach(function(r) {
+            var no = parseInt(r.id.slice(1));
+            if (isNaN(no) || !(no < selfNo) || seen[no]) return;
+            seen[no] = 1;
             var found = false;
             r.querySelectorAll('a[href], img[src]').forEach(function(a) {
                 var u = (a.getAttribute('href') || a.getAttribute('src') || '').toLowerCase();
@@ -5132,8 +5154,9 @@ class ThreadView(QWidget):
                 });
             }
             if (found) hits.push(r);
-        }
+        });
         if (hits.length) showEl(hits, x, y, fromEl || null);
+        else showMsg('引用元はありません', x, y, fromEl || null);
     };
 
     /* ── テキスト選択メニュー ── */
