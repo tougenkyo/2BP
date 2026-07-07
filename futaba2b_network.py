@@ -1337,7 +1337,16 @@ class FutabaFetcher:
             full=op_a.get("href",""); iu=urllib.parse.urljoin(board.base_url,full)
             iname=full.split("/")[-1]
         else:
-            ti = ctx.find("img", src=_THUMB_SRC_RE)
+            # OP画像が削除されると（30超スレでOP画像を消すと本文が「ｷﾀ━━━」化）
+            # ctx(thre)内の最初のサムネが最初の返信(td.rtd内)画像になり、OPに
+            # 別レスの画像/動画が誤表示される。返信(td.rtd)・フォームの外にある
+            # サムネのみをOP画像として採用する。
+            ti = None
+            for _ti in ctx.find_all("img", src=_THUMB_SRC_RE):
+                if _ti.find_parent("form") or _ti.find_parent("td", class_="rtd"):
+                    continue
+                ti = _ti
+                break
             if ti:
                 tu=urllib.parse.urljoin(board.base_url,ti.get("src",""))
                 tw=int(ti.get("width",0) or 0); th=int(ti.get("height",0) or 0)
