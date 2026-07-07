@@ -1269,6 +1269,17 @@ class FutabaFetcher:
                     board.board_rules_text = '\n'.join(rules_lines)
                     board.board_rules_html = str(ul)
 
+        # ── 添付ファイルサイズ上限を投稿フォームの MAX_FILE_SIZE から取得 ──
+        # （script/style/charset-meta 除去後も投稿フォームは soup に残る）
+        _mfs = soup.find("input", attrs={"name": "MAX_FILE_SIZE"})
+        if _mfs is not None:
+            try:
+                _mfs_v = int(str(_mfs.get("value", "")).strip())
+                if _mfs_v > 0:
+                    board.max_file_bytes = _mfs_v
+            except (ValueError, TypeError):
+                pass
+
         op=self._parse_op(soup, board, no)
         if op: thread.res_list.append(op)
         for tbl in soup.find_all("table", attrs={"border":"0"}):

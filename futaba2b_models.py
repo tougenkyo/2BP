@@ -26,6 +26,7 @@ class BoardInfo:
     board_rules_text: str = ""   # スレHTMLから取得した書き込みルール（プレーンテキスト）
     board_rules_html: str = ""   # 同上HTML版
     has_name_field:   bool = True  # 名前欄が存在する板かどうか（img板等はFalse）
+    max_file_bytes:   int  = 0    # 添付ファイルサイズ上限（MAX_FILE_SIZE, バイト。0=不明）
 
     @property
     def base_url(self) -> str:

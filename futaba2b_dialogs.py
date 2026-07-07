@@ -991,6 +991,11 @@ class PostDialog(QDialog):
         self._clear_btn.clicked.connect(self._clear_image)
         self._clear_btn.hide()   # 添付なし時は非表示
         img_lay.addWidget(self._clear_btn)
+        # 添付サイズ / 板の上限表示（超過時は赤字＋⚠）
+        self._size_lbl = QLabel()
+        self._size_lbl.setToolTip("添付ファイルのサイズと板の上限。上限を超えると投稿できません。")
+        img_lay.addWidget(self._size_lbl)
+        self._update_size_label()
         # 貼付け形式・品質を同じ行に配置
         img_lay.addWidget(QLabel("  貼付け形式:"))
         self._clip_fmt = QComboBox()
@@ -1570,6 +1575,7 @@ document.addEventListener('keydown',function(e){{
         self._img_is_tmp = True
         sz = self._clip_image.width(), self._clip_image.height()
         self._img_edit.setText(f"[クリップボード] {sz[0]}x{sz[1]} .{fmt}")
+        self._update_size_label()
 
     # ── クリップボードから貼り付けボタン ─────────────────────────────────────
     def _paste_from_clipboard_btn(self):
@@ -1579,6 +1585,40 @@ document.addEventListener('keydown',function(e){{
             self._paste_clipboard_image(img)
         else:
             QMessageBox.information(self, "貼り付け", "クリップボードに画像がありません。")
+
+    # ── 添付サイズ表示 ──────────────────────────────────────────────────────
+    def _max_file_bytes(self) -> int:
+        b = getattr(self, "_board", None)
+        return int(getattr(b, "max_file_bytes", 0) or 0) if b else 0
+
+    def _update_size_label(self):
+        """添付ファイルのサイズと板の上限を表示。上限超過時は赤字＋⚠。"""
+        lbl = getattr(self, "_size_lbl", None)
+        if lbl is None:
+            return
+        import os as _os
+        mx = self._max_file_bytes()
+        max_str = f"最大 {mx // 1024:,}KB" if mx else ""
+        cur = 0
+        p = self._img_path
+        if p:
+            try:
+                if _os.path.isfile(p):
+                    cur = _os.path.getsize(p)
+            except OSError:
+                cur = 0
+        if cur <= 0:
+            lbl.setText(max_str)
+            lbl.setStyleSheet("color:#888;font-size:8pt;")
+            return
+        cur_str = f"{cur // 1024:,}KB"
+        if mx and cur > mx:
+            lbl.setText(f"⚠ {cur_str} / {max_str}（超過）")
+            lbl.setStyleSheet("color:#ff5555;font-weight:bold;font-size:8pt;")
+        else:
+            txt = f"{cur_str} / {max_str}" if max_str else cur_str
+            lbl.setText(txt)
+            lbl.setStyleSheet("color:#8f8;font-size:8pt;")
 
     # ── 画像クリア ──────────────────────────────────────────────────────────
     def _clear_image(self):
@@ -1593,6 +1633,7 @@ document.addEventListener('keydown',function(e){{
         self._preview_lbl.setStyleSheet(
             f"background:{_TM.ui('panel_bg2','#2a2a2a')};color:{_TM.ui('text_muted','#888')};border:1px solid {_TM.ui('panel_border','#444')};"
             "border-radius:4px;font-size:9pt;padding:8px;")
+        self._update_size_label()
 
     def _cleanup_tmp(self):
         if self._img_is_tmp and self._img_path:
@@ -1644,6 +1685,7 @@ document.addEventListener('keydown',function(e){{
         if fmt == "jpg":
             self._settings.post_img_quality = quality
         self._settings.save()
+        self._update_size_label()
 
     def _browse_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1660,6 +1702,7 @@ document.addEventListener('keydown',function(e){{
         self._clip_image = None
         self._img_edit.setText(path)
         self._clear_btn.show()
+        self._update_size_label()
         # 画像なら簡易プレビュー表示
         ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
         if ext in ('jpg', 'jpeg', 'png', 'gif', 'webp'):
@@ -1765,6 +1808,21 @@ document.addEventListener('keydown',function(e){{
         name, mail, sub, key, img = (
             self._name.text(), self._mail.text(),
             self._sub.text(), self._key.text(), self._img_path)
+        # ── 添付サイズ上限チェック（超過ならふたばに弾かれるので事前に中止）──
+        _mx = self._max_file_bytes()
+        if img and _mx:
+            import os as _os
+            try:
+                _sz = _os.path.getsize(img) if _os.path.isfile(img) else 0
+            except OSError:
+                _sz = 0
+            if _sz > _mx:
+                QMessageBox.warning(
+                    self, "ファイルサイズ超過",
+                    f"添付ファイルが板の上限（{_mx // 1024:,}KB）を超えています。\n"
+                    f"現在のサイズ: {_sz // 1024:,}KB\n\n"
+                    "画像・動画のサイズを小さくするか、別のファイルを選んでください。")
+                return
         self._btn_post.setEnabled(False)
         def _do():
             try:
