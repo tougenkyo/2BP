@@ -713,9 +713,28 @@ class FutabaFetcher:
                 except json.JSONDecodeError:
                     pass  # JSON 解析失敗 → 以下の HTML 判定へ
 
-            # ── METAリダイレクト（スレ落ち）──
-            # サーバーが <META HTTP-EQUIV="refresh" ...> を返すケース
-            if "<meta" in body.lower() and "refresh" in body.lower():
+            # 想定外レスポンス（JSON以外）の診断ログ。JSON が返らない環境で
+            # 投稿が弾かれる真因（サーバーの実応答）を追えるようにする。
+            print(f"[NET] post_res non-JSON resp  len={len(body)}  "
+                  f"head={body[:200].replace(chr(10), ' ')!r}")
+
+            # ── METAリダイレクト ──
+            # ふたばは投稿成功時にも <meta refresh> で書き込んだスレへ誘導する
+            # （responsemode=ajax が効かず HTML が返る場合）。無条件でスレ落ちと
+            # せず、リダイレクト先が対象スレ (res/<resto>) か、本文に成功メッセージが
+            # あれば成功、板トップ等へ飛ばすなら失敗（スレ落ち）と判別する。
+            _body_low = body.lower()
+            if "<meta" in _body_low and "refresh" in _body_low:
+                m = re.search(r'url\s*=\s*["\']?([^"\'>\s]+)', body, re.I)
+                dest = (m.group(1) if m else "").lower()
+                posted_ok = bool(resto) and (
+                    f"res/{resto}" in dest or f"/{resto}." in dest)
+                if not posted_ok:
+                    posted_ok = any(k in body for k in (
+                        "書きこみました", "書き込みました", "投稿しました"))
+                if posted_ok:
+                    self.save_cookies()
+                    return True, "", 0
                 return False, "スレッドがありません\n（スレ落ち）", 0
 
             # ── プレーンテキストエラー（HTMLなし・短文）──
