@@ -3934,6 +3934,10 @@ class ThreadView(QWidget):
             rno = int(m.group(1))
             a = None
             for cand in node.find_all("a", href=True):
+                # OP(div.thre)はスレ全体を含むため、返信(td.rtd)内の画像を拾うと
+                # OP画像削除スレでOPに別レス画像が混入する。OPノードのときは除外。
+                if node is op and cand.find_parent("td", class_="rtd"):
+                    continue
                 if cand.find("img") and _media.search(cand["href"].split("?")[0]):
                     a = cand; break
             if not a:
