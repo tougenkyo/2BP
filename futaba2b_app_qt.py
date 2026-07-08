@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.227"
+APP_VER = "0.9.229"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4138,6 +4138,12 @@ class ThreadView(QWidget):
         )
 
     def _redraw_ng_impl(self, scroll_y: int):
+        # window.scrollY 取得は非同期。待機中にタブが閉じられると self._thread が
+        # None 化しており（破棄処理でクリア）、そのまま描画すると _show_impl 内の
+        # thread.url で AttributeError→後続コールバックやQTimerまで例外状態が
+        # 波及する（SystemError/OverflowError の誤報を誘発）。発火時に再チェック。
+        if self._thread is None:
+            return
         self._known_res_count = 0   # 全体再描画を強制
         self._pending_scroll = scroll_y
         self._show_impl(self._thread)
@@ -4296,6 +4302,10 @@ class ThreadView(QWidget):
         QTimer.singleShot(3000, _submit)
 
     def _show_impl(self, thread):
+        # NG再描画・画像モード再描画等の非同期コールバック経由で、タブ破棄後に
+        # thread=None で呼ばれることがある。描画対象が無ければ何もしない。
+        if thread is None:
+            return
         import time as _t
         _t0 = _t.time()
         self._maybe_prefetch_images(thread)
