@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.231"
+APP_VER = "0.9.232"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2454,7 +2454,9 @@ class BoardPane(QWidget):
         # 非表示中にAR更新が来ていた場合、ここで最新HTMLを再ロードして
         # 「タブ青→開いたら新着が出ない」取りこぼしを解消する
         if isinstance(w, ThreadView) and getattr(w, '_pending_redraw', False):
-            w._pending_redraw = False
+            # _pending_redraw は追記/再描画の完了後（_sync_after_redraw）で解除する。
+            # ここで即解除すると、後発の status 更新が DOM 反映前に新着込みの数を
+            # 先出ししてしまう（アクティブ化直後だけ多く見える不具合の原因）。
             _checked_r = w._mode_grp.checkedButton() if hasattr(w, '_mode_grp') else None
             _cur_mode_r = _checked_r.property("mode") if _checked_r else ""
             if _cur_mode_r in ("image", "quote"):
@@ -2493,6 +2495,14 @@ class BoardPane(QWidget):
                                 _w._pending_scroll = 0
                             _w._load_html_via_tempfile(_h, QUrl(_u))
                         w._view.page().runJavaScript("window.scrollY", _reload_keep_scroll)
+            # 追記/再描画の完了を待ってから _pending_redraw を解除し、DOM反映済み
+            # レス数を同期してステータスを更新する（先出しで多く見える不具合の解消）。
+            def _sync_after_redraw(_w=w):
+                if getattr(_w, '_thread', None) is not None:
+                    _w._displayed_res_count = len(_w._thread.res_list)
+                _w._pending_redraw = False
+                _w.refresh_status_info()
+            QTimer.singleShot(240, _sync_after_redraw)
         # アクティブ化時に「末尾まで表示済みなら未読(青背景)を解除」を再評価する。
         # 背景でロードされ innerHeight=0 のまま初回判定が効かなかった画像モード等で、
         # 表示後に末尾が見えていれば青背景をデフォルトに戻す（少し遅延でレイアウト確定後）。
@@ -3357,6 +3367,7 @@ class ThreadView(QWidget):
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
         self._error_banner_html = ""   # エラー(キャッシュ表示)時の赤帯バナーHTML（画像/引用モードでも使用）
         self._pending_redraw  = False  # 非表示時にAR更新が来た→アクティブ化時に再描画する
+        self._displayed_res_count = 0  # DOMに実際に反映済みのレス数（ステータスの先出し防止用）
         self._pending_frags: list = []  # 非表示中(返信モード)にARが生成した新着フラグメント。
                                         # アクティブ化時にフルリロードせずDOM追記して
                                         # 「一瞬先頭が見える」ちらつきを防ぐ
@@ -3781,6 +3792,14 @@ class ThreadView(QWidget):
         """ステータスバー用情報を計算して status_info シグナルで送出"""
         res_list  = thread.res_list
         res_total = len(res_list)
+        # 非表示タブの自動更新は res_list を先行して増やすが、DOMへの新着追記は
+        # アクティブ化時まで保留される（_pending_redraw）。その間ステータスだけ
+        # 新着込みの数になり実表示より多く見えるため、DOM反映済みレス数
+        # (_displayed_res_count) を上限に丸める。追記完了後に _sync_after_redraw が
+        # _displayed_res_count を更新し、正しい新着込みの数へ再表示する。
+        _disp = getattr(self, '_displayed_res_count', 0)
+        if _disp > 0 and getattr(self, '_pending_redraw', False):
+            res_total = min(res_total, _disp)
         # ステータスバー表示は OP(0レス目)を除いた実レス数 (-1)
         res_count = max(0, res_total - 1)
         img_count = sum(1 for r in res_list if r.image_url)
@@ -4633,6 +4652,8 @@ class ThreadView(QWidget):
                 self._view.loadFinished.connect(_apply_sd_after_load)
         # スレタイラベルを更新（BoardPaneが現在このviewを表示中の場合）
         QTimer.singleShot(0, self._notify_title_updated)
+        # フォアグラウンド描画が完了 → DOM反映済みレス数を最新へ同期
+        self._displayed_res_count = len(thread.res_list)
         self._emit_status_info(thread, new_count, "スレッド読み込み完了")
         # 差分更新（ページ再読込なし）ではヒートマップを直接更新する。
         # 全描画時は body 未確定なので _inject_popup_js 側の再適用に任せる。
