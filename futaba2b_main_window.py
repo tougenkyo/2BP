@@ -5170,6 +5170,48 @@ class MainWindow(QMainWindow):
 # エントリポイント
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _setup_file_logging():
+    """show_console=ON のとき stdout/stderr を .log ファイルにも複製する（tee）。
+    出力先: logs/console/2bp_YYYYMMDD_HHMMSS.log（.gitignore 済み）。
+    直近20ファイルを残して古いログは自動削除する。"""
+    from pathlib import Path
+    import datetime as _dt
+    logdir = Path(__file__).parent / "logs" / "console"
+    logdir.mkdir(parents=True, exist_ok=True)
+    # 古いログを掃除（更新日時の新しい順に20個保持）
+    try:
+        olds = sorted(logdir.glob("2bp_*.log"),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+        for _p in olds[20:]:
+            try: _p.unlink()
+            except OSError: pass
+    except OSError:
+        pass
+    logpath = logdir / f"2bp_{_dt.datetime.now():%Y%m%d_%H%M%S}.log"
+    _logf = open(logpath, "a", encoding="utf-8", buffering=1)
+
+    class _Tee:
+        """コンソールとファイルへ同時に書き込むラッパー"""
+        def __init__(self, *streams):
+            self._streams = [s for s in streams if s is not None]
+        def write(self, s):
+            for st in self._streams:
+                try: st.write(s)
+                except Exception: pass
+        def flush(self):
+            for st in self._streams:
+                try: st.flush()
+                except Exception: pass
+        def isatty(self):
+            return False
+
+    sys.stdout = _Tee(sys.__stdout__, _logf)
+    sys.stderr = _Tee(sys.__stderr__, _logf)
+    import atexit
+    atexit.register(lambda: (_logf.flush(), _logf.close()))
+    print(f"[LOG] ファイル出力: {logpath}", flush=True)
+
+
 def main():
     from futaba2b_app_qt import APP_VER
     print(f"2BP v{APP_VER}  起動", flush=True)
@@ -5185,6 +5227,12 @@ def main():
         if _scf.exists():
             _scd = _jc.loads(_scf.read_text(encoding="utf-8"))
             _show_console = bool(_scd.get("show_console", False))
+        if _show_console:
+            # コンソール表示に加え、stdout/stderr を .log にも複製（tee）
+            try:
+                _setup_file_logging()
+            except Exception:
+                pass
         if not _show_console and sys.platform.startswith("win"):
             import ctypes
             _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
