@@ -1533,10 +1533,14 @@ def _comment_html(raw_html: str, _uploaders: list = None,
                             f'onclick="quoteNo({qno});return false;">'
                             f'{_e(line.rstrip())}</a></span>')
                     elif m_id:
-                        # >ID:xxx → そのIDを持つレスをポップアップ表示
+                        # >ID:xxx → ホバーでそのIDのレス一覧をポップアップ表示
+                        # （番号引用 >>No. のホバーと同様の挙動）。クリックは従来
+                        # どおり抽出（showIdExtraction）を維持する。
                         id_val = _e(m_id.group(1))
                         parts.append(
                             f'<span class="qt" data-id-ref="{id_val}" '
+                            f'onmouseenter="showIdPopup(\'{id_val}\',event.clientX,event.clientY)" '
+                            f'onmouseleave="hideIdPopup()" '
                             f'onclick="showIdExtraction(\'{id_val}\')">'
                             f'{_e(line.rstrip())}</span>')
                     else:
