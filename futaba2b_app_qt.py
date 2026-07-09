@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.234"
+APP_VER = "0.9.235"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2498,8 +2498,14 @@ class BoardPane(QWidget):
             # 追記/再描画の完了を待ってから _pending_redraw を解除し、DOM反映済み
             # レス数を同期してステータスを更新する（先出しで多く見える不具合の解消）。
             def _sync_after_redraw(_w=w):
-                if getattr(_w, '_thread', None) is not None:
-                    _w._displayed_res_count = len(_w._thread.res_list)
+                _th = getattr(_w, '_thread', None)
+                if _th is not None:
+                    _w._displayed_res_count = len(_th.res_list)
+                    # AutoRefresh経由の追記は _update_ui_after_show を通らず
+                    # モードボタン左の _lbl_count が古いまま「多く」/「少なく」
+                    # ずれるため、DOM反映済み状態に合わせてラベルも同期する。
+                    _new_c = sum(1 for r in _th.res_list[1:] if r.is_new)
+                    _w._refresh_count_label(_th, _new_c)
                 _w._pending_redraw = False
                 _w.refresh_status_info()
             QTimer.singleShot(240, _sync_after_redraw)
@@ -4614,12 +4620,14 @@ class ThreadView(QWidget):
         self._notify_ng_word_match(new_res)
         self._check_self_res_notifications(thread, new_res)
 
-    def _update_ui_after_show(self, thread, new_count: int, _is_error: bool, skip_mode_reload: bool = False):
-        """_show_impl / _show_diff 共通のUI更新処理"""
+    def _refresh_count_label(self, thread, new_count: int):
+        """モードボタン左の「N レス (+M新着)」ラベル(_lbl_count)を再計算する。
+        _update_ui_after_show 以外（タブ再アクティブ化直後の _sync_after_redraw、
+        自動更新の可視タブ appendNewReplies 後など）からも呼べるように分離。
+        AutoRefreshManager経由の更新は _update_ui_after_show を通らないため、
+        ここを呼ばないと _lbl_count が古い値のまま実表示とずれる。"""
         count_base = f"{len(thread.res_list) - 1} レス (+{new_count}新着)" if new_count else f"{len(thread.res_list) - 1} レス"
-        # 落ちかけ判定
         is_expiring = thread.is_expiring
-        # 保存残1/10以下判定（仮赤字）
         is_pseudo = _is_pseudo_red_thread(thread, self._settings)
         if is_expiring:
             self._lbl_count.setText(
@@ -4629,6 +4637,10 @@ class ThreadView(QWidget):
                 f'{count_base} <span style="color:#e07080;">(仮赤字)</span>')
         else:
             self._lbl_count.setText(count_base)
+
+    def _update_ui_after_show(self, thread, new_count: int, _is_error: bool, skip_mode_reload: bool = False):
+        """_show_impl / _show_diff 共通のUI更新処理"""
+        self._refresh_count_label(thread, new_count)
         # 削除記事ボタン更新
         deleted_count = sum(1 for r in thread.res_list[1:] if r.is_deleted)
         if deleted_count > 0:
