@@ -59,6 +59,7 @@ _TRIP_RE      = re.compile(r"[!◆★☆].+")
 _SODANE_RE    = re.compile(r"そうだねx(\d+)")
 _FSIZE_RE     = re.compile(r"[\-\(](\d+)\s*B")
 _RES_ID_RE    = re.compile(r"\bID:(\S+)")
+_RES_IP_RE    = re.compile(r"\bIP:(\S+)")
 
 from futaba2b_const import UA, BBSMENU_URL, FUTABA_ERROR_PATTERNS, SEC_CH_UA, SEC_CH_UA_MOBILE, SEC_CH_UA_PLATFORM
 from futaba2b_models import (
@@ -1429,15 +1430,17 @@ class FutabaFetcher:
             m3=_SODANE_RE.search(s.get_text())
             if m3: sod=int(m3.group(1))
 
-        # ID (cnwテキスト内)
+        # ID/IP (cnwテキスト内)
         id_m = _RES_ID_RE.search(dts)
         id_str = id_m.group(1) if id_m else ""
+        ip_m = _RES_IP_RE.search(dts)
+        ip_str = ip_m.group(1) if ip_m else ""
 
         return ResData(no=rno,name=name,trip=trip,email=email,datetime_str=dts,subject="",
             comment_html=ch,comment_text=ct,image_url=iu,thumb_url=tu,
                     csb=csb_text,
             image_name=iname,image_size=isz,thumb_w=tw,thumb_h=th,sodane=sod,is_op=True,
-            res_idx=0,file_size_bytes=fsz,id_str=id_str)
+            res_idx=0,file_size_bytes=fsz,id_str=id_str,ip_str=ip_str)
 
     def _parse_res_node(self, node, board) -> Optional[ResData]:
         cno=node.find("span",class_="cno")
@@ -1519,11 +1522,13 @@ class FutabaFetcher:
                     break
         id_m = _RES_ID_RE.search(dts)
         id_str = id_m.group(1) if id_m else ""
+        ip_m = _RES_IP_RE.search(dts)
+        ip_str = ip_m.group(1) if ip_m else ""
         return ResData(no=rno,name=name,trip=trip,email=email,datetime_str=dts,subject="",
             comment_html=ch,comment_text=ct,image_url=iu,thumb_url=tu,
             image_name=iname,image_size=isz,thumb_w=tw,thumb_h=th,
             sodane=sod,is_op=False,is_deleted=isdel,
-            res_idx=res_idx,file_size_bytes=fsz,id_str=id_str,csb=csb_text)
+            res_idx=res_idx,file_size_bytes=fsz,id_str=id_str,ip_str=ip_str,csb=csb_text)
 
 
 
@@ -1646,6 +1651,7 @@ class FutabaFetcher:
                 res_idx=rsc,
                 file_size_bytes=rd.get("fsize", 0),
                 id_str=rd.get("id", ""),
+                ip_str=rd.get("ip", ""),
             )
             new_res.append(res)
             if rsc:

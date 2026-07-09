@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.233"
+APP_VER = "0.9.234"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3508,6 +3508,7 @@ class ThreadView(QWidget):
             lambda no: self.open_reply_window.emit(no, f">No.{no}\n"))
         self._bridge.quote_comment_requested.connect(self._quote_comment)
         self._bridge.quote_img_requested.connect(self._quote_img)
+        self._bridge.quote_idip_requested.connect(self._quote_idip)
         self._bridge.sodane_requested.connect(self._send_sodane)
         def _img_open(url, idx):
             lst, i = self._resolve_img_list(url, idx)
@@ -3563,6 +3564,21 @@ class ThreadView(QWidget):
             return
         quoted = '\n'.join(('>' + line) for line in text.splitlines()) + '\n'
         self.open_reply_window.emit(0, quoted)
+
+    def _quote_idip(self, no: int):
+        """フッターのID/IPリンク → そのレスのID(なければIP)を返信ウィンドウに引用挿入"""
+        th = getattr(self, '_thread', None)
+        if th is None:
+            return
+        r = next((x for x in th.res_list if x.no == no), None)
+        if r is None:
+            return
+        _id = getattr(r, 'id_str', '')
+        _ip = getattr(r, 'ip_str', '')
+        if _id:
+            self.open_reply_window.emit(no, f">ID:{_id}\n")
+        elif _ip:
+            self.open_reply_window.emit(no, f">IP:{_ip}\n")
 
     def _on_ng_text(self, text: str):
         """テキスト選択メニューの「NG」→ NGワード追加ダイアログをプリセット状態で起動"""

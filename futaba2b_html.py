@@ -668,6 +668,7 @@ function quoteNo(no)            { _b('quoteNo',       [no]); }
 function quoteComment(no)       { _b('quoteComment',  [no]); }
 function quoteImg(no)           { _b('quoteImg',       [no]); }
 function ngRes(no)              { _b('ngRes',          [no]); }
+function quoteIdIp(no)          { _b('quoteIdIp',      [no]); }
 function sodane(no)             { _b('sodane',         [no]); }
 /* NG画像をクリックすると reveal クラスを付けて表示 */
 document.addEventListener('click', function(e) {
@@ -1937,11 +1938,21 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
                 f' - <a href="#" onclick="quoteImg({no});return false;">画像</a>'
             )
 
+    # ID / IP（表示があるレスのみ・クリックで返信ウィンドウに引用）
+    idip_html = ""
+    _id = getattr(res, 'id_str', '')
+    _ip = getattr(res, 'ip_str', '')
+    if _id:
+        idip_html = f' - <a class="idip" href="#" onclick="quoteIdIp({no});return false;">ID:{_e(_id)}</a>'
+    elif _ip:
+        idip_html = f' - <a class="idip" href="#" onclick="quoteIdIp({no});return false;">IP:{_e(_ip)}</a>'
+
     ft_html = (
         f'<div class="footer">'
         f'RES <a href="#" onclick="quoteNo({no});return false;">番号</a>'
         f' - <a href="#" onclick="quoteComment({no});return false;">コメント</a>'
         f'{media_html}'
+        f'{idip_html}'
         f' / <a class="ng" href="#" onclick="ngRes({no});return false;">NG</a>'
         f'{elapsed_html}'
         f'</div>'

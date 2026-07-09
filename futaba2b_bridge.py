@@ -13,6 +13,7 @@ class ThreadBridge(QObject):
     quote_no_requested    = Signal(int)          # 番号クリック → >>No.NNNN
     quote_comment_requested = Signal(int)        # コメントクリック → >本文
     quote_img_requested   = Signal(int)          # 画像クリック → 画像URLを引用
+    quote_idip_requested  = Signal(int)          # フッターID/IPクリック → >ID: / >IP: 引用
     ng_requested          = Signal(int)          # NG クリック
     sodane_requested      = Signal(int)          # そうだね
     img_open_requested    = Signal(str, int)     # 画像タブを開く (url, idx)
@@ -59,6 +60,11 @@ class ThreadBridge(QObject):
     def quoteImg(self, no: int):
         """フッター「画像」クリック → そのレスの画像URLを引用"""
         self.quote_img_requested.emit(no)
+
+    @Slot(int)
+    def quoteIdIp(self, no: int):
+        """フッターのID/IPクリック → そのレスのID(なければIP)を返信ウィンドウに引用"""
+        self.quote_idip_requested.emit(no)
 
     @Slot(int)
     def ngRes(self, no: int):

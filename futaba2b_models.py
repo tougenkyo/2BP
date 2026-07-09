@@ -72,6 +72,7 @@ class ResData:
     is_new: bool = False         # 前回閲覧後の新着レスか
     file_size_bytes: int = 0     # 添付ファイルサイズ (bytes)
     id_str: str = ""             # 投稿者ID (例: fNsjIPH6)
+    ip_str: str = ""             # 投稿者IP (例: 1.2.3.4) ※IP表示板のみ
 
 
 @dataclass
