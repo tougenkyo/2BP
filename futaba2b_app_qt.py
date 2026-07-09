@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.232"
+APP_VER = "0.9.233"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5162,6 +5162,20 @@ class ThreadView(QWidget):
     /* ── グローバル公開: inline onmouseenter="showPopup()" / hidePopup() 向け ── */
     window.showPopup = function(no, x, y, fromEl) { showNo(no, x, y, fromEl || null); };
     window.hidePopup = function() { schedH(); };
+    /* ID引用ポップアップ: 同一IDの全レスをレスカードで表示（番号引用と同デザイン） */
+    function showId(id, x, y, fromEl) {
+        var seen = {}, elems = [];
+        document.querySelectorAll('.post-id[data-id="' + id + '"]').forEach(function(pel) {
+            var res = pel.closest('.res[id^="r"]');
+            if (!res) return;
+            var no = parseInt(res.id.slice(1));
+            if (isNaN(no) || seen[no]) return;
+            seen[no] = 1; elems.push(res);
+        });
+        if (elems.length) showEl(elems, x, y, fromEl);
+        else showMsg('このIDのレスはありません', x, y, fromEl);
+    }
+    window.showIdPopup = function(id, x, y, fromEl) { showId(id, x, y, fromEl || null); };
     /* ── 抽出パネルで引用ホバーを有効にするため hookC/hookQuoteInd もグローバル公開 ── */
     window._hookPopupC        = hookC;
     window._hookPopupQuoteInd = hookQuoteInd;

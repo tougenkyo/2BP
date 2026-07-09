@@ -536,51 +536,8 @@ body {
 
 ID_POPUP_JS = """
 // ── ID ホバーポップアップ ──────────────────────────────────────────────────
-let _idPopTm = null;
-function showIdPopup(id, x, y) {
-    clearTimeout(_idPopTm);
-    const nodes = document.querySelectorAll('.post-id[data-id="' + id + '"]');
-    if (!nodes.length) return;
-    let html = ['<div class="id-popup-hdr">ID:' + id + '（' + nodes.length + '件）</div>'];
-    nodes.forEach(el => {
-        const res = el.closest('.res');
-        if (!res) return;
-        const hdr = res.querySelector('.header');
-        const com = res.querySelector('.comment');
-        if (hdr) {
-            html.push('<div class="id-popup-item">' +
-                hdr.innerText.trim() + '<br>' +
-                (com ? com.innerText.trim() : '') +
-                '</div>');
-        }
-    });
-    let pop = document.getElementById('_idpop');
-    if (!pop) {
-        pop = document.createElement('div');
-        pop.id = '_idpop'; pop.className = 'id-popup';
-        pop.addEventListener('mouseenter', () => clearTimeout(_idPopTm));
-        pop.addEventListener('mouseleave', hideIdPopup);
-        document.body.appendChild(pop);
-    }
-    pop.innerHTML = html.join('');
-    pop.style.display = 'block';
-    // マウス付近に配置（画面外補正）
-    requestAnimationFrame(() => {
-        const vw = window.innerWidth, vh = window.innerHeight;
-        const pw = pop.offsetWidth, ph = pop.offsetHeight;
-        let px = x + 14, py = y + 6;
-        if (px + pw > vw) px = x - pw - 4;
-        if (py + ph > vh) py = y - ph - 4;
-        pop.style.left = Math.max(0,px) + 'px';
-        pop.style.top  = Math.max(0,py) + 'px';
-    });
-}
-function hideIdPopup() {
-    _idPopTm = setTimeout(() => {
-        const p = document.getElementById('_idpop');
-        if (p) p.style.display = 'none';
-    }, 200);
-}
+// ID引用ポップアップの実体は _inject_popup_js で後付け注入（未注入時のスタブ）
+function showIdPopup(id, x, y, fromEl) { /* injected after load */ }
 """
 
 WEBCHANNEL_JS = """
@@ -1539,8 +1496,8 @@ def _comment_html(raw_html: str, _uploaders: list = None,
                         id_val = _e(m_id.group(1))
                         parts.append(
                             f'<span class="qt" data-id-ref="{id_val}" '
-                            f'onmouseenter="showIdPopup(\'{id_val}\',event.clientX,event.clientY)" '
-                            f'onmouseleave="hideIdPopup()" '
+                            f'onmouseenter="showIdPopup(\'{id_val}\',event.clientX,event.clientY,this)" '
+                            f'onmouseleave="hidePopup()" '
                             f'onclick="showIdExtraction(\'{id_val}\')">'
                             f'{_e(line.rstrip())}</span>')
                     else:
