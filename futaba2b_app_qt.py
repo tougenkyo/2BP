@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.244"
+APP_VER = "0.9.245"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1081,8 +1081,8 @@ def _img_mode_css(cols: int) -> str:
             "width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}"
             ".gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;"
             "cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}"
-            ".gn{text-align:left;font-size:7pt;line-height:1.3;cursor:help;display:inline-block}"
-            ".gn:hover{background:#F0E0D6;border-radius:2px}"
+            ".gn{text-align:left;font-size:7pt;line-height:1.3;cursor:help;display:inline-block;"
+            "background:#F0E0D6;border-radius:2px;padding:0 3px}"
             ".gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}"
             ".gt img{max-width:100%;max-height:72px;object-fit:contain}"
             ".gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
