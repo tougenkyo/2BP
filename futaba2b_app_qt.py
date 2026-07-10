@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.236"
+APP_VER = "0.9.237"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5229,6 +5229,12 @@ class ThreadView(QWidget):
         else showMsg('このIDのレスはありません', x, y, fromEl);
     }
     window.showIdPopup = function(id, x, y, fromEl) { showId(id, x, y, fromEl || null); };
+    /* スレ画/スレあき → OP(0レス目)をレスカードで表示（番号引用と同デザイン） */
+    window.showOpPopup = function(x, y, fromEl) {
+        var op = document.querySelector('.res.op');
+        if (op) showEl([op], x, y, fromEl || null);
+        else showMsg('0レス目はありません', x, y, fromEl || null);
+    };
     /* ── 抽出パネルで引用ホバーを有効にするため hookC/hookQuoteInd もグローバル公開 ── */
     window._hookPopupC        = hookC;
     window._hookPopupQuoteInd = hookQuoteInd;

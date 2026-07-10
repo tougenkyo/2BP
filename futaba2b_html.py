@@ -245,6 +245,9 @@ a.nm:hover { text-decoration: underline; }
 .comment .qt  { color: var(--quote-color); cursor: pointer; }
 .comment .qt a { color: var(--quote-color); text-decoration: none; }
 .comment .qt a:hover { color: var(--quote-color); text-decoration: none; }
+/* ─ スレ画/スレあき: ホバーでOP(0レス目)ポップアップ ─ */
+.comment .op-ref { color: var(--quote-color); cursor: pointer;
+                   border-bottom: 1px dotted var(--quote-color); }
 .comment .del { color: #FF0000; }
 /* ─ 削除レスの削除理由ラベル ─ */
 .del-reason { color: var(--del-reason-color); font-size: 8pt; font-style: italic; }
@@ -538,6 +541,8 @@ ID_POPUP_JS = """
 // ── ID ホバーポップアップ ──────────────────────────────────────────────────
 // ID引用ポップアップの実体は _inject_popup_js で後付け注入（未注入時のスタブ）
 function showIdPopup(id, x, y, fromEl) { /* injected after load */ }
+// スレ画/スレあき ホバー → OP(0レス目)ポップアップ（実体は _inject_popup_js で後付け）
+function showOpPopup(x, y, fromEl) { /* injected after load */ }
 """
 
 WEBCHANNEL_JS = """
@@ -849,10 +854,19 @@ function _computeQuotedBy() {
     });
     var _idxByNo = {};
     _info.forEach(function(o, i) { if (o.no >= 0) _idxByNo[o.no] = i; });
+    /* OP(0レス目)のレス番号。スレ画/スレあき の被引用集計に使う */
+    var _opEl = document.querySelector('.res.op');
+    var _opNo = _opEl ? parseInt((_opEl.id || '').slice(1)) : -1;
+    if (isNaN(_opNo)) _opNo = -1;
     document.querySelectorAll('.res').forEach(function(el) {
         var m = (el.id || '').match(/^r(\\d+)$/);
         if (!m) return;
         var myNo = parseInt(m[1]);
+        /* スレ画/スレあき → OP を引用扱い（OP自身は除く） */
+        if (_opNo >= 0 && myNo !== _opNo && el.querySelector('.comment span[data-op-ref]')) {
+            if (!quotedBy[_opNo]) quotedBy[_opNo] = [];
+            if (quotedBy[_opNo].indexOf(myNo) < 0) quotedBy[_opNo].push(myNo);
+        }
         /* comment 内の #r{no} リンク */
         el.querySelectorAll('.comment a[href^="#r"]').forEach(function(a) {
             var m2 = (a.getAttribute('href') || '').match(/#r(\\d+)/);
@@ -1196,11 +1210,20 @@ function _rebuildQuoteIndicators() {
     });
     var _idxByNo = {};
     _info.forEach(function(o, i) { if (o.no >= 0) _idxByNo[o.no] = i; });
+    // OP(0レス目)のレス番号。スレ画/スレあき の被引用集計に使う
+    var _opEl = document.querySelector('.res.op');
+    var _opNo = _opEl ? parseInt((_opEl.id || '').slice(1)) : -1;
+    if (isNaN(_opNo)) _opNo = -1;
     document.querySelectorAll('.res').forEach(function(el) {
         var m = (el.id || '').match(/^r(\\d+)$/);
         if (!m) return;
         var myNo = parseInt(m[1]);
         var comEl = el.querySelector('.comment');
+        // スレ画/スレあき → OP を引用扱い（OP自身は除く）
+        if (_opNo >= 0 && myNo !== _opNo && el.querySelector('.comment span[data-op-ref]')) {
+            if (!quotedBy[_opNo]) quotedBy[_opNo] = [];
+            if (quotedBy[_opNo].indexOf(myNo) < 0) quotedBy[_opNo].push(myNo);
+        }
         // #r{no} リンク（_comment_html変換済み）
         el.querySelectorAll('.comment a[href^="#r"]').forEach(function(a) {
             var m2 = (a.getAttribute('href') || '').match(/#r(\\d+)/);
@@ -1459,6 +1482,28 @@ _IMG_QUOTE_RE = re.compile(
     re.IGNORECASE
 )
 
+# レス本文中でOP(0レス目)を指す語。ホバーで番号引用と同じレスカードを出し、
+# OPの▼被引用インジケータにも「引用元」として集計させる（data-op-ref を目印にする）。
+_OP_REF_WORDS = ("スレ画", "スレあき")
+
+
+def _wrap_op_refs(escaped: str) -> str:
+    """エスケープ済みテキスト中の「スレ画」「スレあき」を op-ref span で包む。
+    引数はエスケープ済み前提。対象語はHTML特殊文字を含まないためエスケープ後でも
+    そのまま一致する。span.qt にはしない（テキスト引用の▼集計に誤ヒットするため）。"""
+    if not escaped:
+        return escaped
+    for w in _OP_REF_WORDS:
+        if w not in escaped:
+            continue
+        escaped = escaped.replace(
+            w,
+            f'<span class="op-ref" data-op-ref="1" '
+            f'onmouseenter="showOpPopup(event.clientX,event.clientY,this)" '
+            f'onmouseleave="hidePopup()">{w}</span>')
+    return escaped
+
+
 def _comment_html(raw_html: str, _uploaders: list = None,
                   _img_list: list = None, _res_no: int = 0) -> str:
     from bs4 import BeautifulSoup
@@ -1582,7 +1627,7 @@ def _comment_html(raw_html: str, _uploaders: list = None,
                                     else:
                                         parts.append(f'<span class="qt">{_e(line)}</span>')
                                 else:
-                                    parts.append(_e(line))
+                                    parts.append(_wrap_op_refs(_e(line)))
                         else:
                             parts.append(chunk)
     return "".join(parts)
