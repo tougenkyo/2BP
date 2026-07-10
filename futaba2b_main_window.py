@@ -2611,7 +2611,10 @@ class MainWindow(QMainWindow):
             # ウインドウモード中の中クリックは同じウインドウに表示
             view.open_image_tab_bg.connect(
                 lambda u, l, i: self._open_image_window(u, l, i, activate=False))
-            win = ImageWindow(view, self._settings, self)
+            # 親を渡さない（独立トップレベル）。親を持つウインドウはWindowsでは
+            # 常に親より前面に固定され、本体ウインドウの裏に回せないため。
+            # 参照は self._image_window が保持し、終了時に closeEvent で破棄する。
+            win = ImageWindow(view, self._settings, None)
             self._image_window = win
         else:
             view = win.image_view
@@ -2620,6 +2623,10 @@ class MainWindow(QMainWindow):
             view.load_image(url, img_list, idx)
         win.show()
         if activate:
+            # サムネイルクリック等での明示オープン時のみ前面へ。
+            # 常時最前面にはしない（本体ウインドウをクリックすれば裏に回る）。
+            if win.isMinimized():
+                win.showNormal()
             win.raise_()
             win.activateWindow()
         self._record_recent_image(url, img_list, idx)
@@ -5170,6 +5177,12 @@ class MainWindow(QMainWindow):
                 pass
             try:
                 win.image_view.cleanup()
+            except Exception:
+                pass
+            try:
+                # 親なしトップレベルなので、表示されたままだと最後のウインドウが
+                # 閉じられずアプリが終了しない。deleteLaterは非同期なので明示的に隠す。
+                win.hide()
             except Exception:
                 pass
             try:
