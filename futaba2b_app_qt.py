@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.235"
+APP_VER = "0.9.236"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2451,9 +2451,12 @@ class BoardPane(QWidget):
 
         # ── 新タブの検索テキストを復元 ────────────────────────────────────
         saved = getattr(w, '_saved_search', "")
+        # NG設定変更で保留された全再描画を最優先で消化する（フル再描画が走るので
+        # 差分パスの _pending_redraw ブロックはスキップして良い）
+        _ng_consumed = isinstance(w, ThreadView) and w._consume_ng_dirty()
         # 非表示中にAR更新が来ていた場合、ここで最新HTMLを再ロードして
         # 「タブ青→開いたら新着が出ない」取りこぼしを解消する
-        if isinstance(w, ThreadView) and getattr(w, '_pending_redraw', False):
+        if not _ng_consumed and isinstance(w, ThreadView) and getattr(w, '_pending_redraw', False):
             # _pending_redraw は追記/再描画の完了後（_sync_after_redraw）で解除する。
             # ここで即解除すると、後発の status 更新が DOM 反映前に新着込みの数を
             # 先出ししてしまう（アクティブ化直後だけ多く見える不具合の原因）。
@@ -3373,6 +3376,9 @@ class ThreadView(QWidget):
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
         self._error_banner_html = ""   # エラー(キャッシュ表示)時の赤帯バナーHTML（画像/引用モードでも使用）
         self._pending_redraw  = False  # 非表示時にAR更新が来た→アクティブ化時に再描画する
+        self._ng_dirty        = False  # NG設定変更で全再描画を保留（非可視タブ用）。
+                                        # 差分追記(_pending_frags)ではなく、モデルからの
+                                        # 完全再生成が必要なため _pending_redraw とは別扱い。
         self._displayed_res_count = 0  # DOMに実際に反映済みのレス数（ステータスの先出し防止用）
         self._pending_frags: list = []  # 非表示中(返信モード)にARが生成した新着フラグメント。
                                         # アクティブ化時にフルリロードせずDOM追記して
@@ -4177,6 +4183,25 @@ class ThreadView(QWidget):
             "window.scrollY",
             lambda y: self._redraw_ng_impl(int(y) if y else 0)
         )
+
+    def _consume_ng_dirty(self) -> bool:
+        """NG再描画保留フラグを消化する。アクティブ化時に呼ぶ。
+        - フラグ立ちなし → False
+        - フラグ立ちあり → フラグ解除・非可視中に溜まった追記フラグメントを破棄
+          （全再描画で最新モデルから作り直すため二重反映不要）・redraw_with_ng を
+          発火して True を返す。
+        _thread が未ロード時は再描画不要。フラグだけクリアする。"""
+        if not getattr(self, '_ng_dirty', False):
+            return False
+        self._ng_dirty = False
+        # NG起因の全再描画は _show_impl で最新モデルから作り直す。
+        # 非可視中の差分フラグメント/フル再描画保留は全て飲み込まれるため破棄。
+        self._pending_frags = []
+        self._pending_redraw = False
+        if self._thread is None:
+            return False
+        self.redraw_with_ng()
+        return True
 
     def _redraw_ng_impl(self, scroll_y: int):
         # window.scrollY 取得は非同期。待機中にタブが閉じられると self._thread が

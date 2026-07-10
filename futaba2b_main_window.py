@@ -2221,6 +2221,14 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._refresh_status_for_active_tab)
         QTimer.singleShot(0, self._refresh_title_bar)
         self._sync_post_dialog_roll()
+        # NG設定変更で保留された全再描画を、切替先板の現在タブでも消化する。
+        # インナータブ切替は BoardPane._on_tab_changed が消化するが、アウター
+        # (板ペイン)切替では BoardPane 側のシグナルが飛ばないため、ここで補完する。
+        cur_pane = self._outer_tabs.widget(_idx)
+        if isinstance(cur_pane, BoardPane):
+            cw = cur_pane._tabs.currentWidget()
+            if isinstance(cw, ThreadView) and hasattr(cw, '_consume_ng_dirty'):
+                cw._consume_ng_dirty()
 
     def _refresh_tab_pane(self):
         """タブペインを現在のタブ構成で更新（メインスレッド保証）"""
@@ -4512,15 +4520,34 @@ class MainWindow(QMainWindow):
         self._redraw_all_threads_with_ng()
 
     def _redraw_all_threads_with_ng(self):
-        """開いている全ThreadViewをNGフィルタ再適用で再描画する"""
+        """開いているThreadViewにNG再描画をディスパッチする。
+        - 可視タブ（現在アクティブ板の現在タブ）だけ即再描画
+        - 非可視タブは _ng_dirty=True を立て、アクティブ化時に消化
+        （v0.9.235以前は全タブ同期でフル再描画→WebEngineロード連鎖でGUIが固まる
+        主要ボトルネックだった。多タブ×多NG語×多レス時ほど顕著）"""
+        active_thread_view = None
+        active_pane = self._outer_tabs.currentWidget()
+        if isinstance(active_pane, BoardPane):
+            _cur = active_pane._tabs.currentWidget()
+            if isinstance(_cur, ThreadView):
+                active_thread_view = _cur
         for i in range(self._outer_tabs.count()):
             pane = self._outer_tabs.widget(i)
             if not isinstance(pane, BoardPane):
                 continue
             for j in range(pane._tabs.count()):
                 w = pane._tabs.widget(j)
-                if isinstance(w, ThreadView) and hasattr(w, 'redraw_with_ng'):
+                if not (isinstance(w, ThreadView) and hasattr(w, 'redraw_with_ng')):
+                    continue
+                if w is active_thread_view:
+                    # 見えているタブは即再描画
+                    w._pending_frags = []   # 差分追記はNG起因の全再描画に飲まれるため破棄
                     w.redraw_with_ng()
+                else:
+                    # 非可視タブはフラグを立てるだけ。アクティブ化時に _consume_ng_dirty
+                    # で消化する（インナー切替は BoardPane._on_tab_changed、
+                    # アウター切替は _on_outer_tab_changed が消化）。
+                    w._ng_dirty = True
 
     def _on_settings_applied(self):
         # ショートカット設定変更を反映（メニュー再構築）
