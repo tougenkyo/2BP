@@ -246,7 +246,8 @@ a.nm:hover { text-decoration: underline; }
 .comment .qt a { color: var(--quote-color); text-decoration: none; }
 .comment .qt a:hover { color: var(--quote-color); text-decoration: none; }
 /* ─ スレ画/スレあき: ホバーでOP(0レス目)ポップアップ ─ */
-.comment .op-ref { color: var(--quote-color); cursor: pointer;
+/* 文字色は本文のまま（色を変えると引用語と紛らわしいため）。下線のみで示す。 */
+.comment .op-ref { cursor: pointer;
                    border-bottom: 1px dotted var(--quote-color); }
 .comment .del { color: #FF0000; }
 /* ─ 削除レスの削除理由ラベル ─ */
