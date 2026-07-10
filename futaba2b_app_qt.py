@@ -66,7 +66,7 @@ def _video_cache_valid(path) -> bool:
         return False
 from pathlib import Path
 
-from PySide6.QtCore    import Qt, QUrl, QTimer, QObject, Signal, Slot, QSize, QRect
+from PySide6.QtCore    import Qt, QUrl, QTimer, QObject, Signal, Slot, QSize, QRect, QEvent
 from PySide6.QtGui     import QAction, QKeySequence, QColor, QShortcut, QIcon, QPixmap, QImage, QGuiApplication, QPainter, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QToolButton, QWidget, QSplitter, QVBoxLayout,
@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.240"
+APP_VER = "0.9.241"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10561,11 +10561,31 @@ class ImageTabView(QWidget):
         """QtWebEngine の強制再コンポジット（1px resizeジグル）。
         file:// 画像を <img>.src 差し替えで表示した際、DOM/src は更新されても
         コンポジタが描画を更新せず古いフレームが残る（ウインドウ移動でしか直らない）
-        問題への対処。黒画面対策の _refit_on_show と同じ手法。"""
+        問題への対処。黒画面対策の _refit_on_show と同じ手法。
+
+        伸ばす→戻すを同一イベントループ内で連続実行すると、Qtが差分を相殺して
+        リサイズイベントを1度も配送せず、再コンポジットが起きないことがある。
+        1回イベントループを跨いでから元に戻すことで、確実にリサイズを2回配送する。
+        """
+        try:
+            if not self._view.isVisible():
+                return
+            sz = self._view.size()
+            self._view.resize(sz.width(), sz.height() + 1)
+            QTimer.singleShot(0, lambda s=sz: self._restore_after_jiggle(s))
+        except Exception:
+            pass
+
+    def _restore_after_jiggle(self, sz):
+        """_force_recomposite で1px伸ばしたサイズを元に戻す。"""
+        try:
+            from shiboken6 import isValid
+            if not isValid(self) or not isValid(self._view):
+                return
+        except Exception:
+            pass
         try:
             if self._view.isVisible():
-                sz = self._view.size()
-                self._view.resize(sz.width(), sz.height() + 1)
                 self._view.resize(sz)
         except Exception:
             pass
@@ -12118,6 +12138,19 @@ class ImageWindow(QMainWindow):
 
     def moveEvent(self, event):
         super().moveEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        # 本体ウインドウの裏（未露出）にいる間に画像を差し替えると、QtWebEngine の
+        # コンポジタが新フレームを出さず前の画像が残ることがある。前面化・最小化解除
+        # の直後に強制再コンポジットして取りこぼしを回収する（中クリックで裏の
+        # ウインドウに読み込んだ場合など）。
+        if event.type() in (QEvent.Type.ActivationChange,
+                            QEvent.Type.WindowStateChange):
+            iv = self._image_view
+            if (iv is not None and self.isVisible() and not self.isMinimized()
+                    and hasattr(iv, "_force_recomposite")):
+                QTimer.singleShot(0, iv._force_recomposite)
 
     def closeEvent(self, event):
         # 破棄せず隠して再利用する（位置・サイズは保存）

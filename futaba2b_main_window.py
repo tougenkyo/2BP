@@ -2616,20 +2616,33 @@ class MainWindow(QMainWindow):
             # 参照は self._image_window が保持し、終了時に closeEvent で破棄する。
             win = ImageWindow(view, self._settings, None)
             self._image_window = win
+            # 初回は ImageTabView の構築時に画像がロードされる。表示は showEvent →
+            # _refit_on_show が再コンポジットまで面倒を見る。
+            win.show()
+            self._raise_image_window(win, activate)
         else:
             view = win.image_view
             view._src_thread_view = src
             view.set_settings(self._settings)
+            # ── 先に可視化・前面化してから画像を差し替える ──────────────────
+            # 逆順にすると、まだ裏（未露出）のウインドウ上で <img>.src 差し替えと
+            # __imgloaded__ → _force_recomposite が走ってしまう。QtWebEngine の
+            # コンポジタは未露出ウインドウに新フレームを出さないため、その後 raise
+            # しても前の画像が残る（ウインドウを動かすと直る）。
+            win.show()
+            self._raise_image_window(win, activate)
             view.load_image(url, img_list, idx)
-        win.show()
-        if activate:
-            # サムネイルクリック等での明示オープン時のみ前面へ。
-            # 常時最前面にはしない（本体ウインドウをクリックすれば裏に回る）。
-            if win.isMinimized():
-                win.showNormal()
-            win.raise_()
-            win.activateWindow()
         self._record_recent_image(url, img_list, idx)
+
+    def _raise_image_window(self, win, activate: bool):
+        """サムネイルクリック等での明示オープン時のみ前面へ。
+        常時最前面にはしない（本体ウインドウをクリックすれば裏に回る）。"""
+        if not activate:
+            return
+        if win.isMinimized():
+            win.showNormal()
+        win.raise_()
+        win.activateWindow()
 
     def _update_image_window_img_list(self, src_view, img_list):
         """画像ウインドウ(ウインドウモード)の画像が src_view 由来なら img_list を更新する。"""
