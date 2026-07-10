@@ -49,6 +49,11 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+try:
+    from urllib3.util.retry import Retry
+except ImportError:  # 古い requests 同梱の urllib3
+    from requests.packages.urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 
 # ── レス毎パース用の事前コンパイル済みパターン（_parse_res_node / _parse_op）──
@@ -227,6 +232,21 @@ class FutabaFetcher:
     def __init__(self, settings=None) -> None:
         self._settings = settings
         self.session = requests.Session()
+        # keep-alive の使い回し接続をサーバー/上流が先に閉じていると、送信時に
+        # RemoteDisconnected('Remote end closed connection without response')
+        # → ConnectionError('Connection aborted.') になり「通信エラー」表示になる。
+        # urllib3 の Retry で透過的に張り直す。
+        #   read=2: 応答受信中に切断された場合も再試行（stale-conn の実体はここ）
+        #   allowed_methods=既定(冪等メソッドのみ): GET/HEAD 等は再試行、POST は再試行
+        #     しない（POST 二重送信・投稿重複を避けるため）
+        #   connect=2: 接続確立段階の失敗も再試行
+        #   backoff_factor: 0.3s → 0.6s と待って再試行
+        _retry = Retry(total=2, connect=2, read=2, redirect=0, status=0,
+                       backoff_factor=0.3,
+                       raise_on_status=False, raise_on_redirect=False)
+        _adapter = HTTPAdapter(max_retries=_retry)
+        self.session.mount("https://", _adapter)
+        self.session.mount("http://", _adapter)
         self._img_cache: dict[str, bytes] = {}  # url→bytes メモリキャッシュ
         self._img_cache_bytes: int = 0          # _img_cache の合計バイト数（上限管理用）
         self._prefetch_seen: set[str] = set()   # 先読み済み/投入済みURL（重複投入防止）

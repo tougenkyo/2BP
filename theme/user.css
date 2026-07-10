@@ -531,6 +531,8 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 .gi-qi:hover { color: #cc0000; }
 /* 左上の連番（OP / res_idx） */
 .gn { text-align: left; font-size: 7pt; line-height: 1.3; }
+.gn:hover{background:#F0E0D6;border-radius:2px}
+
 /* サムネ画像エリア */
 .gt {
     flex: 1;
@@ -586,3 +588,5 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     border: 1px solid #aaa;
     cursor: pointer;
 }
+
+
