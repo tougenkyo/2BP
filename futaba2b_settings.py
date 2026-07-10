@@ -244,6 +244,23 @@ _DEFAULT_BOOKMARKS = [
     {"title": "めぶき☆ちゃんねる",   "url": "https://mebuki.moe/"},
 ]
 
+# ── 手書きキャンバスの初期値 ─────────────────────────────────────────────────
+# 「初期化」ボタン(⑤)とロード時のフォールバックで共有する唯一の真実。
+# 消しゴムは「消す」のではなく背景色を上塗りするペンとして扱うため、
+# eraser_color は既定でキャンバス背景色と同じにする。
+TEGAKI_BG = "#EFDFD6"
+TEGAKI_DEFAULTS: dict = {
+    "pen_color":    "#7B0004",
+    "pen_size":     2,
+    "eraser_color": TEGAKI_BG,
+    "eraser_size":  15,
+    "smooth":       0,
+    "cursor":       "cross_thick",
+    "w":            344,
+    "h":            135,
+}
+
+
 class AppSettings:
     def __init__(self) -> None:
         self._app: dict                   = {}
@@ -306,6 +323,9 @@ class AppSettings:
         self.post_save_name: bool = False  # おなまえを記憶するか
         self.post_save_mail: bool = False  # E-mailを記憶するか
         self.post_dialog_pin: bool = False # レスウィンドウを投稿後も閉じない
+        # 手書きキャンバスの状態（返信ウインドウを閉じても復元する）。
+        # ペン/消しゴムは色・太さを別々に保持する。キーは TEGAKI_DEFAULTS を参照。
+        self.tegaki_state: dict = dict(TEGAKI_DEFAULTS)
         self.del_hide_checked: bool = True # 「delしたレスを非表示にする」の記憶状態（既定ON）
         # ── ログ保存 ──────────────────────────────────────────────────────────
         self.log_save_dir: str = ""        # 保存先ディレクトリ（空=プログラム隣の logs/）
@@ -738,6 +758,22 @@ class AppSettings:
             self.post_save_name = raw.get("post_save_name", False)
             self.post_save_mail = raw.get("post_save_mail", False)
             self.post_dialog_pin = raw.get("post_dialog_pin", False)
+            # 手書き状態: 既定値の上に保存値を重ねる。欠損キー・型不正は既定で補う
+            # （旧バージョンの設定ファイル互換・手編集による破損対策）。
+            _tg = dict(TEGAKI_DEFAULTS)
+            _tg_raw = raw.get("tegaki_state", {})
+            if isinstance(_tg_raw, dict):
+                for _k, _dv in TEGAKI_DEFAULTS.items():
+                    _v = _tg_raw.get(_k, _dv)
+                    if isinstance(_dv, int) and not isinstance(_v, bool):
+                        try:
+                            _v = int(_v)
+                        except (TypeError, ValueError):
+                            _v = _dv
+                    elif isinstance(_dv, str) and not isinstance(_v, str):
+                        _v = _dv
+                    _tg[_k] = _v
+            self.tegaki_state = _tg
             self.del_hide_checked = raw.get("del_hide_checked", True)
             self.post_rules_open = raw.get("post_rules_open", {})
             self.pin_after_post  = raw.get("pin_after_post",  False)
@@ -929,6 +965,7 @@ class AppSettings:
                         "post_save_name": self.post_save_name,
                         "post_save_mail": self.post_save_mail,
                         "post_dialog_pin": self.post_dialog_pin,
+                        "tegaki_state":    self.tegaki_state,
                         "del_hide_checked": self.del_hide_checked,
                         "post_rules_open": self.post_rules_open,
                         "pin_after_post":  self.pin_after_post,

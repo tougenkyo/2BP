@@ -8,7 +8,8 @@ import os
 import re
 import configparser
 
-from PySide6.QtCore    import Qt, QTimer, Signal, QSize, QPoint, QRect, QEvent
+from PySide6.QtCore    import (Qt, QTimer, Signal, QSize, QPoint, QRect, QEvent,
+                               QObject, Slot, QFile, QIODevice)
 from PySide6.QtGui     import QPixmap, QIcon, QImage, QColor
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QGroupBox,
@@ -22,8 +23,58 @@ from PySide6.QtWidgets import (
 
 from futaba2b_models   import BoardInfo
 from futaba2b_network  import FutabaFetcher
-from futaba2b_settings import AppSettings, NgFilter, BoardSettings, get_board_settings
+from futaba2b_settings import (AppSettings, NgFilter, BoardSettings, get_board_settings,
+                               TEGAKI_DEFAULTS, TEGAKI_BG)
 from futaba2b_const    import ThemeManager as _TM
+
+
+class _TegakiBridge(QObject):
+    """手書きキャンバス(JS) → Python の設定保存ブリッジ。
+    色・太さ・手ブレ補正・ペン先・W/H が変わるたびに JS から呼ばれる。
+    settings.save() はスライダー操作で連続発火するため、デバウンスして書き出す。"""
+
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self._settings = settings
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(800)
+        self._timer.timeout.connect(self._flush)
+
+    @Slot(str)
+    def saveState(self, json_str: str):
+        import json as _json
+        try:
+            st = _json.loads(json_str)
+        except Exception:
+            return
+        if not isinstance(st, dict):
+            return
+        merged = dict(TEGAKI_DEFAULTS)
+        for k, dv in TEGAKI_DEFAULTS.items():
+            v = st.get(k, dv)
+            if isinstance(dv, int) and not isinstance(v, bool):
+                try:
+                    v = int(v)
+                except (TypeError, ValueError):
+                    v = dv
+            elif isinstance(dv, str) and not isinstance(v, str):
+                v = dv
+            merged[k] = v
+        self._settings.tegaki_state = merged
+        self._timer.start()   # 連続変更をまとめて1回だけ保存
+
+    def _flush(self):
+        try:
+            self._settings.save()
+        except Exception:
+            pass
+
+    def flush_now(self):
+        """ダイアログを閉じる時に、保留中の保存を即座に確定させる。"""
+        if self._timer.isActive():
+            self._timer.stop()
+        self._flush()
 
 
 
@@ -1189,10 +1240,26 @@ class PostDialog(QDialog):
         """手書きjs入力エリア（HTML5 Canvas）"""
         from PySide6.QtWebEngineWidgets import QWebEngineView
         from PySide6.QtWebEngineCore import QWebEngineProfile
-        _BG   = "#EFDFD6"
-        _PEN  = "#7B0004"
-        _SIZE = 5
-        _W, _H = 344, 135
+        from PySide6.QtWebChannel import QWebChannel
+        import json as _json
+        _BG = TEGAKI_BG
+        # 保存済み状態を復元（無ければ既定値）。ペン/消しゴムは色・太さを個別に保持。
+        _st = dict(TEGAKI_DEFAULTS)
+        _saved = getattr(self._settings, "tegaki_state", None)
+        if isinstance(_saved, dict):
+            _st.update({k: v for k, v in _saved.items() if k in TEGAKI_DEFAULTS})
+        _W, _H = int(_st["w"]), int(_st["h"])
+        # JS 側の初期状態・初期化ボタン用にそのまま埋め込む
+        _st_json  = _json.dumps(_st,              ensure_ascii=False)
+        _def_json = _json.dumps(TEGAKI_DEFAULTS,  ensure_ascii=False)
+        # file://・about:blank から qrc: は読めないため qwebchannel.js をインライン化
+        _qwc = ""
+        _f = QFile(":/qtwebchannel/qwebchannel.js")
+        if _f.open(QIODevice.OpenModeFlag.ReadOnly):
+            _qwc = bytes(_f.readAll()).decode("utf-8", errors="replace")
+            _f.close()
+        else:
+            print("[Tegaki] WARNING: qwebchannel.js not found in qrc (状態は保存されません)")
         _html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
   html,body{{margin:0;padding:0;width:100%;height:100%;background:#d0d0d0;
@@ -1215,16 +1282,16 @@ class PostDialog(QDialog):
 <div id="toolbar">
   <button id="btn_pen"    onclick="setTool('pen')"   class="active">✏️ペン</button>
   <button id="btn_eraser" onclick="setTool('eraser')">🧹消しゴム</button>
-  <input type="color" id="color" value="{_PEN}" title="色">
+  <input type="color" id="color" value="{_st['pen_color']}" title="色（ペン/消しゴムで別々に記憶）">
   <span class="lbl">太さ:</span>
-  <input type="range" id="size" min="1" max="30" value="{_SIZE}" oninput="syncSize()">
-  <span id="size-label" style="font-size:11px;min-width:18px;text-align:right;">{_SIZE}</span>
+  <input type="range" id="size" min="1" max="30" value="{_st['pen_size']}" oninput="syncSize()">
+  <span id="size-label" style="font-size:11px;min-width:18px;text-align:right;">{_st['pen_size']}</span>
   <span class="lbl" style="margin-left:4px;">手ブレ補正:</span>
-  <input type="range" id="smooth" min="0" max="12" value="0" step="1" title="手ブレ補正（平均点数）">
-  <span id="smooth-label" style="font-size:11px;min-width:14px;">0</span>
+  <input type="range" id="smooth" min="0" max="12" value="{_st['smooth']}" step="1" title="手ブレ補正（平均点数）">
+  <span id="smooth-label" style="font-size:11px;min-width:14px;">{_st['smooth']}</span>
   <span class="lbl" style="margin-left:4px;">ペン先:</span>
-  <select id="cursor-sel" onchange="updateCursor()">
-    <option value="cross_thick" selected>十字(太)</option>
+  <select id="cursor-sel" onchange="updateCursor();saveState();">
+    <option value="cross_thick">十字(太)</option>
     <option value="cross_thin">十字(細)</option>
     <option value="dot">・</option>
     <option value="none">無し</option>
@@ -1241,22 +1308,57 @@ class PostDialog(QDialog):
   <button onclick="zoom(-0.25)">🔍−</button>
   <span id="zoom-label" style="font-size:11px;min-width:34px;text-align:center;">100%</span>
   <button onclick="zoom(+0.25)">🔍＋</button>
+  <button onclick="resetAll()" title="色・太さ・手ブレ補正・ペン先・W/H を初期値に戻す（絵は消えません）">⟲初期化</button>
 </div>
 <div id="canvas-wrap">
   <div id="canvas-scaler">
     <canvas id="canvas" width="{_W}" height="{_H}"></canvas>
   </div>
 </div>
+<script>{_qwc}</script>
 <script>
 const canvas  = document.getElementById('canvas');
 const scaler  = document.getElementById('canvas-scaler');
 const wrap    = document.getElementById('canvas-wrap');
 const ctx     = canvas.getContext('2d');
 const BG      = '{_BG}';
+const DEFAULTS = {_def_json};
+const INIT     = {_st_json};
 let tool='pen', drawing=false;
 let history=[], future=[];
 let scale=1.0;
 let rawBuf=[], smX=0, smY=0;
+
+// ── ペン/消しゴムの色・太さを別々に保持（太さスライダー・色パレットは共用） ──
+// 消しゴムは「消す」のではなく背景色を上塗りするペンとして扱うため、
+// eraser も色を持つ（既定はキャンバス背景色）。
+let S = {{
+  pen:    {{ color: INIT.pen_color,    size: INIT.pen_size    }},
+  eraser: {{ color: INIT.eraser_color, size: INIT.eraser_size }}
+}};
+
+// ── Python への状態保存ブリッジ ──
+let bridge=null;
+if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined' && qt.webChannelTransport) {{
+  new QWebChannel(qt.webChannelTransport, function(ch){{ bridge = ch.objects.tegaki; }});
+}}
+// 現在の色・太さスライダーの値を、いま選択中のツールへ退避する
+function stash(){{
+  S[tool].color = document.getElementById('color').value;
+  S[tool].size  = +document.getElementById('size').value;
+}}
+// 変更のたびに呼ぶ。ディスク書き込みは Python 側でデバウンスされる。
+function saveState(){{
+  stash();
+  if(!bridge) return;
+  bridge.saveState(JSON.stringify({{
+    pen_color:    S.pen.color,    pen_size:    S.pen.size,
+    eraser_color: S.eraser.color, eraser_size: S.eraser.size,
+    smooth: +document.getElementById('smooth').value,
+    cursor:  document.getElementById('cursor-sel').value,
+    w: canvas.width, h: canvas.height
+  }}));
+}}
 
 function fillBg(){{
   ctx.fillStyle=BG;
@@ -1269,9 +1371,31 @@ function syncSize(){{
     document.getElementById('size').value;
   updateCursor();
 }}
+document.getElementById('size').addEventListener('input',function(){{
+  S[tool].size=+this.value; saveState();
+}});
+document.getElementById('color').addEventListener('input',function(){{
+  S[tool].color=this.value; saveState();
+}});
 document.getElementById('smooth').addEventListener('input',function(){{
   document.getElementById('smooth-label').textContent=this.value;
+  saveState();
 }});
+
+// ── 全設定を初期値へ戻す（絵は消さない） ──
+function resetAll(){{
+  S.pen    = {{ color: DEFAULTS.pen_color,    size: DEFAULTS.pen_size    }};
+  S.eraser = {{ color: DEFAULTS.eraser_color, size: DEFAULTS.eraser_size }};
+  document.getElementById('smooth').value = DEFAULTS.smooth;
+  document.getElementById('smooth-label').textContent = DEFAULTS.smooth;
+  document.getElementById('cursor-sel').value = DEFAULTS.cursor;
+  document.getElementById('cw').value = DEFAULTS.w;
+  document.getElementById('ch').value = DEFAULTS.h;
+  document.getElementById('color').value = S[tool].color;
+  document.getElementById('size').value  = S[tool].size;
+  syncSize();
+  resizeCanvas();   // W/H を実際に適用（描画内容は保持され、saveState も走る）
+}}
 
 // ── ペン先カーソル ──
 function makeCursorSvg(type, sz){{
@@ -1314,13 +1438,22 @@ function updateCursor(){{
   const sz=+document.getElementById('size').value;
   canvas.style.cursor=makeCursorSvg(type,sz);
 }}
+// 保存済みのペン先を復元してからカーソルを作る
+document.getElementById('cursor-sel').value = INIT.cursor;
 updateCursor();
 
-// ── ツール選択 ──
+// ── ツール選択（色・太さをツールごとに入れ替える） ──
 function setTool(t){{
-  tool=t;
+  if(t!==tool){{
+    stash();                                        // 現ツールの値を退避
+    tool=t;
+    document.getElementById('color').value = S[t].color;   // 新ツールの値をUIへ
+    document.getElementById('size').value  = S[t].size;
+    syncSize();                                     // ラベル＋カーソル更新
+  }}
   document.getElementById('btn_pen').classList.toggle('active', t==='pen');
   document.getElementById('btn_eraser').classList.toggle('active', t==='eraser');
+  saveState();
 }}
 
 // ── ズーム（常に中央） ──
@@ -1344,6 +1477,7 @@ function resizeCanvas(){{
   ctx.drawImage(tmp,0,0);
   history=[]; future=[];
   zoom(0);
+  saveState();   // 適用したW/Hを永続化
 }}
 
 // ── 反転 ──
@@ -1377,7 +1511,8 @@ function saveSnap(){{
   if(history.length>50) history.shift();
 }}
 
-function getColor(){{ return tool==='eraser'?BG:document.getElementById('color').value; }}
+// 消しゴムも「上に色を塗る」ペンとして扱う（既定色が背景色なので消えたように見える）
+function getColor(){{ return document.getElementById('color').value; }}
 function getSize() {{ return +document.getElementById('size').value; }}
 
 function start(e){{
@@ -1449,6 +1584,12 @@ document.addEventListener('keydown',function(e){{
         from PySide6.QtWebEngineCore import QWebEnginePage
         self._tegaki_page = QWebEnginePage(self._tegaki_profile, self)
         page = self._tegaki_page
+        # 状態保存ブリッジ。setHtml より先に付けないと qt.webChannelTransport が
+        # ページ読み込み時に存在せず、JS 側の bridge が null のままになる。
+        self._tegaki_bridge  = _TegakiBridge(self._settings, self)
+        self._tegaki_channel = QWebChannel(page)
+        self._tegaki_channel.registerObject("tegaki", self._tegaki_bridge)
+        page.setWebChannel(self._tegaki_channel)
         w = QWebEngineView(page, self)
         w.setHtml(_html)
         return w
@@ -2059,6 +2200,13 @@ document.addEventListener('keydown',function(e){{
             self._settings.post_dialog_pos  = [self.x(), self.y()]
 
     def closeEvent(self, event):
+        # 手書きの保留中デバウンス保存を確定させる（settings.tegaki_state は
+        # 変更のたびにブリッジが更新済み。ここではタイマーを止めて即書き出す）
+        if getattr(self, "_tegaki_bridge", None) is not None:
+            try:
+                self._tegaki_bridge.flush_now()
+            except Exception:
+                pass
         # サイズ・位置・分割位置を記憶
         self._save_geometry()
         # ピン状態を保存（投稿せずバツボタンで閉じても現在のON/OFFを反映する）
@@ -2075,8 +2223,13 @@ document.addEventListener('keydown',function(e){{
         self._cleanup_tmp()
         # WebEngineProfile より先に Page・View を破棄しないと警告が出るため明示的に削除
         if hasattr(self, '_tegaki_page') and self._tegaki_page is not None:
+            try:
+                self._tegaki_page.setWebChannel(None)   # 破棄中のJS→Python呼び出しを断つ
+            except Exception:
+                pass
             self._tegaki_page.deleteLater()
             self._tegaki_page = None
+        self._tegaki_channel = None
         if hasattr(self, '_tegaki_profile') and self._tegaki_profile is not None:
             self._tegaki_profile.deleteLater()
             self._tegaki_profile = None
