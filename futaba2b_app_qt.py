@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.254"
+APP_VER = "0.9.255"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2591,19 +2591,21 @@ class BoardPane(QWidget):
             t = getattr(w, '_thread', None)
             if t and t.res_list:
                 import re as _re
-                # タイトルバーと同じ正規タイトルを優先（IP表示行の除去処理済み）
-                _tt = (t.title or "").strip()
-                if _tt and not _re.match(r'^No\.\d+', _tt):
-                    self._title_lbl.setFullText(_tt[:60])
-                    return
-                # フォールバック: OPコメントから抽出
-                raw = (t.res_list[0].comment_text or "").strip()
-                raw = _re.sub(r'<[^>]+>', '', raw)
-                # メール欄 ・3・ のスレは先頭に [IPアドレス] が付くため除去
-                # （IP表示が複数行に分断されるケースに対応するためDOTALLで除去）
-                raw = _re.sub(r'^\s*\[[^\]]*\]\s*', '', raw, flags=_re.S).strip()
-                line = next((l.strip() for l in raw.splitlines() if l.strip()), "")
-                self._title_lbl.setFullText(line[:60])
+                # OP本文の先頭行を表示（題名が短い/無題でも本文で識別できるように）。
+                # 各行頭のIP表示 [xxx] を除去し、最初の非空行を採用。
+                raw = _re.sub(r'<[^>]+>', '', (t.res_list[0].comment_text or ""))
+                line = ""
+                for _l in raw.splitlines():
+                    _l = _re.sub(r'^\s*\[[^\]]*\]\s*', '', _l.strip())
+                    if _l:
+                        line = _l
+                        break
+                if not line:
+                    # 本文が無い（画像のみ等）→ 題名にフォールバック
+                    _tt = (t.title or "").strip()
+                    if _tt and not _re.match(r'^No\.\d+', _tt):
+                        line = _tt
+                self._title_lbl.setFullText(line[:120])
             else:
                 self._title_lbl.setFullText("")
         elif isinstance(w, CatalogView):
