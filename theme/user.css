@@ -799,7 +799,7 @@ body.show-deleted .gi.deleted { display: flex; }
     white-space: nowrap;   /* 本文を折り返さず1行に収める */
     overflow: hidden;   /* 行幅を超えた分は隠す */
     background: #F0E0D6;
-    width: 60%;
+    width: 80%;
 }
 /* 一番上位（被引用元・親レス）の行 */
 .qt-root { font-weight: bold; }
