@@ -46,13 +46,13 @@ body {
    ============================================================ */
 .res.op {
     padding: 6px 8px 4px 8px;
-    margin: 0 0 4px 16px;        /* 左16pxは▼/…ガター用 */
+    margin: 0 0 4px 16px;   /* 左16pxは▼/…ガター用 */
     position: relative;
     background: #FFFFEE !important;   /* 背景色 */
 }
-.res.op .thumb   { float: left; margin-right: 24px; margin-bottom: 12px; }
+.res.op .thumb { float: left; margin-right: 24px; margin-bottom: 12px; }
 .res.op .op-text { display: flow-root; width: fit-content; min-width: 200px; }
-.op-text         { display: flow-root; width: fit-content; min-width: 200px; }
+.op-text { display: flow-root; width: fit-content; min-width: 200px; }
 
 
 /* ============================================================
@@ -67,28 +67,38 @@ body {
     padding: 3px 10px 3px 20px;
     margin: 1px 0 3px 0;
 }
-.res.reply.new-res   { border-left: 3px solid #cc1105; }
-.res.reply.self-res  { border-left: 3px solid var(--self-res-border); }   /* 自分のレス */
-.res.reply .content  { padding-left: 15px; }
-.thread-end          { clear: both; height: 4px; }
+.res.reply.new-res { border-left: 3px solid #cc1105; }
+.res.reply.self-res { border-left: 3px solid var(--self-res-border); }   /* 自分のレス */
+.res.reply .content { padding-left: 15px; }
+.thread-end { clear: both; height: 4px; }
 
 /* 削除レス（通常時は非表示。show-deleted で表示） */
 .res.reply.deleted { display: none; }
 body.show-deleted .res.reply.deleted {
-    background: #e8d8d0;                /* 背景色 */
-    opacity: 0.7;                       /* 半透明 */
-    border-left: 3px solid #cc1105;     /* 左ボーダー */
+    background: #e8d8d0;   /* 背景色 */
+    opacity: 0.7;   /* 半透明 */
+    border-left: 3px solid #cc1105;   /* 左ボーダー */
 }
 
 /* 新着レスの区切り線 */
 .new-res-divider {
-    clear: both; margin: 4px 0 2px 0; padding: 2px 0;
-    text-align: center; font-size: 8pt; color: var(--divider-fg);
+    clear: both;
+    margin: 4px 0 2px 0;
+    padding: 2px 0;
+    text-align: center;
+    font-size: 8pt;
+    color: var(--divider-fg);
     border-top: 1px solid var(--divider-fg);
     border-bottom: 1px solid var(--divider-fg);
-    background: var(--divider-bg); user-select: none;
+    background: var(--divider-bg);
+    user-select: none;
 }
-.op-text .new-res-divider { clear: none; display: block; width: 100%; margin: 6px 0 0 0; }
+.op-text .new-res-divider {
+    clear: none;
+    display: block;
+    width: 100%;
+    margin: 6px 0 0 0;
+}
 
 
 /* ============================================================
@@ -103,65 +113,104 @@ body.show-deleted .res.reply.deleted {
 }
 
 /* レス番号 */
-.rsc { color: #800000; font-size: 11pt; margin-left: 3px; margin-right: 0px; min-width: 18px; text-align: left; }
+.rsc {
+    color: #800000;
+    font-size: 11pt;
+    margin-left: 3px;
+    margin-right: 0px;
+    min-width: 18px;
+    text-align: left;
+}
 
 /* 引用インジケータ (▼) */
-.quote-ind                { color: #800000; font-size: 11pt; cursor: pointer; margin-right: 0px; flex-shrink: 0; }
-.quote-ind:hover          { color: #DD0000; }
-.quote-ind.no-quote       { cursor: default; opacity: 0.4; }   /* 被引用なし */
+.quote-ind {
+    color: #800000;
+    font-size: 11pt;
+    cursor: pointer;
+    margin-right: 0px;
+    flex-shrink: 0;
+}
+.quote-ind:hover { color: #DD0000; }
+.quote-ind.no-quote { cursor: default; opacity: 0.4; }   /* 被引用なし */
 .quote-ind.no-quote:hover { color: var(--no-color); }
 
 /* サブジェクト 無念 */
-.csb     { color: #cc1105; font-weight: bold; margin: 0 0px; }
+.csb { color: #cc1105; font-weight: bold; margin: 0 0px; }
 /* "Name" テキスト */
-.csb-nm  { color: #800000; margin: 0 2px; }
+.csb-nm { color: #800000; margin: 0 2px; }
 
 /* 名前 / トリップ */
-.nm        { color: #117743; font-weight: bold; margin: 0 5px; }
-a.nm       { color: var(--name-color); font-weight: bold; margin: 0 5px; text-decoration: none; }  /* 名前がリンクの場合 */
+.nm { color: #117743; font-weight: bold; margin: 0 5px; }
+a.nm {
+    color: var(--name-color);
+    font-weight: bold;
+    margin: 0 5px;
+    text-decoration: none;
+}   /* 名前がリンクの場合 */
 a.nm:hover { text-decoration: underline; }
-.trip      { color: #117743; }
+.trip { color: #117743; }
 
 /* 日時 */
 .dt { color: #800000; margin: 0 5px; }
 
 /* ID */
-.post-id       { color: #EE0000; cursor: pointer; margin: 0 3px; }
+.post-id { color: #EE0000; cursor: pointer; margin: 0 3px; }
 .post-id:hover { text-decoration: underline; color: #DD0000; }
 body.id-board .post-id { color: var(--id-normal-color, #444); }   /* id表示板の通常ID */
-body.op-no-id .post-id { color: #cc0000; font-weight: bold; }     /* OP無IDなのにIDあり */
+body.op-no-id .post-id { color: #cc0000; font-weight: bold; }   /* OP無IDなのにIDあり */
 .post-id-prefix { }   /* ID接頭辞（スタイリング用フック・既定なし） */
-.post-id-value  { }   /* ID本体（スタイリング用フック・既定なし） */
-.post-id-count  { color: var(--footer-color); font-size: 8pt; }   /* 同一IDの出現数 */
+.post-id-value { }   /* ID本体（スタイリング用フック・既定なし） */
+.post-id-count { color: var(--footer-color); font-size: 8pt; }   /* 同一IDの出現数 */
 /* 自主ID晒し等の警告ID */
-.post-id.post-id-warn                { color: var(--id-warn-color, #ff0000) !important; font-weight: bold; }
-body.id-board .post-id.post-id-warn  { color: var(--id-warn-color, #ff0000) !important; font-weight: bold; }
-body.op-no-id .post-id.post-id-warn  { color: var(--id-warn-color, #ff0000) !important; font-weight: bold; }
+.post-id.post-id-warn { color: var(--id-warn-color, #ff0000) !important; font-weight: bold; }
+body.id-board .post-id.post-id-warn { color: var(--id-warn-color, #ff0000) !important; font-weight: bold; }
+body.op-no-id .post-id.post-id-warn { color: var(--id-warn-color, #ff0000) !important; font-weight: bold; }
 .post-id.post-id-warn .post-id-count { color: var(--id-warn-color, #ff0000); }
 
 /* No. */
-.no       { color: #800000; text-decoration: underline; cursor: pointer; margin: 0 5px; }
+.no {
+    color: #800000;
+    text-decoration: underline;
+    cursor: pointer;
+    margin: 0 5px;
+}
 .no:hover { color: #DD0000; }
 
 /* del */
-.del       { color: #800000; text-decoration: underline; cursor: pointer; margin: 0 3px; }
+.del {
+    color: #800000;
+    text-decoration: underline;
+    cursor: pointer;
+    margin: 0 3px;
+}
 .del:hover { color: #DD0000; }
 
 /* そうだね */
 .sod {
-    color: #800000; background: transparent; border: none;
-    font-size: 100%; cursor: pointer; padding: 0 8px; margin: 0 8px;
-    font-family: inherit; white-space: nowrap;
+    color: #800000;
+    background: transparent;
+    border: none;
+    font-size: 100%;
+    cursor: pointer;
+    padding: 0 8px;
+    margin: 0 8px;
+    font-family: inherit;
+    white-space: nowrap;
 }
 .sod:hover { text-decoration: underline; }
 
 /* 有効期限 */
 .expiry { color: #cc0000; font-size: small; margin-left: 4px; }
 .expiry-banner {
-    color: #cc0000; font-weight: bold; text-align: center;
-    padding: 6px 12px; margin: 8px 4px 2px;
-    border: 1px solid #cc0000; border-radius: 3px;
-    background: #fff8f8; font-size: 9pt;
+    color: #cc0000;
+    font-weight: bold;
+    text-align: center;
+    padding: 6px 12px;
+    margin: 8px 4px 2px;
+    border: 1px solid #cc0000;
+    border-radius: 3px;
+    background: #fff8f8;
+    font-size: 9pt;
 }
 
 
@@ -169,14 +218,19 @@ body.op-no-id .post-id.post-id-warn  { color: var(--id-warn-color, #ff0000) !imp
    5. ファイル情報
    ============================================================ */
 /* OP用 */
-.file-info         { font-size: 11pt; margin-bottom: 4px; }
-.file-info a       { color: #0000EE; }
+.file-info { font-size: 11pt; margin-bottom: 4px; }
+.file-info a { color: #0000EE; }
 .file-info a:hover { text-decoration: underline; color: #DD0000; }
-a.fi-inline        { font-size: 11pt; color: #0000EE; text-decoration: underline; margin: 0 6px; }
-a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
+a.fi-inline {
+    font-size: 11pt;
+    color: #0000EE;
+    text-decoration: underline;
+    margin: 0 6px;
+}
+a.fi-inline:hover { text-decoration: underline; color: #DD0000; }
 /* 返信レス用（ヘッダー下段） */
-.fi-sub         { font-size: 11pt; margin: 0px 0px 0px 15px; }
-.fi-sub a       { color: #0000EE; text-decoration: underline; }
+.fi-sub { font-size: 11pt; margin: 0px 0px 0px 15px; }
+.fi-sub a { color: #0000EE; text-decoration: underline; }
 .fi-sub a:hover { text-decoration: underline; color: #DD0000; }
 
 
@@ -209,29 +263,54 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 .thumb video:hover { border-color: #800000; }
 .video-thumb { position: relative; display: inline-block; cursor: pointer; }
 .play-btn {
-    position: absolute; top: 50%; left: 50%;
+    position: absolute;
+    top: 50%;
+    left: 50%;
     transform: translate(-50%, -50%);
-    font-size: 28px; color: white;
+    font-size: 28px;
+    color: white;
     text-shadow: 0 0 6px rgba(0,0,0,0.85);
-    pointer-events: none; line-height: 1.1;
+    pointer-events: none;
+    line-height: 1.1;
 }
-.video-thumb:hover img      { border-color: #800000; }
+.video-thumb:hover img { border-color: #800000; }
 .video-thumb:hover .play-btn { color: #F0E0D6; }
 
 /* YouTube サムネイル */
 .yt-thumb {
-    max-width: 320px; max-height: 180px; display: block;
-    margin: 4px 0; cursor: pointer; border: 1px solid #aaa;
+    max-width: 320px;
+    max-height: 180px;
+    display: block;
+    margin: 4px 0;
+    cursor: pointer;
+    border: 1px solid #aaa;
 }
 .yt-thumb:hover { border-color: #cc1105; }
 
 /* アップローダーリンク／画像（up/may 等） */
-.ul-link        { color: #0000cc; text-decoration: underline; font-weight: bold; }
-.ul-link:hover  { color: #cc1105; }
-.ul-img-wrap    { display: inline-block; vertical-align: top; margin: 2px 4px; }
-.ul-fname       { display: block; font-size: 8pt; color: var(--link-color); word-break: break-all; max-width: 200px; margin-bottom: 2px; }
-.ul-thumb       { display: block; max-width: 200px; max-height: 160px; border: 1px solid #888; cursor: pointer; }
+.ul-link { color: #0000cc; text-decoration: underline; font-weight: bold; }
+.ul-link:hover { color: #cc1105; }
+.ul-img-wrap { display: inline-block; vertical-align: top; margin: 2px 4px; }
+.ul-fname {
+    display: block;
+    font-size: 8pt;
+    color: var(--link-color);
+    word-break: break-all;
+    max-width: 200px;
+    margin-bottom: 2px;
+}
+.ul-thumb {
+    display: block;
+    max-width: 200px;
+    max-height: 160px;
+    border: 1px solid #888;
+    cursor: pointer;
+}
 .ul-thumb:hover { opacity: 0.85; }
+
+
+/* [プログラム既定より追加] コンテンツ内でサムネを縮小させない */
+.thumb { flex-shrink: 0; }
 
 
 /* ============================================================
@@ -245,28 +324,35 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     line-height: 1.1;
     color: #7B0004;
 }
-.comment .qt        { color: #789922; cursor: pointer; }
-.comment .qt a      { color: #789922; text-decoration: none; }
+.comment .qt { color: #789922; cursor: pointer; }
+.comment .qt a { color: #789922; text-decoration: none; }
 .comment .qt a:hover { color: #789922; text-decoration: none; }
-.comment .del       { color: #FF0000; }
-.comment a          { color: #0000EE; }
-.comment a:hover    { color: #DD0000; text-decoration: underline; }
+.comment .del { color: #FF0000; }
+.comment a { color: #0000EE; }
+.comment a:hover { color: #DD0000; text-decoration: underline; }
 
 /* 削除理由・削除本文 */
-.del-reason  { color: #cc1105; font-size: 8pt; font-style: italic; }
-.del-content { color: var(--del-content-color); font-size: 8pt; margin-top: 2px; white-space: pre-wrap; }
+.del-reason { color: #cc1105; font-size: 8pt; font-style: italic; }
+.del-content {
+    color: var(--del-content-color);
+    font-size: 8pt;
+    margin-top: 2px;
+    white-space: pre-wrap;
+}
 
 
 /* ============================================================
    8. フッター
    ============================================================ */
 .footer {
-    text-align: right; font-size: 9pt; color: #888;
+    text-align: right;
+    font-size: 9pt;
+    color: #888;
     margin: 0px 0px 5px 10px;
 }
-.footer a          { color: #888; text-decoration: underline; cursor: pointer; }
-.footer a:hover    { color: #DD0000; }
-.footer a.ng       { color: #888; }
+.footer a { color: #888; text-decoration: underline; cursor: pointer; }
+.footer a:hover { color: #DD0000; }
+.footer a.ng { color: #888; }
 .footer a.ng:hover { color: #DD0000; }
 
 
@@ -287,13 +373,18 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     font-size: 8pt;
 }
 .id-popup-hdr {
-    font-weight: bold; color: #800000;
-    border-bottom: 1px solid #c8a890; margin-bottom: 3px; padding-bottom: 2px;
+    font-weight: bold;
+    color: #800000;
+    border-bottom: 1px solid #c8a890;
+    margin-bottom: 3px;
+    padding-bottom: 2px;
 }
 .id-popup-item {
-    color: #7B0004; padding: 2px 0;
+    color: #7B0004;
+    padding: 2px 0;
     border-bottom: 1px dashed #ddd;
-    white-space: pre-wrap; word-break: break-all;
+    white-space: pre-wrap;
+    word-break: break-all;
 }
 .id-popup-item:last-child { border-bottom: none; }
 
@@ -304,7 +395,8 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 .extract-panel {
     display: none;
     position: fixed;
-    top: 10px; right: 10px;
+    top: 10px;
+    right: 10px;
     width: 520px;
     max-height: 80vh;
     overflow-y: auto;
@@ -321,11 +413,16 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     display: flex;
     justify-content: space-between;
     align-items: center;
-    position: sticky; top: 0;
+    position: sticky;
+    top: 0;
 }
 .extract-header button {
-    background: transparent; border: 1px solid white;
-    color: white; cursor: pointer; padding: 0 6px; font-size: 12pt;
+    background: transparent;
+    border: 1px solid white;
+    color: white;
+    cursor: pointer;
+    padding: 0 6px;
+    font-size: 12pt;
 }
 
 
@@ -342,8 +439,10 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 .res.ng-collapsed .header { cursor: pointer; opacity: 0.5; }
 /* NG画像（半透明 + クリックで展開） */
 .res.ng-image .thumb img {
-    opacity: 0.05; filter: blur(4px);
-    cursor: pointer; transition: opacity 0.2s, filter 0.2s;
+    opacity: 0.05;
+    filter: blur(4px);
+    cursor: pointer;
+    transition: opacity 0.2s, filter 0.2s;
 }
 .res.ng-image .thumb img:hover { opacity: 0.3; }
 .res.ng-image.ng-image-revealed .thumb img { opacity: 1 !important; filter: none !important; }
@@ -352,13 +451,26 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 .res.reverse-ng .header { background: rgba(155, 89, 182, 0.08); }
 
 
+/* [プログラム既定より追加] NGワード/NG画像レスの左緑帯 */
+.res.ng-band { border-left: 4px solid #1f9d1f; padding-left: 5px; }
+/* [プログラム既定より追加] del済みレスの目印 */
+.del-done {
+    color: #cc1105;
+    font-weight: bold;
+    font-size: 8pt;
+    margin-left: 4px;
+}
+/* [プログラム既定より追加] スレ内絞り込みで非表示にするレス */
+.res._ext_hide { display: none !important; }
+
+
 /* ============================================================
    12. 表示モード切替（一覧/画像/引用）
    ============================================================ */
 [data-mode="image"] .res:not(.has-img) { display: none !important; }
-[data-mode="image"] .res.op            { display: block !important; }
-[data-mode="quote"] .res:not(.has-qt)  { display: none !important; }
-[data-mode="quote"] .res.op            { display: block !important; }
+[data-mode="image"] .res.op { display: block !important; }
+[data-mode="quote"] .res:not(.has-qt) { display: none !important; }
+[data-mode="quote"] .res.op { display: block !important; }
 
 
 /* ============================================================
@@ -366,11 +478,11 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
    （dialogs.py が色を読み取る設定置き場。blink-* はアプリ独自キー）
    ============================================================ */
 .post-error-popup {
-    background: #EFDFD6;          /* 通常時の背景色 */
-    border-color: #7B0004;        /* 通常時の枠線色 */
-    color: #7B0004;               /* 文字色 */
-    blink-background: #FFAAAA;    /* 点滅時の背景色 */
-    blink-border-color: #7B0004;  /* 点滅時の枠線色 */
+    background: #EFDFD6;   /* 通常時の背景色 */
+    border-color: #7B0004;   /* 通常時の枠線色 */
+    color: #7B0004;   /* 文字色 */
+    blink-background: #FFAAAA;   /* 点滅時の背景色 */
+    blink-border-color: #7B0004;   /* 点滅時の枠線色 */
 }
 
 
@@ -385,37 +497,56 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     width: 100%;
 }
 .entry {
-    display: inline-flex; flex-direction: column;
-    border: 1px solid #800000; overflow: hidden;
-    background: #FFF; cursor: pointer;
-    width: var(--cell-w, 84px); vertical-align: top;
+    display: inline-flex;
+    flex-direction: column;
+    border: 1px solid #800000;
+    overflow: hidden;
+    background: #FFF;
+    cursor: pointer;
+    width: var(--cell-w, 84px);
+    vertical-align: top;
     flex-shrink: 0;
 }
 .entry:hover { border-color: #DD0000; box-shadow: 1px 1px 3px #aaa; }
 .entry-img {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    overflow: hidden; min-height: 30px; background: #eeeee0;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    min-height: 30px;
+    background: #eeeee0;
     position: relative;   /* .cat-badge（右上バッジ）の絶対配置基準。必須 */
 }
-.entry img {
-    display: block;
-    max-width: calc(var(--cell-w, 84px) - 4px);
-    max-height: calc(var(--cell-w, 84px) - 4px);
-}
+.entry img { display: block; max-width: calc(var(--cell-w, 84px) - 4px); max-height: calc(var(--cell-w, 84px) - 4px); }
 /* 文字のみスレ（サムネなし） */
 .entry.text-only .entry-img::after {
     content: "文";
-    font-size: 16pt; color: #bbb; font-weight: bold;
+    font-size: 16pt;
+    color: #bbb;
+    font-weight: bold;
 }
-.email-badge { color: #0000EE; font-size: 11pt; margin: 0 2px; font-weight: bold; }
+.email-badge {
+    color: #0000EE;
+    font-size: 11pt;
+    margin: 0 2px;
+    font-weight: bold;
+}
 .entry-title {
-    font-size: 9pt; color: #7B0004; padding: 1px 3px;
-    white-space: nowrap; overflow: hidden;
+    font-size: 9pt;
+    color: #7B0004;
+    padding: 1px 3px;
+    white-space: nowrap;
+    overflow: hidden;
 }
 .entry-foot {
-    display: flex; justify-content: space-between;
-    font-size: 9pt; color: #7B0004; font-weight: normal;
-    padding: 0 3px 2px; line-height: 1.1;
+    display: flex;
+    justify-content: space-between;
+    font-size: 9pt;
+    color: #7B0004;
+    font-weight: normal;
+    padding: 0 3px 2px;
+    line-height: 1.1;
 }
 .res-new { color: #cc1105; font-weight: bold; }
 
@@ -425,26 +556,39 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 
 /* メール欄/IDバッジ（サムネ右上の小アイコン） */
 .cat-badge {
-    position: absolute; top: 1px; right: 1px; font-size: 7pt; font-weight: bold;
-    line-height: 1; color: #fff; padding: 1px 2px; border-radius: 2px;
-    pointer-events: none; z-index: 2;
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    font-size: 7pt;
+    font-weight: bold;
+    line-height: 1;
+    color: #fff;
+    padding: 1px 2px;
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 2;
 }
 .cat-badge-g { background: #2E7D32; }   /* 緑: ID表示/IP表示/・3・/他 */
 .cat-badge-r { background: #cc1105; }   /* 赤: 非ID表示でID実在 */
 
 /* セクション見出し・区切り（検索／隔離。flex と grid 両対応） */
 .sec-hdr {
-    flex-basis: 100%; width: 100%;
+    flex-basis: 100%;
+    width: 100%;
     grid-column: 1 / -1;
     text-align: center;
-    color: #00008B; font-size: 9pt; font-weight: bold;
-    padding: 3px 6px; background: #F0F0FF;
+    color: #00008B;
+    font-size: 9pt;
+    font-weight: bold;
+    padding: 3px 6px;
+    background: #F0F0FF;
     border-bottom: 2px solid #0000CC;
     margin-bottom: 2px;
 }
-.sec-hdr.quar-hdr { color: #8a4b00; background: #FFF3E0; border-bottom: 2px solid #E08000; }  /* 隔離スレ見出し */
+.sec-hdr.quar-hdr { color: #8a4b00; background: #FFF3E0; border-bottom: 2px solid #E08000; }   /* 隔離スレ見出し */
 .sec-div {
-    flex-basis: 100%; width: 100%;
+    flex-basis: 100%;
+    width: 100%;
     grid-column: 1 / -1;
     border-top: 2px solid #0000CC;
     margin: 4px 0;
@@ -456,14 +600,38 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 /* 仮赤字（残り10%以下） */
 .entry.quasi-red-thread { border: 2px solid #cc1105; }
 .entry.quasi-red-thread .entry-title { color: #cc1105; }
-.entry.quasi-red-thread .entry-foot  { color: #7B0004; }
+.entry.quasi-red-thread .entry-foot { color: #7B0004; }
 /* 既読スレ（1度でも閲覧済み） */
 .entry.already-read { background: #FFCCCC; }
 
 .page-footer {
-    font-size: 8pt; color: #888; padding: 4px 8px;
-    width: 100%; margin-top: 4px; text-align: right;
+    font-size: 8pt;
+    color: #888;
+    padding: 4px 8px;
+    width: 100%;
+    margin-top: 4px;
+    text-align: right;
 }
+
+
+/* [プログラム既定より追加] 隔離バッジ（サムネ右下・オレンジ） */
+.cat-badge-quar {
+    position: absolute;
+    bottom: 1px;
+    right: 1px;
+    top: auto;
+    font-size: 7pt;
+    font-weight: bold;
+    line-height: 1;
+    color: #fff;
+    background: #E08000;
+    padding: 1px 2px;
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 2;
+}
+/* [プログラム既定より追加] 共通ID(mode=json id) まとめセクション見出し */
+.sec-hdr.cid-hdr { color: #8b0000; background: #FFEBEE; border-bottom: 2px solid #cc1105; }
 
 
 /* ============================================================
@@ -476,34 +644,21 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     padding: 3px !important;
     max-width: 95vw !important;
 }
-._rp hr {
-    border-top: 10px #FFFFEE !important;
-    margin: 2px 0 !important;
-}
+._rp hr { border-top: 10px #FFFFEE !important; margin: 2px 0 !important; }
 ._rp .header,
-.id-popup .header {
-    flex-wrap: nowrap !important;
-    white-space: nowrap;
-}
+.id-popup .header { flex-wrap: nowrap !important; white-space: nowrap; }
 ._rp .header > * { flex-shrink: 0; }
-._rp .sod        { white-space: nowrap !important; }
+._rp .sod { white-space: nowrap !important; }
 
 
 /* ============================================================
    16. 画像モード
    ============================================================ */
 /* 全体ラッパー（中央寄せ） */
-.wrap {
-    display: flex;
-    justify-content: center;
-    padding: 8px;
-}
+.wrap { display: flex; justify-content: center; padding: 8px; }
 /* サムネのグリッド。列数はアプリが image_mode_cols 設定で動的指定するため
    grid-template-columns はここでは指定しない（指定すると列数設定が効かなくなる）。 */
-.grid {
-    display: inline-grid;
-    gap: 4px;
-}
+.grid { display: inline-grid; gap: 4px; }
 /* 1枚分のセル */
 .gi {
     border: 1px solid #800000;
@@ -513,13 +668,13 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     flex-direction: column;
     width: 80px;
     box-sizing: border-box;
-    position: relative;        /* ▼インジケータの絶対配置基準 */
+    position: relative;   /* ▼インジケータの絶対配置基準 */
 }
 .gi:hover { background: #F0E0D6; }
 /* ▼ 被引用インジケータ（右上） */
 .gi-qi {
     position: absolute;
-    top: 2px;
+    top: 3px;
     right: 2px;
     color: #800000;
     font-size: 9pt;
@@ -529,9 +684,19 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     z-index: 2;
 }
 .gi-qi:hover { color: #cc0000; }
+
 /* 左上の連番（OP / res_idx） */
-.gn{text-align:left;font-size:7pt;line-height:1.3;cursor:help;display:inline-block;
-    background:#F0E0D6;border-radius:2px;padding:0 0px}
+.gn {
+    text-align: left;
+    font-size: 7pt;
+    line-height: 1.3;
+    cursor: help;
+    align-self: flex-start;
+    background: #E1C4BC;   /*デフォルト背景色 #FFFFEE */
+    border-radius: 2px;
+    padding: 0 3px;
+    min-width: 6em;
+}
 
 /* サムネ画像エリア */
 .gt {
@@ -543,7 +708,82 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 }
 .gt img { max-width: 100%; max-height: 72px; object-fit: contain; }
 /* 右下のファイル情報（拡張子 / サイズ） */
-.gs { text-align: right; font-size: 7pt; overflow: hidden; line-height: 1.3; }
+.gs {
+    text-align: right;
+    font-size: 7pt;
+    overflow: hidden;
+    line-height: 1.3;
+}
+
+/* 左帯 */
+.gi.ng-band { box-shadow: inset 2px 0 0 #1f9d1f; }
+.gi.new-res { box-shadow: inset 2px 0 0 #cc1105; }
+.gi.self-res { box-shadow: inset 2px 0 0 #1a6fd4; }
+
+
+/* [プログラム既定より追加] 画像モードの状態（削除/NG非表示） */
+.gi.deleted { display: none; }
+body.show-deleted .gi.deleted { display: flex; }
+.gi.ng-hidden { display: none; }
+/* [プログラム既定より追加] del済みバッジ（サムネ左上） */
+.gi-del {
+    position: absolute;
+    top: 12px;
+    left: 1px;
+    color: #cc1105;
+    font-weight: bold;
+    font-size: 7pt;
+    line-height: 1.1;
+    background: rgba(255,255,255,0.85);
+    padding: 0 2px;
+    border-radius: 2px;
+    z-index: 3;
+}
+/* [プログラム既定より追加] 一括保存の選択UI */
+.gi.sel {
+    outline: 3px solid #1a6fd4;
+    outline-offset: -3px;
+    background: #dbe9ff !important;
+}
+#_selmodebtn {
+    position: fixed;
+    top: 8px;
+    right: 16px;
+    z-index: 9998;
+    background: rgba(255,255,255,.92);
+    border: 1px solid #800000;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 9pt;
+    cursor: pointer;
+    user-select: none;
+    color: #800000;
+}
+#_selmodebtn.on {
+    background: #1a6fd4;
+    border-color: #1a6fd4;
+    color: #fff;
+    font-weight: bold;
+}
+#_selbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: none;
+    gap: 6px;
+    align-items: center;
+    background: rgba(40,40,40,.92);
+    color: #fff;
+    padding: 6px 10px;
+    z-index: 9998;
+    font-size: 9pt;
+    flex-wrap: wrap;
+}
+#_selbar button { cursor: pointer; padding: 3px 10px; font-size: 9pt; }
+#_selbar ._selgrp { display: inline-flex; }
+#_selbar ._selgrp button { padding: 3px 7px; }
+#_selbar label { cursor: pointer; user-select: none; white-space: nowrap; }
 
 
 /* ============================================================
@@ -557,7 +797,7 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
     line-height: 1.0;
     font-size: 9pt;
     white-space: nowrap;   /* 本文を折り返さず1行に収める */
-    overflow: hidden;      /* 行幅を超えた分は隠す */
+    overflow: hidden;   /* 行幅を超えた分は隠す */
     background: #F0E0D6;
     width: 60%;
 }
@@ -567,15 +807,15 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 .qt-idx {
     color: #888;
     font-size: 8pt;
-    min-width: 20px;       /* 桁数が変わっても位置が揃うよう固定幅 */
+    min-width: 20px;   /* 桁数が変わっても位置が揃うよう固定幅 */
     display: inline-block;
 }
 .qt-child { transform: translateX(-10px) !important; }
 /* "No.XXXXXXX" リンク */
-.qt-no       { color: #0000EE; text-decoration: none; margin: 0 4px; }
+.qt-no { color: #0000EE; text-decoration: none; margin: 0 4px; }
 .qt-no:hover { text-decoration: underline; color: #cc1105; }
 /* 新着レスに付く "[新着]" タグ */
-.qt-new    { color: #cc1105; font-size: 8pt; }
+.qt-new { color: #cc1105; font-size: 8pt; }
 /* ツリーの枝記号 */
 .qt-branch { color: #888; }
 /* サムネイル画像 */
@@ -590,3 +830,11 @@ a.fi-inline:hover  { text-decoration: underline; color: #DD0000; }
 }
 
 
+/* [プログラム既定より追加] 引用モードの状態・そうだね数 */
+.qt-sod { color: #c55000; font-size: 8pt; margin-left: 2px; }
+.qt-row.deleted { display: none; }
+body.show-deleted .qt-row.deleted { display: block; }
+.qt-row.ng-hidden { display: none; }
+.qt-row.ng-band { border-left: 4px solid #1f9d1f; padding-left: 4px; }
+.qt-row.new-res { border-left: 4px solid #cc1105; padding-left: 4px; }
+.qt-row.self-res { border-left: 4px solid #1a6fd4; padding-left: 4px; }
