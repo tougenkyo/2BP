@@ -692,7 +692,7 @@ a.fi-inline:hover { text-decoration: underline; color: #DD0000; }
     line-height: 1.3;
     cursor: help;
     align-self: flex-start;
-    background: #E1C4BC;   /*デフォルト背景色 #FFFFEE */
+    /*background: #E1C4BC;  /* デフォルト背景色 #FFFFEE */
     border-radius: 2px;
     padding: 0 3px;
     min-width: 6em;

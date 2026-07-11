@@ -1087,7 +1087,7 @@ def _img_mode_css(cols: int) -> str:
             # align-self:flex-start で自身のcross-axisサイズを内容分に縮める。
             ".gn{text-align:left;font-size:7pt;line-height:1.3;cursor:help;"
             "align-self:flex-start;"
-            "background:#F0E0D6;border-radius:2px;padding:0 3px;min-width:6em}"
+            "border-radius:2px;padding:0 3px;min-width:6em}"
             ".gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}"
             ".gt img{max-width:100%;max-height:72px;object-fit:contain}"
             ".gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
