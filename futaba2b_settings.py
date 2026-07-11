@@ -414,6 +414,7 @@ class AppSettings:
         self.thread_open_mode:    int = 0  # アクティブで開く (0=返信, 1=画像, 2=引用)
         self.thread_open_bg_mode: int = 0  # バックグラウンドで開く
         self.image_display_mode:  int = 0  # 画像表示モード (0=タブ, 1=ウインドウ, 2=外部ブラウザ, 3=隣タブ)
+        self.image_mode_hover_popup: bool = True  # 画像モードで連番/サムネのホバーでレス内容をポップアップ
         self.image_window_geometry: list | None = None  # 画像ウインドウの位置・サイズ [x,y,w,h]
         self.auto_close_dead_tab:    bool = False  # スレ落ち時にタブを自動で閉じる
         self.auto_close_full_tab:    bool = False  # 1000レス到達時にタブを自動で閉じる
@@ -822,6 +823,7 @@ class AppSettings:
                     self.image_display_mode = 2
                 elif raw.get("image_next_tab", False):
                     self.image_display_mode = 3
+            self.image_mode_hover_popup = bool(raw.get("image_mode_hover_popup", True))
             self.image_window_geometry = raw.get("image_window_geometry", None)
             self.auto_close_dead_tab    = raw.get("auto_close_dead_tab",    False)
             self.auto_close_full_tab    = raw.get("auto_close_full_tab",    False)
@@ -1008,6 +1010,7 @@ class AppSettings:
                         "thread_open_mode":    self.thread_open_mode,
                         "thread_open_bg_mode": self.thread_open_bg_mode,
                         "image_display_mode":  self.image_display_mode,
+                        "image_mode_hover_popup": self.image_mode_hover_popup,
                         "image_window_geometry": self.image_window_geometry,
                         "auto_close_dead_tab":    self.auto_close_dead_tab,
                         "auto_close_full_tab":    self.auto_close_full_tab,

@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.246"
+APP_VER = "0.9.247"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6248,6 +6248,7 @@ class ThreadView(QWidget):
                 _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
         _id_warn = getattr(self._settings, 'id_warn_count', 5)
         _respool_inner=self._build_respool_html(self._thread.res_list, _id_counts, _id_warn)
+        _hover_pop = getattr(self._settings, 'image_mode_hover_popup', True)
         for seq,r in img_res:
             ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
             info=ext+' / '+_fmt(r.file_size_bytes)
@@ -6268,7 +6269,7 @@ class ThreadView(QWidget):
                 ' onclick="_giClick(event,'+str(idx)+',this)"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 + _gi_del +
-                '<div class="gn" data-popup-no="'+str(r.no)+'">'+display_no+'</div>'
+                '<div class="gn"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')+'>'+display_no+'</div>'
                 '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy"></div>'
                 '<div class="gs">'+info+'</div>'
                 '</div>'
@@ -6331,6 +6332,7 @@ class ThreadView(QWidget):
                 _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
         _id_warn = getattr(self._settings, 'id_warn_count', 5)
         _respool_inner=self._build_respool_html(self._thread.res_list, _id_counts, _id_warn)
+        _hover_pop = getattr(self._settings, 'image_mode_hover_popup', True)
         for seq,r in img_res:
             ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
             info=ext+' / '+_fmt(r.file_size_bytes)
@@ -6350,7 +6352,7 @@ class ThreadView(QWidget):
                 ' onclick="_giClick(event,'+str(idx)+',this)"'
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 + _gi_del +
-                '<div class="gn" data-popup-no="'+str(r.no)+'">'+display_no+'</div>'
+                '<div class="gn"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')+'>'+display_no+'</div>'
                 '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy"></div>'
                 '<div class="gs">'+info+'</div>'
                 '</div>'

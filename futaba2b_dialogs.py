@@ -3940,6 +3940,10 @@ class AppSettingsDialog(QDialog):
                 "外部ブラウザ=画像を常に外部ブラウザで開く（http系URLのみ／ログ内画像はタブ）\n"
                 "隣タブ=画像タブを現在のタブの隣に開く")
         imf.addRow("画像表示モード:", self._image_display_mode)
+        self._image_mode_hover_popup = QCheckBox("画像モードのサムネイルをホバーでレスの内容を表示する")
+        self._image_mode_hover_popup.setToolTip(
+            "画像モードで左上の連番（OP/番号）にカーソルを乗せると、そのレスの内容をポップアップ表示します")
+        imf.addRow(self._image_mode_hover_popup)
 
         # ── 自分のレス ──
         g_self = QGroupBox("自分のレス"); f1.addWidget(g_self); sf = QFormLayout(g_self)
@@ -4502,6 +4506,7 @@ class AppSettingsDialog(QDialog):
         self._thread_open_mode.setCurrentIndex(getattr(s, 'thread_open_mode', 0))
         self._thread_open_bg_mode.setCurrentIndex(getattr(s, 'thread_open_bg_mode', 0))
         self._image_display_mode.setCurrentIndex(getattr(s, 'image_display_mode', 0))
+        self._image_mode_hover_popup.setChecked(getattr(s, 'image_mode_hover_popup', True))
         self._cat_hover_zoom.setChecked(getattr(s, "catalog_hover_zoom", False))
         self._cat_hover_comment.setChecked(getattr(s, "catalog_hover_comment", False))
         self._cat_mail_badge.setChecked(getattr(s, "catalog_show_mail_badge", True))
@@ -4642,6 +4647,7 @@ class AppSettingsDialog(QDialog):
         s.thread_open_mode        = self._thread_open_mode.currentIndex()
         s.thread_open_bg_mode     = self._thread_open_bg_mode.currentIndex()
         s.image_display_mode      = self._image_display_mode.currentIndex()
+        s.image_mode_hover_popup  = self._image_mode_hover_popup.isChecked()
         s.catalog_hover_zoom      = self._cat_hover_zoom.isChecked()
         s.catalog_hover_comment   = self._cat_hover_comment.isChecked()
         s.catalog_show_mail_badge  = self._cat_mail_badge.isChecked()
