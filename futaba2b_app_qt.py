@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.247"
+APP_VER = "0.9.248"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6270,7 +6270,7 @@ class ThreadView(QWidget):
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 + _gi_del +
                 '<div class="gn"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')+'>'+display_no+'</div>'
-                '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy"></div>'
+                '<div class="gt"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')+'><img src="'+r.thumb_url+'" loading="lazy"></div>'
                 '<div class="gs">'+info+'</div>'
                 '</div>'
             )
@@ -6353,7 +6353,7 @@ class ThreadView(QWidget):
                 ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
                 + _gi_del +
                 '<div class="gn"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')+'>'+display_no+'</div>'
-                '<div class="gt"><img src="'+r.thumb_url+'" loading="lazy"></div>'
+                '<div class="gt"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')+'><img src="'+r.thumb_url+'" loading="lazy"></div>'
                 '<div class="gs">'+info+'</div>'
                 '</div>'
             )
