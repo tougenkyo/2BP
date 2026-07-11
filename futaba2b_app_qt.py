@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.252"
+APP_VER = "0.9.253"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6042,7 +6042,7 @@ class ThreadView(QWidget):
         _sbc = getattr(self._settings, 'scroll_bottom_count', 5)
         _scroll_js = _make_scroll_bottom_js(_sbc, getattr(self._settings,'scroll_top_count',0))
         _ucss_q = _load_user_css(self._settings)
-        _usr_q = f"<style>{_ucss_q}</style>" if _ucss_q else ""
+        _usr_q = f"<style id='__usercss'>{_ucss_q}</style>" if _ucss_q else ""
         html = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>{THREAD_CSS}{_qt_add}</style>"
@@ -6207,10 +6207,14 @@ class ThreadView(QWidget):
         body_js = _json.dumps(body_html, ensure_ascii=False)
         css_js  = _json.dumps(_QT_MODE_CSS, ensure_ascii=False)
         js = (
-            # 別モードからの切替時、引用CSSがheadに無ければ注入（id重複ガード）
-            "(function(){if(!document.getElementById('__qtcss')){"
+            # 別モードからの切替時、引用CSSを注入（id重複ガード）。user.css(#__usercss)
+            # の直前に挿入し、base→mode→user の順＝user.cssが勝つ順序を保つ。
+            "(function(){if(document.getElementById('__qtcss'))return;"
             "var s=document.createElement('style');s.id='__qtcss';"
-            f"s.textContent={css_js};document.head.appendChild(s);}}}})();\n"
+            "s.textContent=" + css_js + ";"
+            "var u=document.getElementById('__usercss');"
+            "if(u){document.head.insertBefore(s,u);}else{document.head.appendChild(s);}"
+            "})();\n"
             f"document.body.innerHTML = {body_js};\n"
             "document.body.dataset.mode='quote';\n"
             f"window.scrollTo(0, {int(scroll_y)});\n"
@@ -6286,7 +6290,7 @@ class ThreadView(QWidget):
         _sbc_img = getattr(self._settings, 'scroll_bottom_count', 5)
         _scroll_js_img = _make_scroll_bottom_js(_sbc_img, getattr(self._settings,'scroll_top_count',0))
         _ucss_i = _load_user_css(self._settings)
-        _usr_i = f'<style>{_ucss_i}</style>' if _ucss_i else ''
+        _usr_i = f'<style id="__usercss">{_ucss_i}</style>' if _ucss_i else ''
         html=('<!DOCTYPE html><html><head><meta charset="utf-8">'
               f'<style>{THREAD_CSS}{_img_add}</style>'
               f'{_usr_i}'
@@ -6377,10 +6381,14 @@ class ThreadView(QWidget):
         _cols = max(1, int(getattr(self._settings, "image_mode_cols", 6)))
         css_js = _json.dumps(_img_mode_css(_cols), ensure_ascii=False)
         js = (
-            # 別モードからの切替時、グリッドCSSがheadに無ければ注入（id重複ガード）
-            "(function(){if(!document.getElementById('__imgcss')){"
+            # 別モードからの切替時、グリッドCSSを注入（id重複ガード）。user.css(#__usercss)
+            # の直前に挿入し、base→mode→user の順＝user.cssが勝つ順序を保つ。
+            "(function(){if(document.getElementById('__imgcss'))return;"
             "var s=document.createElement('style');s.id='__imgcss';"
-            "s.textContent=" + css_js + ";document.head.appendChild(s);}})();\n"
+            "s.textContent=" + css_js + ";"
+            "var u=document.getElementById('__usercss');"
+            "if(u){document.head.insertBefore(s,u);}else{document.head.appendChild(s);}"
+            "})();\n"
             # 一括保存の選択UI関数（返信ページ由来のheadには無いため注入・多重ガード付き）
             + _GAL_SEL_JS + "\n"
             "document.body.innerHTML = " + grid_js + ";\n"

@@ -2186,7 +2186,7 @@ def thread_to_html(thread, show_deleted: bool = False,
         body_class = ' class="op-no-id"'         # OP無IDなのにIDあり
     else:
         body_class = ''
-    _usr = f'<style>{user_css}</style>' if user_css else ''
+    _usr = f'<style id="__usercss">{user_css}</style>' if user_css else ''
     _scroll_js = _make_scroll_bottom_js(scroll_bottom_count, scroll_top_count)
     # テーマCSS変数を注入（ThemeManagerが利用可能なら）
     try:
