@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.253"
+APP_VER = "0.9.254"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2132,6 +2132,9 @@ class BoardPane(QWidget):
         self._title_lbl = _ElideLabel()
         self._title_lbl.setStyleSheet(
             f"QLabel{{font-size:11pt;padding-left:6px;color:{_TM.ui('text_primary','#ddd')};}}")
+        # スレタイが極端に切り詰められないよう下限幅を確保（余白があれば stretch=1 で
+        # さらに伸びる）。約16〜24文字分。狭くしたい/広げたい時はこの値を調整。
+        self._title_lbl.setMinimumWidth(260)
         self._title_lbl.setAlignment(
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         tb.addWidget(self._title_lbl, 1)   # stretch=1: タイトルだけが伸縮
