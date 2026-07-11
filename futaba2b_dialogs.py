@@ -3942,7 +3942,8 @@ class AppSettingsDialog(QDialog):
         imf.addRow("画像表示モード:", self._image_display_mode)
         self._image_mode_hover_popup = QCheckBox("画像モードのサムネイルをホバーでレスの内容を表示する")
         self._image_mode_hover_popup.setToolTip(
-            "画像モードで左上の連番（OP/番号）にカーソルを乗せると、そのレスの内容をポップアップ表示します")
+            "ONにするとサムネ画像のホバーでもレス内容をポップアップ表示します。\n"
+            "OFFでも左上の連番（OP/番号）のホバーでは常に表示されます")
         imf.addRow(self._image_mode_hover_popup)
 
         # ── 自分のレス ──
