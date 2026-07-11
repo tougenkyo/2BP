@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.255"
+APP_VER = "0.9.256"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2594,12 +2594,11 @@ class BoardPane(QWidget):
                 # OP本文の先頭行を表示（題名が短い/無題でも本文で識別できるように）。
                 # 各行頭のIP表示 [xxx] を除去し、最初の非空行を採用。
                 raw = _re.sub(r'<[^>]+>', '', (t.res_list[0].comment_text or ""))
-                line = ""
-                for _l in raw.splitlines():
-                    _l = _re.sub(r'^\s*\[[^\]]*\]\s*', '', _l.strip())
-                    if _l:
-                        line = _l
-                        break
+                # 先頭のIP表示 [xxx] を除去。IP表示は <br>/<font> で複数行に分断され
+                # 「[」だけが先頭行に残ることがあるため、行分割の前に改行をまたいで
+                # 先頭の [..] をまとめて除去する（[^\]]* は改行も含む）。
+                raw = _re.sub(r'^\s*\[[^\]]*\]\s*', '', raw)
+                line = next((_l.strip() for _l in raw.splitlines() if _l.strip()), "")
                 if not line:
                     # 本文が無い（画像のみ等）→ 題名にフォールバック
                     _tt = (t.title or "").strip()
