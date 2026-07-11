@@ -3855,13 +3855,6 @@ class AppSettingsDialog(QDialog):
         self._auto_close.toggled.connect(_toggle_close); _toggle_close(False)
         self._auto_close_full.toggled.connect(_toggle_close_full)
 
-        # 画像モード 折り返し列数
-        g_imgmode = QGroupBox("画像モード"); f0.addWidget(g_imgmode)
-        imf = QFormLayout(g_imgmode)
-        self._image_mode_cols = _spin(1, 30, " 列",
-            tip="画像モードで画像を何列で折り返すか", width=80)
-        imf.addRow("折り返し列数:", self._image_mode_cols)
-
         # タブ表示設定
         g_tab = QGroupBox("タブ"); f0.addWidget(g_tab); taf = QFormLayout(g_tab)
         self._tab_max_width = _spin(0, 1000, " px",
@@ -3932,19 +3925,26 @@ class AppSettingsDialog(QDialog):
             tip="スレをバックグラウンドで開いた時に自動で切り替える表示モード")
         of.addRow("バックグラウンドで開く:", self._thread_open_bg_mode)
 
-        # 画像表示モード（タブ / ウインドウ）
-        g_imgmode = QGroupBox("画像表示モード"); f1.addWidget(g_imgmode)
+        # 画像モード（折り返し列数＋サムネホバー）: 全般タブから移動
+        g_imgmode = QGroupBox("画像モード"); f1.addWidget(g_imgmode)
         imf = QFormLayout(g_imgmode)
-        self._image_display_mode = _combo(["タブ", "ウインドウ", "外部ブラウザ", "隣タブ"],
-            tip="タブ=画像タブで開く（従来）\nウインドウ=専用の画像ウインドウで開く（1つのみ）\n"
-                "外部ブラウザ=画像を常に外部ブラウザで開く（http系URLのみ／ログ内画像はタブ）\n"
-                "隣タブ=画像タブを現在のタブの隣に開く")
-        imf.addRow("画像表示モード:", self._image_display_mode)
+        self._image_mode_cols = _spin(1, 30, " 列",
+            tip="画像モードで画像を何列で折り返すか", width=80)
+        imf.addRow("折り返し列数:", self._image_mode_cols)
         self._image_mode_hover_popup = QCheckBox("画像モードのサムネイルをホバーでレスの内容を表示する")
         self._image_mode_hover_popup.setToolTip(
             "ONにするとサムネ画像のホバーでもレス内容をポップアップ表示します。\n"
             "OFFでも左上の連番（OP/番号）のホバーでは常に表示されます")
         imf.addRow(self._image_mode_hover_popup)
+
+        # 画像表示方法（タブ / ウインドウ / 外部ブラウザ / 隣タブ）
+        g_imgview = QGroupBox("画像表示方法"); f1.addWidget(g_imgview)
+        ivf = QFormLayout(g_imgview)
+        self._image_display_mode = _combo(["タブ", "ウインドウ", "外部ブラウザ", "隣タブ"],
+            tip="タブ=画像タブで開く（従来）\nウインドウ=専用の画像ウインドウで開く（1つのみ）\n"
+                "外部ブラウザ=画像を常に外部ブラウザで開く（http系URLのみ／ログ内画像はタブ）\n"
+                "隣タブ=画像タブを現在のタブの隣に開く")
+        ivf.addRow("画像表示方法:", self._image_display_mode)
 
         # ── 自分のレス ──
         g_self = QGroupBox("自分のレス"); f1.addWidget(g_self); sf = QFormLayout(g_self)
