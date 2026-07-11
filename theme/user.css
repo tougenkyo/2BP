@@ -64,8 +64,8 @@ body {
     width: fit-content;
     min-width: 260px;
     max-width: 100%;
-    padding: 3px 10px 3px 20px;
-    margin: 1px 0 3px 0;
+    padding: 3px 10px 3px 5px;
+    margin: 1px 0 3px 10px;
 }
 .res.reply.new-res { border-left: 3px solid #cc1105; }
 .res.reply.self-res { border-left: 3px solid var(--self-res-border); }   /* 自分のレス */
@@ -229,7 +229,7 @@ a.fi-inline {
 }
 a.fi-inline:hover { text-decoration: underline; color: #DD0000; }
 /* 返信レス用（ヘッダー下段） */
-.fi-sub { font-size: 11pt; margin: 0px 0px 0px 15px; }
+.fi-sub { font-size: 11pt; margin: 5px 0px 5px 15px; }
 .fi-sub a { color: #0000EE; text-decoration: underline; }
 .fi-sub a:hover { text-decoration: underline; color: #DD0000; }
 
