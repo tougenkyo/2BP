@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.250"
+APP_VER = "0.9.251"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1054,10 +1054,11 @@ def _load_user_css(settings) -> str:
 # フルレンダー（初回ロード）と、モード切替時のDOM入替注入の両方から使うため
 # モジュールレベルに切り出す。引用CSSは静的、画像CSSは列数(cols)に依存。
 _QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
-                ".qt-row{padding:2px 4px;line-height:1.8;white-space:nowrap;overflow:hidden;"
-                "margin-bottom:3px;}"
+                ".qt-row{padding:2px 4px;line-height:1.0;font-size:9pt;white-space:nowrap;overflow:hidden;"
+                "width:60%;}"
                 ".qt-root{font-weight:bold;}"
-                ".qt-idx{color:#888;font-size:8pt;min-width:28px;display:inline-block;}"
+                ".qt-idx{color:#888;font-size:8pt;min-width:20px;display:inline-block;}"
+                ".qt-child{transform:translateX(-10px) !important;}"
                 ".qt-no{color:#0000EE;text-decoration:none;margin:0 4px;}"
                 ".qt-no:hover{text-decoration:underline;color:#cc1105;}"
                 ".qt-new{color:#cc1105;font-size:8pt;}"
@@ -1079,22 +1080,22 @@ def _img_mode_css(cols: int) -> str:
             "grid-template-columns:repeat(" + str(cols) + ",80px);gap:4px}"
             ".gi{border:1px solid #800000;padding:3px;cursor:pointer;display:flex;flex-direction:column;"
             "width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}"
-            ".gi-qi{position:absolute;top:0;right:1px;color:#800000;font-size:9pt;line-height:1;"
+            ".gi-qi{position:absolute;top:3px;right:2px;color:#800000;font-size:9pt;line-height:1;"
             "cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}"
             # 親.giは flex-column なので cross-axis(=横)は既定で stretch され、
             # .gn の背景が80px幅いっぱいに伸びて右上の▼(.gi-qi)まで到達する。
             # align-self:flex-start で自身のcross-axisサイズを内容分に縮める。
             ".gn{text-align:left;font-size:7pt;line-height:1.3;cursor:help;"
             "align-self:flex-start;"
-            "background:#F0E0D6;border-radius:2px;padding:0 3px}"
+            "background:#F0E0D6;border-radius:2px;padding:0 3px;min-width:6em}"
             ".gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}"
             ".gt img{max-width:100%;max-height:72px;object-fit:contain}"
             ".gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
             ".gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}"
-            ".gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 4px 0 0 #1f9d1f}"
+            ".gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 2px 0 0 #1f9d1f}"
             # 新着=赤帯 / 自分のレス=青帯（緑帯より後に定義して優先）
-            ".gi.new-res{box-shadow:inset 4px 0 0 #cc1105}"
-            ".gi.self-res{box-shadow:inset 4px 0 0 #1a6fd4}"
+            ".gi.new-res{box-shadow:inset 2px 0 0 #cc1105}"
+            ".gi.self-res{box-shadow:inset 2px 0 0 #1a6fd4}"
             ".gi-del{position:absolute;top:12px;left:1px;color:#cc1105;font-weight:bold;font-size:7pt;"
             "line-height:1.1;background:rgba(255,255,255,0.85);padding:0 2px;border-radius:2px;z-index:3}"
             # ── 一括保存の選択UI ──

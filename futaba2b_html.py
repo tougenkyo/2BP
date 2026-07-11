@@ -62,7 +62,7 @@ THREAD_CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
     background: var(--body-bg);
-    font-family: "Meiryo", "MS PGothic", sans-serif;
+    font-family: "MS PGothic", "ＭＳ Ｐゴシック", sans-serif;
     color: var(--body-fg);
     padding: 4px;
 }
@@ -77,8 +77,8 @@ body {
 /* OP サムネイル: 左フロート → OP div 外に逃がして返信が隣に並ぶ */
 .res.op .thumb {
     float: left;
-    margin-right: 14px;
-    margin-bottom: 6px;
+    margin-right: 24px;
+    margin-bottom: 12px;
 }
 /* OP テキスト列: BFC + fit-content → フロートを避け幅をコンテンツに合わせる
    これにより footer の text-align:right がテキスト列の右端に収まる */
@@ -125,28 +125,27 @@ body.show-deleted .res.reply.deleted { display: block; }
 
 /* ─ レス: BFC + fit-content でフロートを回避して隣に並ぶ ─ */
 .res.reply {
-    display: flow-root;
-    position: relative;
+    overflow: hidden;
     background: var(--reply-bg);
     width: fit-content;
     min-width: 260px;
     max-width: 100%;
-    padding: 3px 10px 3px 6px;
-    margin: 1px 0 3px 16px;
+    padding: 3px 10px 3px 20px;
+    margin: 1px 0 3px 0;
 }
 /* コメントを「無念 Name」の間くらいにインデント */
-.res.reply .content { padding-left: 50px; }
+.res.reply .content { padding-left: 15px; }
 /* スレ末尾でフロートをクリア */
 .thread-end { clear: both; height: 4px; }
 
 /* ─ ファイル情報 ─ */
-.file-info { font-size: 9pt; margin-bottom: 4px; }
+.file-info { font-size: 11pt; margin-bottom: 4px; }
 .file-info a { color: var(--link-color); text-decoration: none; }
-a.fi-inline { font-size: 9pt; color: var(--link-color); text-decoration: none; margin: 0 6px; }
+a.fi-inline { font-size: 11pt; color: var(--link-color); text-decoration: none; margin: 0 6px; }
 a.fi-inline:hover { text-decoration: underline; color: var(--link-hover); }
 .file-info a:hover { text-decoration: underline; color: var(--link-hover); }
 /* 返信レスのファイル情報行（ヘッダー下に独立表示） */
-.fi-sub { font-size: 9pt; margin: 1px 0 2px 20px; }
+.fi-sub { font-size: 11pt; margin: 0 0 0 15px; }
 .fi-sub a { color: var(--link-color); text-decoration: none; }
 .fi-sub a:hover { text-decoration: underline; color: var(--link-hover); }
 
@@ -156,29 +155,22 @@ a.fi-inline:hover { text-decoration: underline; color: var(--link-hover); }
     align-items: baseline;
     flex-wrap: wrap;
     gap: 0 2px;
-    margin-bottom: 3px;
-    line-height: 1.9;
-    position: relative;
+    margin-bottom: -3px;
 }
-.rsc    { color: var(--no-color); font-size: small; margin-right: 4px; min-width: 18px; text-align: right; }
+.rsc    { color: var(--no-color); font-size: 11pt; margin-left: 3px; margin-right: 0px; min-width: 18px; text-align: left; }
 /* ▼ 被引用インジケータ / … 被引用なし: レス枠の左外側に配置（位置は連番の左側のまま） */
 .quote-ind {
-    position: absolute;
-    left: -16px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 16px;
-    text-align: center;
     color: var(--no-color);
-    font-size: small;
+    font-size: 11pt;
     cursor: pointer;
-    user-select: none;
+    margin-right: 0px;
+    flex-shrink: 0;
 }
 .quote-ind:hover { color: var(--no-hover); }
 .quote-ind.no-quote { cursor: default; opacity: 0.4; }
 .quote-ind.no-quote:hover { color: var(--no-color); }
 /* サブジェクト: style4.css .csb と同一 */
-.csb    { color: var(--subject-color); font-weight: bold; margin: 0 5px; }
+.csb    { color: var(--subject-color); font-weight: bold; margin: 0 0px; }
 /* "Name" テキスト: body text color に合わせる */
 .csb-nm { color: var(--no-color); margin: 0 2px; }
 /* 名前: style4.css .cnm と同一 (緑太字) */
@@ -220,7 +212,7 @@ a.nm:hover { text-decoration: underline; }
 .thumb img {
     cursor: pointer;
     display: block;
-    border: 1px solid var(--thumb-border);
+    border: 0px solid var(--thumb-border);
     max-width: 100%;
     height: auto;
 }
@@ -237,9 +229,10 @@ a.nm:hover { text-decoration: underline; }
 /* OP サムネのスタイルは thumb img / video で共有 */
 .comment {
     font-size: medium;
+    margin: 10px 0px 0px 10px;
     white-space: pre-wrap;
     word-break: break-all;
-    line-height: 1.6;
+    line-height: 1.1;
     color: var(--comment-color);
 }
 .comment .qt  { color: var(--quote-color); cursor: pointer; }
@@ -273,7 +266,7 @@ a.nm:hover { text-decoration: underline; }
 /* ─ フッター ─ */
 .footer {
     text-align: right; font-size: 9pt; color: var(--footer-color);
-    margin-top: 2px; border-top: 1px dashed var(--footer-border); padding-top: 1px;
+    margin: 0px 0px 5px 10px;
 }
 .footer a { color: var(--footer-color); text-decoration: underline; cursor: pointer; }
 .footer a:hover { color: var(--link-hover); }
@@ -420,8 +413,8 @@ body.op-no-id .post-id.post-id-warn {
 /* ─ 抽出（スレ内絞り込み）で非表示にするレス ─ */
 .res._ext_hide { display: none !important; }
 .page-footer {
-    font-size: 8pt; color: var(--footer-color); padding: 6px 8px 4px;
-    border-top: 1px solid var(--footer-border); margin-top: 8px;
+    font-size: 8pt; color: var(--footer-color); padding: 4px 8px;
+    width: 100%; margin-top: 4px;
     text-align: right;
 }
 """
@@ -430,9 +423,9 @@ CATALOG_CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
     background: #FFFFEE;
-    font-family: "Meiryo", "MS PGothic", sans-serif;
+    font-family: "MS PGothic", "ＭＳ Ｐゴシック", sans-serif;
     font-size: 8pt;
-    padding: 6px;
+    padding: 4px;
 }
 #grid {
     display: flex;
@@ -481,13 +474,13 @@ body {
     font-size: 16pt; color: #bbb; font-weight: bold;
 }
 .entry-title {
-    font-size: 7pt; color: #7B0004; padding: 1px 3px;
-    white-space: normal; overflow: hidden;
+    font-size: 9pt; color: #7B0004; padding: 1px 3px;
+    white-space: nowrap; overflow: hidden;
 }
 .entry-foot {
     display: flex; justify-content: space-between;
-    font-size: 6pt; color: #7B0004; font-weight: bold;
-    padding: 0 3px 2px; line-height: 1.5;
+    font-size: 9pt; color: #7B0004; font-weight: normal;
+    padding: 0 3px 2px; line-height: 1.1;
 }
 .res-new { color: #cc1105; font-weight: bold; }
 .entry.red-thread { border: 2px solid #cc1105; }
