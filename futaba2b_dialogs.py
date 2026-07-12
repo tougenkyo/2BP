@@ -3079,12 +3079,6 @@ class NgSettingsDialog(QDialog):
         self._chk_board_hide = QCheckBox(
             "NGワードに一致したスレをカタログから非表示にする")
         cat_lay.addWidget(self._chk_board_hide)
-        # 共通ID(mode=json id)のスレをカタログから非表示
-        self._chk_cat_hide_common_id = QCheckBox(
-            "共通IDをカタログから非表示にする")
-        self._chk_cat_hide_common_id.setToolTip(
-            "mode=json の共通IDが出ているスレをカタログに表示しません")
-        cat_lay.addWidget(self._chk_cat_hide_common_id)
         self._chk_thr_close = QCheckBox("NGスレッドを開いたら即閉じる")
         cat_lay.addWidget(self._chk_thr_close)
         g_empty = QGroupBox("字スレ"); cat_lay.addWidget(g_empty)
@@ -3290,7 +3284,6 @@ class NgSettingsDialog(QDialog):
 
         # 掲示板タブ
         self._chk_board_hide.setChecked(getattr(s, "ng_board_hide_ng_thread", True))
-        self._chk_cat_hide_common_id.setChecked(getattr(s, "ng_catalog_hide_common_id", False))
 
         # スレッドタブ
         self._chk_thr_name.setChecked(getattr(s, "ng_thread_hide_name",  True))
@@ -3762,7 +3755,6 @@ class NgSettingsDialog(QDialog):
 
         # 掲示板タブ
         s.ng_board_hide_ng_thread = self._chk_board_hide.isChecked()
-        s.ng_catalog_hide_common_id = self._chk_cat_hide_common_id.isChecked()
 
         # スレッドタブ
         s.ng_thread_hide_name  = self._chk_thr_name.isChecked()
@@ -3836,14 +3828,15 @@ class AppSettingsDialog(QDialog):
         self._cat_hover_comment = QCheckBox("オンマウスでスレ本文（先頭120文字）を表示する")
         self._cat_mail_badge    = QCheckBox("メール欄/IDをサムネ右上にバッジ表示する")
         self._cat_quarantine    = QCheckBox("隔離スレを最下部に表示する")
-        self._cat_common_id_bottom = QCheckBox("IDが出たスレを下にまとめる")
+        self._cat_common_id_bottom = QCheckBox("IDが出たスレを最下部に表示する")
         self._cat_common_id_bottom.setToolTip(
-            "IDが出ているスレ（mode=json id）を、ID別に分けず最下部に一括でまとめます")
+            "IDが出ているスレ（mode=json id）を最下部にまとめて表示します（隔離まとめの上）。\n"
+            "OFFにするとカタログに表示しません。")
         cat_hover_lay.addWidget(self._cat_hover_zoom)
         cat_hover_lay.addWidget(self._cat_hover_comment)
         cat_hover_lay.addWidget(self._cat_mail_badge)
-        cat_hover_lay.addWidget(self._cat_quarantine)
         cat_hover_lay.addWidget(self._cat_common_id_bottom)
+        cat_hover_lay.addWidget(self._cat_quarantine)
 
         # スレ落ち時のタブ自動クローズ
         g_close = QGroupBox("スレ落ち時のタブ自動クローズ"); f0.addWidget(g_close); clf2 = QVBoxLayout(g_close)
@@ -4512,7 +4505,7 @@ class AppSettingsDialog(QDialog):
         self._cat_hover_comment.setChecked(getattr(s, "catalog_hover_comment", False))
         self._cat_mail_badge.setChecked(getattr(s, "catalog_show_mail_badge", True))
         self._cat_quarantine.setChecked(getattr(s, "catalog_quarantine_bottom", True))
-        self._cat_common_id_bottom.setChecked(getattr(s, "catalog_common_id_bottom", False))
+        self._cat_common_id_bottom.setChecked(getattr(s, "catalog_common_id_bottom", True))
 
         # 外観
         _theme_idx = self._theme_combo.findText(_TM.name())

@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.256"
+APP_VER = "0.9.257"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8064,10 +8064,9 @@ class CatalogView(QWidget):
             print(f'[CatalogView] board info fetch error: {e}')
         # mode=json（バッジ②④・隔離①のいずれかが有効なときのみ取得）
         try:
-            _need_json = (getattr(self._settings, 'catalog_show_mail_badge', True)
-                          or getattr(self._settings, 'catalog_quarantine_bottom', True)
-                          or getattr(self._settings, 'catalog_common_id_bottom', False)
-                          or getattr(self._settings, 'ng_catalog_hide_common_id', False))
+            # mode=json は バッジ / 隔離 / 共通ID表示 のいずれでも必要。共通ID(最下部表示
+            # or 非表示)は ON/OFF どちらも op_id 判定に json が要るため実質常に取得する。
+            _need_json = True
             if _need_json:
                 jinfo = self._fetcher.fetch_catalog_json(board)
                 self._catalog_json_ready.emit(jinfo)
@@ -8319,8 +8318,8 @@ class CatalogView(QWidget):
         elif ng_empty_mode == 0:
             # 「本文空のみNG」: 画像なし かつ タイトルも空のスレのみ除外
             entries = [e for e in entries if (e.thumb_url or "").strip() or (e.title or "").strip()]
-        # 3.5 共通ID(mode=json id)のスレを非表示にする
-        if getattr(self._settings, "ng_catalog_hide_common_id", False):
+        # 3.5 IDが出た(共通ID)スレ: 「最下部に表示」OFF なら非表示にする
+        if not getattr(self._settings, "catalog_common_id_bottom", True):
             entries = [e for e in entries if not (getattr(e, 'op_id', '') or '').strip()]
         # 4. 検索: ヒットを上に隔離して表示 (正規表現対応)
         kw = self._search.text().strip()
@@ -8639,7 +8638,7 @@ class CatalogView(QWidget):
                             show_email=False,  # カタログのメール内容バッジ（フッタ）は常に非表示
                             show_badge=getattr(self._settings, "catalog_show_mail_badge", True),
                             quarantine_section=getattr(self._settings, "catalog_quarantine_bottom", True),
-                            common_id_section=getattr(self._settings, "catalog_common_id_bottom", False))
+                            common_id_section=getattr(self._settings, "catalog_common_id_bottom", True))
         # マージ再描画（_re_render_light 経由）はフルリロードせず body のみ入替える。
         # 通常描画（カタログ取得・ソート・検索等）は従来どおりフルロード（先頭に戻る挙動を維持）。
         _light = self._light_render_once
