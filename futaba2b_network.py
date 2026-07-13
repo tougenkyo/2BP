@@ -710,21 +710,9 @@ class FutabaFetcher:
             )
 
         try:
-            try:
-                resp = _send()
-            except requests.exceptions.ConnectionError as _ce:
-                # keep-alive で使い回した接続をサーバーが先に閉じていると、送信時に
-                # 「応答なしで切断」(RemoteDisconnected / Connection aborted) になる。
-                # このとき投稿は受理されていない（成功なら必ず応答が返る）ので、
-                # 死んだ接続を捨てて新しい接続で1回だけ安全に再送する。
-                _s = str(_ce)
-                if ("RemoteDisconnected" in _s or "Connection aborted" in _s
-                        or "without response" in _s):
-                    print(f"[NET] post_res 接続切断→新接続で再送: {_s}")
-                    import time as _t; _t.sleep(0.4)
-                    resp = _send()
-                else:
-                    raise
+            # POSTは非冪等。接続切断(RemoteDisconnected)時、サーバーが投稿を受理済み
+            # でも応答が返らないことがあるため、自動再送はしない（二重投稿防止）。
+            resp = _send()
 
             # ── レスポンス解析 ──
             # responsemode=ajax を送った場合はサーバーが JSON を返す:
@@ -804,6 +792,16 @@ class FutabaFetcher:
             self.save_cookies()
             return True, "", 0
 
+        except requests.exceptions.ConnectionError as e:
+            # 送受信中に接続が切れた（RemoteDisconnected 等）。投稿がサーバーに
+            # 反映されている可能性があり、自動再送すると二重投稿になり得るため
+            # 再送しない。スレを確認してから再投稿するよう促す。
+            _s = str(e)
+            if ("RemoteDisconnected" in _s or "Connection aborted" in _s
+                    or "without response" in _s):
+                return (False, "通信が切断されました。投稿が反映されている場合があります。"
+                        "スレを再読み込みして確認してから、必要なら再投稿してください。", 0)
+            return False, _s, 0
         except Exception as e:
             return False, str(e), 0
 
