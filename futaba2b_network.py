@@ -1642,9 +1642,13 @@ class FutabaFetcher:
             com_html = rd.get("com", "")
             # 改行コードを <br> に変換（HTMLではなくテキストで来る場合の正規化）
             com_text = com_html.replace("<br>", "\n").replace("<br/>", "\n")
-            # HTMLタグ除去でプレーンテキスト
-            import re as _re
-            com_text_plain = _re.sub(r"<[^>]+>", "", com_text).strip()
+            # HTMLタグ除去でプレーンテキスト。実体参照(&gt; 等)も復号する。
+            # 通常のHTML解析経路は get_text() で復号済みのため差分経路でも揃える。
+            # 復号しないと comment_text に &gt; が残り、引用時に「>」が「&gt;」になる。
+            # 順序: 先にタグ除去 → その後 unescape（エスケープされた < > を誤って
+            # タグ除去しないようにするため）。
+            import re as _re, html as _html
+            com_text_plain = _html.unescape(_re.sub(r"<[^>]+>", "", com_text)).strip()
 
             ext  = rd.get("ext", "")
             tim  = rd.get("tim", "")
