@@ -689,24 +689,42 @@ class FutabaFetcher:
 
         headers = self._build_post_headers(board, thread_no=resto)
 
-        try:
+        # multipart/form-data で送信する。再送時にファイルポインタが消費済みに
+        # ならないよう、送信のたびにファイルを開き直す。
+        def _send():
             # ふたばは text-only 投稿でも multipart/form-data が必要
             # (CURL 解析で確認。application/x-www-form-urlencoded では受理されない)
             if image_path and Path(image_path).exists():
                 mime = self._guess_mime(image_path)
                 with open(image_path, "rb") as fp:
                     files = {"upfile": (Path(image_path).name, fp, mime)}
-                    resp = self.session.post(
+                    return self.session.post(
                         board.post_url, data=data, files=files,
                         headers=headers, timeout=60,
                     )
-            else:
-                # ファイルなしでも multipart を強制 (空の upfile フィールドを付加)
-                files = {"upfile": ("", b"", "application/octet-stream")}
-                resp = self.session.post(
-                    board.post_url, data=data, files=files,
-                    headers=headers, timeout=60,
-                )
+            # ファイルなしでも multipart を強制 (空の upfile フィールドを付加)
+            files = {"upfile": ("", b"", "application/octet-stream")}
+            return self.session.post(
+                board.post_url, data=data, files=files,
+                headers=headers, timeout=60,
+            )
+
+        try:
+            try:
+                resp = _send()
+            except requests.exceptions.ConnectionError as _ce:
+                # keep-alive で使い回した接続をサーバーが先に閉じていると、送信時に
+                # 「応答なしで切断」(RemoteDisconnected / Connection aborted) になる。
+                # このとき投稿は受理されていない（成功なら必ず応答が返る）ので、
+                # 死んだ接続を捨てて新しい接続で1回だけ安全に再送する。
+                _s = str(_ce)
+                if ("RemoteDisconnected" in _s or "Connection aborted" in _s
+                        or "without response" in _s):
+                    print(f"[NET] post_res 接続切断→新接続で再送: {_s}")
+                    import time as _t; _t.sleep(0.4)
+                    resp = _send()
+                else:
+                    raise
 
             # ── レスポンス解析 ──
             # responsemode=ajax を送った場合はサーバーが JSON を返す:
