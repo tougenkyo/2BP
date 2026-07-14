@@ -73,6 +73,9 @@ class ResData:
     file_size_bytes: int = 0     # 添付ファイルサイズ (bytes)
     id_str: str = ""             # 投稿者ID (例: fNsjIPH6)
     ip_str: str = ""             # 投稿者IP (例: 1.2.3.4) ※IP表示板のみ
+    deleted_preserved: bool = False   # 削除されたが削除前の本文を保持しているか
+    deleted_reason: str = ""          # 削除理由 (例: 書き込みをした人によって削除されました)
+    deleted_orig_image_name: str = "" # 削除前に添付されていた画像のファイル名 (表示は名のみ)
 
 
 @dataclass

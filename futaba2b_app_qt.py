@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.262"
+APP_VER = "0.9.263"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1395,6 +1395,45 @@ class Interceptor(QWebEngineUrlRequestInterceptor):
         if "2chan.net" in url or "futaba" in url:
             info.setHttpHeader(b"Referer",    b"https://www.2chan.net/")
             info.setHttpHeader(b"User-Agent", UA.encode())
+
+
+def _carry_over_deleted_content(old_thread, new_thread):
+    """削除で本文がサーバから消えた新レスに、旧スレッドが持つ削除前の本文を
+    引き継ぐ。ふたばは投稿者削除時に本文を「書き込みをした人によって削除され
+    ました」に、画像を除去して返すため、直前まで表示していた本文を残す。
+    画像はサーバから消えサムネもリモート404になるため復元表示はせず、元の画像
+    ファイル名だけをテキストで残す。サーバが本文を残す削除(mod削除等)は尊重する。"""
+    if not old_thread or not new_thread:
+        return
+    try:
+        from futaba2b_html import split_deleted_comment
+        old_by_no = {r.no: r for r in old_thread.res_list}
+    except Exception:
+        return
+    for r in new_thread.res_list:
+        if not getattr(r, "is_deleted", False) or getattr(r, "deleted_preserved", False):
+            continue
+        old = old_by_no.get(r.no)
+        if old is None:
+            continue
+        _old_preserved = getattr(old, "deleted_preserved", False)
+        _old_has = _old_preserved or (
+            not getattr(old, "is_deleted", False)
+            and bool((old.comment_html or "").strip()
+                     or (old.comment_text or "").strip()
+                     or old.image_name))
+        if not _old_has:
+            continue
+        # 新レスが本文を失っている(理由のみ)場合だけ引き継ぐ
+        _reason, _body = split_deleted_comment(r.comment_html)
+        if _body:
+            continue   # サーバが本文を残している → そのまま尊重
+        r.deleted_reason = _reason or (getattr(old, "deleted_reason", "") if _old_preserved else "")
+        r.comment_html = old.comment_html
+        r.comment_text = old.comment_text
+        r.deleted_orig_image_name = (getattr(old, "deleted_orig_image_name", "")
+                                     if _old_preserved else (old.image_name or ""))
+        r.deleted_preserved = True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4320,6 +4359,8 @@ class ThreadView(QWidget):
             self._reload_again.emit()
         if thread:
             res_n = len(thread.res_list)
+            # 削除で本文が消えた新レスに、旧スレッドが持つ削除前の本文を引き継ぐ
+            _carry_over_deleted_content(self._thread, thread)
             self._thread = thread
             # is_new の基準: 初回表示（_known_res_count==0）は thread_read_counts を参照
             # 再表示時は _known_res_count（前回表示済みレス数）を基準にする
@@ -9376,6 +9417,10 @@ class AutoRefreshManager(QObject):
                 return
         except Exception:
             pass
+        # 削除で本文が消えた新レスに、旧スレッドが持つ削除前の本文を引き継ぐ
+        # （view._thread 差し替え前に適用。全分岐＝エラー/新着なし/差分で有効）
+        if thread is not None:
+            _carry_over_deleted_content(getattr(view, "_thread", None), thread)
         from futaba2b_html import thread_to_html, res_fragment_html
         import json
         _ucss = _load_user_css(self._settings)

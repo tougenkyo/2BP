@@ -246,6 +246,7 @@ a.nm:hover { text-decoration: underline; }
 /* ─ 削除レスの削除理由ラベル ─ */
 .del-reason { color: var(--del-reason-color); font-size: 8pt; font-style: italic; }
 .del-content { color: var(--del-content-color); font-size: 8pt; margin-top: 2px; white-space: pre-wrap; }
+.del-imgnote { color: var(--del-content-color); font-size: 8pt; opacity: 0.8; margin-top: 2px; }
 .comment a    { color: var(--link-color); }
 .comment a:hover { color: var(--link-hover); text-decoration: underline; }
 .yt-thumb {
@@ -1700,6 +1701,33 @@ def ng_info_text(res, ng_filter, ng_settings, manual_hidden: bool = False) -> st
     return " ／ ".join(parts)
 
 
+def split_deleted_comment(comment_html: str):
+    """削除レスの comment_html を (削除理由テキスト, 本文テキスト) に分離する。
+    ふたばは <blockquote><font color="#ff0000">理由</font><br>本文</blockquote> の形。
+    投稿者削除は本文が無く理由のみ。本文が空なら「本文がサーバから消えた」と判る。"""
+    ch = comment_html or ""
+    if not ch:
+        return "", ""
+    try:
+        from bs4 import BeautifulSoup as _BS
+        soup = _BS(ch, "html.parser")
+        bq = soup.find("blockquote") or soup
+        font = bq.find("font", color="#ff0000")
+        if font:
+            reason = font.get_text(strip=True)
+            font.extract()
+            for br in bq.find_all("br", limit=1):
+                br.extract()
+                break
+            body = bq.get_text(separator="\n").strip()
+        else:
+            reason = ""
+            body = bq.get_text(separator="\n").strip()
+        return reason, body
+    except Exception:
+        return "", ch
+
+
 def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
                ng_filter=None, ng_settings=None, hidden_nos: set = None,
                id_counts: dict = None, has_name_field: bool = True,
@@ -1924,7 +1952,21 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
             )
 
     # ── コメント: 削除レスは削除理由とレス内容を分離 ──
-    if res.is_deleted:
+    if res.is_deleted and getattr(res, "deleted_preserved", False):
+        # 削除で本文がサーバから消えたが、削除前の本文を保持している。
+        # 本文をフル整形(引用色・リンク等)で表示し、先頭に削除理由バッジを付す。
+        _reason = getattr(res, "deleted_reason", "") or "削除済み"
+        _com_html = res.comment_html or ""
+        if ng_filter is not None:
+            _com_html = _apply_replace_to_html(_com_html, ng_filter)
+        _body_com = _comment_html(_com_html, _uploaders=uploaders,
+                                  _img_list=img_list, _res_no=no)
+        _oin = getattr(res, "deleted_orig_image_name", "")
+        _imgnote = f'<div class="del-imgnote">削除された画像: {_e(_oin)}</div>' if _oin else ""
+        com = (f'<span class="del-reason">{_e(_reason)}</span>'
+               + (f'<br>{_body_com}' if _body_com else "")
+               + _imgnote)
+    elif res.is_deleted:
         _bq_html = res.comment_html or ""
         # comment_html = <blockquote><font color="#ff0000">理由</font><br>内容</blockquote>
         # BeautifulSoupでパースして分離
