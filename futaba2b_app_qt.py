@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.261"
+APP_VER = "0.9.262"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2809,10 +2809,9 @@ class BoardPane(QWidget):
             save_menu.addAction("MHTMLとして保存",       self._ctx_save_mht)
             save_menu.addAction("ZIPとして保存",         self._ctx_save_zip)
         menu.addSeparator()
-        menu.addAction("キャッシュを消去 [2BP] (1)",
-            self._ctx_clear_cache_app)
-        menu.addAction("キャッシュを消去 [2BP・QtWebEngine] (2)",
-            self._ctx_clear_cache_web)
+        # 再取得（開き直し）: スレタブのみ有効・保存ログは不可
+        _refetch_act = menu.addAction("再取得 (G)", self._ctx_refetch)
+        _refetch_act.setEnabled(_is_thread_ctx and not getattr(_w_ctx, '_is_log', False))
         # ── ヒットした逆NG（ThreadViewのみ・ヒット時のみ表示・選択不可）──
         _w_rev = self._tabs.widget(self._ctx_tab_idx)
         if (isinstance(_w_rev, ThreadView)
@@ -2944,17 +2943,13 @@ class BoardPane(QWidget):
         if isinstance(w, ThreadView): w.save_as_zip()
 
 
-    def _ctx_clear_cache_app(self):
-        import shutil
-        from futaba2b_network import THREAD_CACHE_DIR, IMAGE_CACHE_DIR
-        for d in [THREAD_CACHE_DIR, IMAGE_CACHE_DIR]:
-            shutil.rmtree(str(d), ignore_errors=True)
-        if self._main: self._main._status.showMessage("キャッシュを消去しました")
-
-    def _ctx_clear_cache_web(self):
-        w = self._tabs.currentWidget()
-        if hasattr(w, '_profile'): w._profile.clearHttpCache()
-        if self._main: self._main._status.showMessage("Webキャッシュを消去しました")
+    def _ctx_refetch(self):
+        """右クリックしたスレタブを再取得（開き直し）する。
+        サーバから全再取得＋DOM全再描画し、表示モード・スクロール位置・
+        既読(+N)は維持する。保存ログ/非スレタブでは無効。"""
+        w = self._tabs.widget(self._ctx_tab_idx)
+        if isinstance(w, ThreadView) and not getattr(w, '_is_log', False):
+            w.refetch_thread()
 
 
     # ── ピン留め ──────────────────────────────────────────────
@@ -4184,6 +4179,36 @@ class ThreadView(QWidget):
                     "window.scrollY",
                     lambda y: self._reload_with_scroll(y or 0)
                 )
+
+    def refetch_thread(self):
+        """再取得（開き直し）: サーバから全再取得し、差分ではなくDOMを全再描画する。
+        現在の表示モード・スクロール位置・既読(+N)は維持する。過去に開いたスレの
+        表示が古い/崩れた時に、タブを開き直さずクリーンな状態へ戻すため使う。
+        （更新との違いは描画のみ: 更新は新着をDOMに追記、再取得はDOMを作り直す）"""
+        if self._is_log:
+            return
+        if self._is_dead:
+            _is_full = bool(self._thread and getattr(self._thread, 'is_full', False)) or \
+                       bool(self._last_valid_thread and getattr(self._last_valid_thread, 'is_full', False))
+            if not _is_full:
+                return
+        if not (self._board and self._thread_no):
+            return
+        checked  = self._mode_grp.checkedButton()
+        cur_mode = checked.property("mode") if checked else ""
+        self._view.page().runJavaScript(
+            "window.scrollY",
+            lambda y, _m=cur_mode: self._refetch_apply(int(y) if y else 0, _m))
+
+    def _refetch_apply(self, scroll_y: int, cur_mode: str):
+        self._prev_scroll_y   = scroll_y
+        self._known_res_count = 0      # 差分追記でなくDOM全再描画を強制
+        self._manual_reload   = True   # 手動更新扱い（実質「更新」の全再描画版）
+        if not cur_mode:               # 通常モードは全再描画後に位置復元が必要
+            self._pending_scroll = scroll_y
+        # 画像/引用モードは open_mode 指定でそのモードのまま全再描画（スクロールは
+        # モード描画側がライブページの現在位置を読んで保持する）。
+        self.load_thread(self._board, self._thread_no, open_mode=(cur_mode or ""))
 
     def redraw_with_ng(self):
         """NGフィルタ変更後にキャッシュ済みスレッドを再描画する（サーバー再取得なし）"""
