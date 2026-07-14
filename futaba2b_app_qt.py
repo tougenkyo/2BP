@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.260"
+APP_VER = "0.9.261"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -7591,8 +7591,11 @@ class CatalogView(QWidget):
         lay.addWidget(self._find_bar)
         self.setAcceptDrops(True)  # D&Dでログファイルを開けるようにする
 
-        self._bridge.thread_open_requested.connect(self.thread_open.emit)
-        self._bridge.thread_bg_open_requested.connect(self.thread_open_bg.emit)
+        # スレを開く経路では、開く前に必ずホバーポップアップを閉じる。
+        # スレを開いてもマウスはエントリ上に残るため onmouseleave が発火せず、
+        # 非同期の画像ロード完了が「開いた後」に届くとサムネが取り残されるため。
+        self._bridge.thread_open_requested.connect(self._on_cat_open_thread)
+        self._bridge.thread_bg_open_requested.connect(self._on_cat_open_thread_bg)
         self._board_info_ready.connect(self._emit_catalog_status)
         self._email_data_ready.connect(self._merge_email_data)
         self._catalog_json_ready.connect(self._merge_catalog_json)
@@ -7754,6 +7757,16 @@ class CatalogView(QWidget):
         self._hover_img_popup.hide()
         self._hover_img_lbl.clear()
         self._hover_txt_lbl.clear()
+
+    def _on_cat_open_thread(self, url: str):
+        """カタログからスレを開く（前面）。開く前にホバーポップアップを閉じる。"""
+        self._on_cat_hover_leave()
+        self.thread_open.emit(url)
+
+    def _on_cat_open_thread_bg(self, url: str):
+        """カタログからスレを開く（背面）。開く前にホバーポップアップを閉じる。"""
+        self._on_cat_hover_leave()
+        self.thread_open_bg.emit(url)
 
     def _show_catalog_source(self):
         """現在のカタログ HTML ソースをウィンドウ表示（ThreadView と同形式）"""
