@@ -64,7 +64,7 @@ body {
     width: fit-content;
     min-width: 260px;
     max-width: 100%;
-    padding: 3px 10px 3px 5px;
+    padding: 3px 20px 2px 5px;
     margin: 1px 0 3px 10px;
 }
 .res.reply.new-res { border-left: 3px solid #cc1105; }
