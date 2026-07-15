@@ -379,8 +379,12 @@ class _ScaledPreviewLabel(QLabel):
     def _rescale(self):
         if not self._orig_pix or self._orig_pix.isNull():
             return
+        # スタイルシートの padding/border を除いた実描画領域(contentsRect)に収める。
+        # self.width()/height() を基準にすると padding 分だけ画像が大きくなり、
+        # 縦横比次第で上下（または左右）が見切れていた。
+        cr = self.contentsRect()
         scaled = self._orig_pix.scaled(
-            max(1, self.width() - 4), max(1, self.height() - 4),
+            max(1, cr.width() - 2), max(1, cr.height() - 2),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation)
         super().setPixmap(scaled)

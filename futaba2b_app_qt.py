@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.263"
+APP_VER = "0.9.264"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5591,11 +5591,22 @@ class ThreadView(QWidget):
             # scrollTo(0,y) が上方向にクランプされて「先頭付近に飛ぶ」ことがある
             # （画像キャッシュ有無で再現が時々になる）。目標位置に届かない間は
             # 高さが伸びるのを待って数回リトライし、到達したら停止する。
-            # （ユーザが下方向へ動かした場合は scrollY>=y で停止＝操作を妨げない）
+            # ただしユーザがホイール/タッチ/キーでスクロールしたら即中断する。
+            # （そ順は上部に画像付きの高そうだねレスが集まり body 高さの確定が遅く
+            #  リトライが長引くため、その間ユーザの上スクロールを y に引き戻して
+            #  「上へスクロールできない」状態になっていた）
             self._view.page().runJavaScript(
-                "(function(){var y=" + str(int(y)) + ",tries=0;"
-                "function go(){window.scrollTo(0,y);"
-                "if(window.scrollY<y-2&&tries++<50){setTimeout(go,33);}}"
+                "(function(){var y=" + str(int(y)) + ",tries=0,done=false;"
+                "function fin(){if(done)return;done=true;"
+                "window.removeEventListener('wheel',stop);"
+                "window.removeEventListener('touchstart',stop);"
+                "window.removeEventListener('keydown',stop);}"
+                "function stop(){fin();}"
+                "window.addEventListener('wheel',stop,{passive:true});"
+                "window.addEventListener('touchstart',stop,{passive:true});"
+                "window.addEventListener('keydown',stop);"
+                "function go(){if(done)return;window.scrollTo(0,y);"
+                "if(window.scrollY<y-2&&tries++<50){setTimeout(go,33);}else{fin();}}"
                 "requestAnimationFrame(function(){requestAnimationFrame(go);});"
                 "})();"
             )
