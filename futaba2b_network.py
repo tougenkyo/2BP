@@ -1525,7 +1525,15 @@ class FutabaFetcher:
             if _font_el:
                 _prev = _font_el.previous_sibling
                 _prev_str = str(_prev) if _prev is not None else ""
-                isdel = "[" not in _prev_str   # "[" があればIP表示、なければ削除
+                # dice の出目(dice1d4=<font color="#ff0000">4 (4)</font>)や引用行中の
+                # 赤文字は削除通知ではない。削除通知は blockquote 直下の裸の赤font。
+                # dice等の赤fontは引用色(#789922)fontの内側に入る（両パーサで確認）。
+                # 直前が dice 式のケースも保険で除外する。
+                _is_content_red = (
+                    _font_el.find_parent("font", color="#789922") is not None
+                    or "dice" in _prev_str.lower())
+                if not _is_content_red:
+                    isdel = "[" not in _prev_str   # "[" があればIP表示、なければ削除
         sod=0; s=node.find("a",class_="sod")
         if s:
             m2=_SODANE_RE.search(s.get_text())
