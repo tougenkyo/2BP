@@ -880,6 +880,111 @@ class _SampleImageWindow(QDialog):
         super().closeEvent(event)
 
 
+# ── JPEG EXIF 埋め込みサムネイル 検出／ロスレス除去 ────────────────────────────
+# IFD0(向き等)は保持し、IFD1とサムネイル本体のみ除去する。本画像スキャンデータは不変。
+_TIFF_TYPE_SIZE = {1:1, 2:1, 3:2, 4:4, 5:8, 6:1, 7:1, 8:2, 9:4, 10:8, 11:4, 12:8}
+
+
+def _find_exif_app1(data: bytes):
+    """(app1_start, seg_end, tiff_bytes) を返す。EXIF APP1 が無ければ None。"""
+    if len(data) < 2 or data[:2] != b'\xff\xd8':
+        return None
+    i, n = 2, len(data)
+    while i + 4 <= n and data[i] == 0xFF:
+        marker = data[i+1]
+        if marker in (0xDA, 0xD9):                       # SOS/EOI 以降は画像データ
+            break
+        if marker == 0xD8 or 0xD0 <= marker <= 0xD7:     # 長さフィールド無し
+            i += 2; continue
+        seg_len = int.from_bytes(data[i+2:i+4], 'big')
+        seg_end = i + 2 + seg_len
+        seg = data[i+4:seg_end]
+        if marker == 0xE1 and seg[:6] == b'Exif\x00\x00':
+            return i, seg_end, seg[6:]
+        i = seg_end
+    return None
+
+
+def _tiff_ifd1_offset(tiff: bytes):
+    """(endian, ifd0_off, next_off_pos, ifd1_off) を返す。壊れていれば None。"""
+    if len(tiff) < 8:
+        return None
+    bo = tiff[:2]
+    if bo == b'II': en = 'little'
+    elif bo == b'MM': en = 'big'
+    else: return None
+    if int.from_bytes(tiff[2:4], en) != 42:
+        return None
+    ifd0 = int.from_bytes(tiff[4:8], en)
+    if ifd0 + 2 > len(tiff): return None
+    cnt = int.from_bytes(tiff[ifd0:ifd0+2], en)
+    next_pos = ifd0 + 2 + cnt * 12
+    if next_pos + 4 > len(tiff): return None
+    ifd1 = int.from_bytes(tiff[next_pos:next_pos+4], en)
+    return en, ifd0, next_pos, ifd1
+
+
+def jpeg_has_embedded_thumbnail(data: bytes) -> bool:
+    """EXIF IFD1 に JPEGInterchangeFormat(0x0201) 付きサムネがあるか。"""
+    app1 = _find_exif_app1(data)
+    if not app1:
+        return False
+    tiff = app1[2]
+    info = _tiff_ifd1_offset(tiff)
+    if not info:
+        return False
+    en, ifd0, next_pos, ifd1 = info
+    if ifd1 == 0 or ifd1 + 2 > len(tiff):
+        return False
+    cnt1 = int.from_bytes(tiff[ifd1:ifd1+2], en)
+    for k in range(cnt1):
+        ent = ifd1 + 2 + k * 12
+        if ent + 12 > len(tiff): break
+        if int.from_bytes(tiff[ent:ent+2], en) == 0x0201:      # JPEGInterchangeFormat
+            return int.from_bytes(tiff[ent+8:ent+12], en) > 0
+    return False
+
+
+def jpeg_strip_thumbnail(data: bytes):
+    """IFD1(サムネ)のみ除去した JPEG bytes を返す。サムネ無し/不能なら None。
+    IFD0(向き等)は保持し、可能ならサムネ実バイトも切り捨てる。本画像は不変。"""
+    if not jpeg_has_embedded_thumbnail(data):
+        return None
+    app1 = _find_exif_app1(data)
+    if not app1:
+        return None
+    a_start, a_end, tiff = app1
+    info = _tiff_ifd1_offset(tiff)
+    if not info:
+        return None
+    en, ifd0, next_pos, ifd1 = info
+    if ifd1 == 0:
+        return None
+    cnt = int.from_bytes(tiff[ifd0:ifd0+2], en)
+    # IFD0 のデータ参照が ifd1 以降に食い込まないか（安全に切り捨てできるか）
+    max_ref = next_pos + 4
+    for k in range(cnt):
+        ent = ifd0 + 2 + k * 12
+        typ = int.from_bytes(tiff[ent+2:ent+4], en)
+        num = int.from_bytes(tiff[ent+4:ent+8], en)
+        size = num * _TIFF_TYPE_SIZE.get(typ, 1)
+        if size > 4:
+            max_ref = max(max_ref, int.from_bytes(tiff[ent+8:ent+12], en) + size)
+    zero = (0).to_bytes(4, en)
+    if max_ref <= ifd1:
+        new_tiff = bytearray(tiff[:ifd1])            # サムネ含む末尾を切り捨て
+        new_tiff[next_pos:next_pos+4] = zero
+    else:
+        new_tiff = bytearray(tiff)                   # 切り捨て不可 → 論理切り離しのみ
+        new_tiff[next_pos:next_pos+4] = zero
+    body = b'Exif\x00\x00' + bytes(new_tiff)
+    new_len = len(body) + 2
+    if new_len > 0xFFFF:
+        return None
+    new_app1 = b'\xFF\xE1' + new_len.to_bytes(2, 'big') + body
+    return data[:a_start] + new_app1 + data[a_end:]
+
+
 class PostDialog(QDialog):
     _result_signal = Signal(bool, str, int)  # 投稿結果 thread-safe (ok, msg, new_thread_no)
     pin_after_post    = Signal()        # 投稿成功後にピン留め要求
@@ -1051,10 +1156,14 @@ class PostDialog(QDialog):
         self._size_lbl.setToolTip("添付ファイルのサイズと板の上限。上限を超えると投稿できません。")
         img_lay.addWidget(self._size_lbl)
         self._update_size_label()
-        # 貼付け形式・品質を同じ行に配置
-        img_lay.addWidget(QLabel("  貼付け形式:"))
+        # 貼付け形式・品質を同じ行に配置（クリップボード貼付け時のみ表示＝①）
+        self._lbl_clip_fmt = QLabel("  貼付け形式:")
+        img_lay.addWidget(self._lbl_clip_fmt)
         self._clip_fmt = QComboBox()
         self._clip_fmt.addItems(["jpg", "png"])
+        # ② リストの文字色: jpg=赤 / png=緑
+        self._clip_fmt.setItemData(0, QColor("#c0392b"), Qt.ItemDataRole.ForegroundRole)
+        self._clip_fmt.setItemData(1, QColor("#1e8e3e"), Qt.ItemDataRole.ForegroundRole)
         self._clip_fmt.setCurrentText(getattr(settings, "post_img_format", "jpg"))
         self._clip_fmt.setFixedWidth(60)
         self._clip_fmt.currentTextChanged.connect(self._on_fmt_changed)
@@ -1067,10 +1176,20 @@ class PostDialog(QDialog):
         self._spin_quality.setFixedWidth(68)
         img_lay.addWidget(self._lbl_quality)
         img_lay.addWidget(self._spin_quality)
+        # ③ 添付JPEGにEXIF埋め込みサムネがある時だけ表示（既定OFF・状態を記憶）
+        self._has_embedded_thumb = False
+        self._chk_strip_thumb = QCheckBox("埋め込みサムネを削除")
+        self._chk_strip_thumb.setToolTip(
+            "JPEGのEXIF埋め込みサムネイルを投稿前に削除します。\n"
+            "編集前の画像がサムネとして残るのを防ぎます（本画像・向き情報は保持）。")
+        self._chk_strip_thumb.setChecked(getattr(settings, "post_strip_jpeg_thumbnail", False))
+        self._chk_strip_thumb.setVisible(False)
+        self._chk_strip_thumb.toggled.connect(self._on_strip_thumb_toggled)
+        img_lay.addWidget(self._chk_strip_thumb)
         img_lay.addStretch()
-        self._on_fmt_changed(self._clip_fmt.currentText())
         self._spin_quality.valueChanged.connect(self._regenerate_clip_image)
         self._clip_fmt.currentTextChanged.connect(self._regenerate_clip_image)
+        self._update_clip_ui()   # 初期はクリップボード画像なし → 形式/品質を隠す
 
         # ── プレビュー ────────────────────────────────────────────────────
         from PySide6.QtWidgets import QSplitter
@@ -1693,10 +1812,45 @@ document.addEventListener('keydown',function(e){{
             _on_dataurl)
 
     # ── 形式切り替え ────────────────────────────────────────────────────────
-    def _on_fmt_changed(self, fmt: str):
-        visible = fmt.lower() == "jpg"
-        self._lbl_quality.setVisible(visible)
-        self._spin_quality.setVisible(visible)
+    def _on_fmt_changed(self, fmt=None):
+        self._update_clip_ui()
+
+    def _update_clip_ui(self):
+        """① 貼付け形式・品質は「クリップボードから貼付けた画像がある時」だけ表示。
+        品質は形式が jpg の時のみ。② 形式コンボの現在表示色を jpg=赤 / png=緑 にする。"""
+        has_clip = self._clip_image is not None
+        self._lbl_clip_fmt.setVisible(has_clip)
+        self._clip_fmt.setVisible(has_clip)
+        is_jpg = self._clip_fmt.currentText().lower() == "jpg"
+        self._lbl_quality.setVisible(has_clip and is_jpg)
+        self._spin_quality.setVisible(has_clip and is_jpg)
+        # 現在選択の表示色（リストは setItemData、表示部はスタイルシートで色付け）
+        self._clip_fmt.setStyleSheet(
+            "QComboBox{color:%s;font-weight:bold;}" % ("#c0392b" if is_jpg else "#1e8e3e"))
+
+    def _on_strip_thumb_toggled(self, on: bool):
+        """③ 埋め込みサムネ削除チェックの状態を記憶する。"""
+        self._settings.post_strip_jpeg_thumbnail = bool(on)
+        try:
+            self._settings.save()
+        except Exception:
+            pass
+
+    def _refresh_thumb_checkbox(self, path):
+        """③ 添付が jpg で EXIF 埋め込みサムネがある時だけチェックを表示する。"""
+        self._has_embedded_thumb = False
+        show = False
+        ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
+        if ext in ('jpg', 'jpeg'):
+            try:
+                with open(path, 'rb') as f:
+                    data = f.read()
+                if jpeg_has_embedded_thumbnail(data):
+                    self._has_embedded_thumb = True
+                    show = True
+            except Exception:
+                pass
+        self._chk_strip_thumb.setVisible(show)
 
     def _regenerate_clip_image(self, _=None):
         """品質・形式変更時にクリップボード由来の一時ファイルを再生成する。"""
@@ -1771,6 +1925,9 @@ document.addEventListener('keydown',function(e){{
         self._img_path   = ""
         self._img_is_tmp = False
         self._clip_image = None
+        self._has_embedded_thumb = False
+        self._chk_strip_thumb.setVisible(False)      # ③ 添付なし → 非表示
+        self._update_clip_ui()                       # ① 形式/品質を隠す
         self._img_edit.clear()
         self._clear_btn.hide()   # 添付なし → ×解除を非表示
         self._preview_lbl.clear_preview()
@@ -1830,6 +1987,11 @@ document.addEventListener('keydown',function(e){{
         if fmt == "jpg":
             self._settings.post_img_quality = quality
         self._settings.save()
+        # クリップボード貼付け → 形式/品質を表示（①）。再エンコード画像なので
+        # EXIF埋め込みサムネは無い → サムネ削除チェックは隠す（③）。
+        self._has_embedded_thumb = False
+        self._chk_strip_thumb.setVisible(False)
+        self._update_clip_ui()
         self._update_size_label()
 
     def _browse_image(self):
@@ -1845,6 +2007,8 @@ document.addEventListener('keydown',function(e){{
         self._img_path   = path
         self._img_is_tmp = False
         self._clip_image = None
+        self._update_clip_ui()               # ① ファイル添付は形式/品質を隠す
+        self._refresh_thumb_checkbox(path)   # ③ jpg+埋め込みサムネならチェック表示
         self._img_edit.setText(path)
         self._clear_btn.show()
         self._update_size_label()
@@ -1953,6 +2117,21 @@ document.addEventListener('keydown',function(e){{
         name, mail, sub, key, img = (
             self._name.text(), self._mail.text(),
             self._sub.text(), self._key.text(), self._img_path)
+        # ③ jpg の EXIF 埋め込みサムネイルを削除して投稿（チェックON時のみ）。
+        # 元画像は書き換えず、削除済みの一時ファイルを作ってそれを投稿する。
+        _strip_tmp = None
+        if img and self._has_embedded_thumb and self._chk_strip_thumb.isChecked():
+            try:
+                with open(img, "rb") as _f:
+                    _stripped = jpeg_strip_thumbnail(_f.read())
+                if _stripped:
+                    import tempfile as _tf
+                    _t = _tf.NamedTemporaryFile(suffix=".jpg", delete=False)
+                    _t.write(_stripped); _t.close()
+                    _strip_tmp = _t.name
+                    img = _strip_tmp
+            except Exception as _e:
+                print(f"[POST] 埋め込みサムネ削除に失敗（元画像で投稿）: {_e}")
         # ── 添付サイズ上限チェック（超過ならふたばに弾かれるので事前に中止）──
         _mx = self._max_file_bytes()
         if img and _mx:
@@ -1962,6 +2141,11 @@ document.addEventListener('keydown',function(e){{
             except OSError:
                 _sz = 0
             if _sz > _mx:
+                if _strip_tmp:
+                    try:
+                        _os.unlink(_strip_tmp)
+                    except Exception:
+                        pass
                 QMessageBox.warning(
                     self, "ファイルサイズ超過",
                     f"添付ファイルが板の上限（{_mx // 1024:,}KB）を超えています。\n"
@@ -1977,6 +2161,12 @@ document.addEventListener('keydown',function(e){{
                     comment=text, image_path=img, delete_key=key)
             except Exception as _e:
                 ok, msg, new_no = False, str(_e), 0
+            finally:
+                if _strip_tmp:
+                    try:
+                        import os as _os2; _os2.unlink(_strip_tmp)
+                    except Exception:
+                        pass
             self._result_signal.emit(ok, msg, new_no)
         threading.Thread(target=_do, daemon=True).start()
 

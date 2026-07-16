@@ -344,6 +344,8 @@ class AppSettings:
         self.post_img_format:  str = "jpg"
         # JPEG 圧縮率 (1-100, 初期値 80)
         self.post_img_quality: int = 80
+        # 添付JPEGにEXIF埋め込みサムネイルがある時、投稿前に削除するか (初期値 OFF)
+        self.post_strip_jpeg_thumbnail: bool = False
         # レスウインドウのサイズ記憶 [w, h]
         self.post_dialog_size: list = []
         # レスウインドウの位置記憶 [x, y]
@@ -672,6 +674,7 @@ class AppSettings:
             self.auto_add_catalog_to_ar = raw.get("auto_add_catalog_to_ar", False)
             self.post_img_format     = raw.get("post_img_format",   "jpg")
             self.post_img_quality    = raw.get("post_img_quality",  80)
+            self.post_strip_jpeg_thumbnail = bool(raw.get("post_strip_jpeg_thumbnail", False))
             self.post_dialog_size    = raw.get("post_dialog_size",  [])
             self.post_dialog_pos     = raw.get("post_dialog_pos",   [])
             self.post_sample_view_size = raw.get("post_sample_view_size", [])
@@ -1062,6 +1065,7 @@ class AppSettings:
                         "auto_add_catalog_to_ar": self.auto_add_catalog_to_ar,
                         "post_img_format":   self.post_img_format,
                         "post_img_quality":  self.post_img_quality,
+                        "post_strip_jpeg_thumbnail": self.post_strip_jpeg_thumbnail,
                         "post_dialog_size":  self.post_dialog_size,
                         "post_dialog_pos":   self.post_dialog_pos,
                         "post_sample_view_size": self.post_sample_view_size,
