@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.266"
+APP_VER = "0.9.267"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10342,6 +10342,7 @@ class ImageTabView(QWidget):
     _sig_info_text    = Signal(str)   # 情報オーバーレイ更新（BGスレッド→UI）
     _media_dl_done    = Signal(int, str, str, bool, str)  # (seq,url,kind,ok,prev_zoom) 優先DL完了
     _media_dl_progress = Signal(int, int, int)            # (seq, downloaded, total) 優先DL進捗
+    _sig_clip_image    = Signal(QImage)   # BGで取得した画像をメインスレッドでクリップボードへ反映
     open_settings         = Signal()             # 設定ボタン → MainWindowが接続
     image_navigated       = Signal(str, list, int)  # 前へ/次へ → MainWindowがrecord_recent_imageに接続
     open_image_tab_bg     = Signal(str, list, int)  # 中クリック → 非アクティブで画像タブを開く
@@ -10462,6 +10463,7 @@ class ImageTabView(QWidget):
         self._view.loadFinished.connect(self._inject_fit_bridge)
         self._media_dl_done.connect(self._on_media_dl_done)
         self._view.copy_image_requested.connect(self._copy_image_to_clipboard)
+        self._sig_clip_image.connect(self._apply_clip_image)   # BG→メインでクリップボード反映
         lay.addWidget(self._view, 1)
 
         # ── 情報オーバーレイ（右下・半透明・テキスト選択可） ────────────
@@ -11934,15 +11936,23 @@ class ImageTabView(QWidget):
             try:
                 data = _read_bytes()
                 from PySide6.QtGui import QImage
-                from PySide6.QtWidgets import QApplication
                 img = QImage()
                 if data and img.loadFromData(data):
-                    QApplication.clipboard().setImage(img)
+                    # QClipboard はGUI(メイン)スレッド専用。BGスレッドから
+                    # setImage しても Windows では反映されない（コピーされない）ため、
+                    # シグナル経由でメインスレッドに渡して反映する。
+                    self._sig_clip_image.emit(img)
                 else:
                     print(f"[IMG_COPY] QImage.loadFromData 失敗: {url}")
             except Exception as e:
                 print(f"[IMG_COPY] コピー失敗: {e}")
         threading.Thread(target=_fetch, daemon=True).start()
+
+    def _apply_clip_image(self, img):
+        """クリップボードへ画像を反映（メインスレッドで実行）。
+        QClipboard はGUIスレッド専用のため、BG取得後にシグナル経由でここへ渡す。"""
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setImage(img)
 
     def set_settings(self, settings):
         """MainWindowから設定を渡してフォルダバーを構築"""
