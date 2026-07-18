@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.268"
+APP_VER = "0.9.269"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5133,6 +5133,10 @@ class ThreadView(QWidget):
         var k = 'n' + no;
         el.style.cursor = 'pointer';
         el.addEventListener('mouseover', function(e) {
+            /* 画像モードの選択モード中は、ギャラリーセル内(連番/サムネ)の
+               レス内容ポップアップを出さない（返信モードの引用は対象外）。 */
+            if (window._selMode && e.currentTarget.closest &&
+                e.currentTarget.closest('.gi')) return;
             clearTimeout(T.h); clearTimeout(T[k]);
             var cx = e.clientX, cy = e.clientY;
             var tgt = e.currentTarget;
@@ -5275,6 +5279,7 @@ class ThreadView(QWidget):
                 showNos(nos, e.clientX, e.clientY, e.currentTarget);
             }
             btn.addEventListener('mouseover', function(e) {
+                if (window._selMode) return;   /* 選択モード中は返信一覧を出さない */
                 clearTimeout(T.h); clearTimeout(T.qi);
                 var cx = e.clientX, cy = e.clientY, tgt = e.currentTarget;
                 T.qi = setTimeout(function() { showNos(nos, cx, cy, tgt); }, 300);
@@ -5288,6 +5293,7 @@ class ThreadView(QWidget):
             btn.addEventListener('click', function(e) {
                 e.stopPropagation(); e.preventDefault();
                 clearTimeout(T.qi);
+                if (window._selMode) return;   /* 選択モード中は返信一覧を出さない */
                 _showQ(e);
             });
         });
