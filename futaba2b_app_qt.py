@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.269"
+APP_VER = "0.9.270"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -146,6 +146,25 @@ try:
     from shiboken6 import isValid as _sb_valid   # C++オブジェクト生存判定
 except Exception:
     _sb_valid = None
+
+
+def _safe_run_js(view, js, cb=None) -> bool:
+    """破棄済みビューへの runJavaScript を安全に行う。
+    タブを閉じた後に QTimer/非同期コールバックが遅延実行され
+    「libshiboken: Internal C++ object already deleted」で未処理例外になるのを防ぐ。
+    実行できたら True、破棄済み等でスキップしたら False を返す。"""
+    try:
+        if view is None:
+            return False
+        if _sb_valid is not None and not _sb_valid(view):
+            return False
+        if cb is None:
+            view.page().runJavaScript(js)
+        else:
+            view.page().runJavaScript(js, cb)
+        return True
+    except RuntimeError:
+        return False
 _FETCH_POOL = _TPE(max_workers=3, thread_name_prefix='2BP_fetch')
 
 class _NoWheelSpinBox(QSpinBox):
@@ -233,12 +252,62 @@ def _cleanup_tmp(path: str):
 # ─ 多段タブバー ────────────────────────────────────────────────────────────
 _ROW_H = 26
 
+_JSERR_SEEN: set = set()      # 同一エラーの重複保存を防ぐ
+
+
+def _save_js_error_source(src: str, line, msg: str) -> None:
+    """JSエラーが出たページのHTMLを logs/jserr/ に退避する（原因調査用）。
+    生成HTMLは一時ファイルで次のロードまで残っているため、この時点ならコピーできる。
+    「Uncaught SyntaxError: Invalid or unexpected token」のように、どのレス/データが
+    JSを壊したのかログだけでは追えないケースを後から解析可能にする。"""
+    try:
+        if not src:
+            return
+        key = (src, str(line), (msg or "")[:120])
+        if key in _JSERR_SEEN:
+            return
+        _JSERR_SEEN.add(key)
+        if len(_JSERR_SEEN) > 200:
+            _JSERR_SEEN.clear()
+        import shutil, datetime, urllib.parse
+        from pathlib import Path as _P
+        p = src
+        if p.startswith("file:"):
+            p = urllib.parse.unquote(urllib.parse.urlparse(p).path)
+            if p.startswith("/") and len(p) > 2 and p[2] == ":":
+                p = p[1:]                      # Windows: /C:/... → C:/...
+        f = _P(p)
+        if not f.is_file():
+            print(f"[JSERR] 原因HTMLが見つからず保存できません: {src}", flush=True)
+            return
+        out_dir = _P("logs/jserr")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # 溜まりすぎ防止: 古いものから消して最大20組に保つ
+        olds = sorted(out_dir.glob("jserr_*.html"), key=lambda x: x.stat().st_mtime)
+        for o in olds[:-19]:
+            for _t in (o, o.with_suffix(".txt")):
+                try: _t.unlink()
+                except OSError: pass
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        dst = out_dir / f"jserr_{stamp}.html"
+        shutil.copyfile(str(f), str(dst))
+        dst.with_suffix(".txt").write_text(
+            f"src : {src}\nline: {line}\nmsg : {msg}\n", encoding="utf-8")
+        print(f"[JSERR] 原因HTMLを保存しました: {dst}", flush=True)
+    except Exception as e:
+        print(f"[JSERR] 保存失敗: {e}", flush=True)
+
+
 class _DebugPage(QWebEnginePage):
     """JS の console.log/warn/error を Python stdout に転送する"""
     def javaScriptConsoleMessage(self, level, msg, line, src):
         tag = {0: "LOG", 1: "WARN", 2: "ERR", 3: "INFO"}.get(level, "JS")
         src_short = src.split("/")[-1] if src else ""
         print(f"js [{tag}] {src_short}:{line}  {msg}", flush=True)
+        # 構文エラー/未捕捉例外は原因HTMLが無いと追跡できないため退避しておく
+        _m = msg or ""
+        if "SyntaxError" in _m or "Uncaught" in _m:
+            _save_js_error_source(src, line, _m)
 
 
 class _ImageWebView(QWebEngineView):
@@ -564,9 +633,14 @@ class WrapTabBar(QTabBar):
 
     # ── サイズ ──────────────────────────────────────────────────────────────
     def sizeHint(self):
-        # 幅は極力大きく返して QTabWidget がフル幅を割り当てるようにする
-        pw = self.parentWidget().width() if self.parentWidget() else 0
-        w = max(pw, super().sizeHint().width(), 200)
+        # 幅は極力大きく返して QTabWidget がフル幅を割り当てるようにする。
+        # 破棄途中に呼ばれると parentWidget()/super() が「already deleted」で
+        # 例外になるためガードして既定値を返す。
+        try:
+            pw = self.parentWidget().width() if self.parentWidget() else 0
+            w = max(pw, super().sizeHint().width(), 200)
+        except RuntimeError:
+            return QSize(200, self._ROW_H)
         return QSize(w, getattr(self, "_cached_rows", 1) * self._ROW_H)
 
     def minimumSizeHint(self):
@@ -2565,8 +2639,9 @@ class BoardPane(QWidget):
         # 表示後に末尾が見えていれば青背景をデフォルトに戻す（少し遅延でレイアウト確定後）。
         if isinstance(w, ThreadView):
             _wv = w._view
-            QTimer.singleShot(180, lambda v=_wv: v.page().runJavaScript(
-                "try{window._checkUnreadAtBottom&&window._checkUnreadAtBottom();}catch(e){}"))
+            # 180ms後に実行されるため、その間にタブが閉じられている可能性がある
+            QTimer.singleShot(180, lambda v=_wv: _safe_run_js(
+                v, "try{window._checkUnreadAtBottom&&window._checkUnreadAtBottom();}catch(e){}"))
         self._search_edit.blockSignals(True) if hasattr(self, '_search_edit') else None
         w._search_edit.blockSignals(True)
         w._search_edit.setText(saved)
@@ -4983,6 +5058,10 @@ class ThreadView(QWidget):
             pass
 
     def _inject_popup_js(self):
+        # QTimer.singleShot 経由で遅延実行されるため、その間にタブが閉じられて
+        # ビューが破棄されていることがある（「already deleted」の未処理例外対策）。
+        if _sb_valid is not None and not _sb_valid(self._view):
+            return
         js = r"""(function() {
     /* ── コンテナ枠のみ inline style — 背景・文字色は内側の .res クラス CSS に委ねる ── */
     var ST = 'position:fixed;border:1px solid #800000;' +
@@ -5539,7 +5618,8 @@ class ThreadView(QWidget):
         # 「delしたレスを非表示にする」チェックの記憶状態をJSへ渡す（delResで参照）
         _dh = 'true' if getattr(self._settings, 'del_hide_checked', True) else 'false'
         js = f"window._delHideDefault = {_dh};\n" + js
-        self._view.page().runJavaScript(js)
+        if not _safe_run_js(self._view, js):
+            return          # タブ破棄後の遅延実行 → 以降の処理も行わない
         # ヒートマップは position:fixed の独立オーバーレイなので、全描画・モード
         # 切替のたびにbodyが作り直される → ここ（描画完了フック）で再適用する。
         self._apply_heatmap()
@@ -6306,8 +6386,9 @@ class ThreadView(QWidget):
         def _after_pool(_r2):
             QTimer.singleShot(50, self._inject_popup_js)
         def _after_swap(_r):
-            self._view.page().runJavaScript(_pool_js, _after_pool)
-        self._view.page().runJavaScript(js, _after_swap)
+            # 非同期コールバックのため、この時点でタブが閉じられていることがある
+            _safe_run_js(self._view, _pool_js, _after_pool)
+        _safe_run_js(self._view, js, _after_swap)
 
     def _render_image_mode(self):
         if not self._thread: return
@@ -6485,8 +6566,9 @@ class ThreadView(QWidget):
         def _after_pool(_r2):
             QTimer.singleShot(50, self._inject_popup_js)
         def _after_swap(_r):
-            self._view.page().runJavaScript(_pool_js, _after_pool)
-        self._view.page().runJavaScript(js, _after_swap)
+            # 非同期コールバックのため、この時点でタブが閉じられていることがある
+            _safe_run_js(self._view, _pool_js, _after_pool)
+        _safe_run_js(self._view, js, _after_swap)
 
     def _on_gallery_img(self, idx: int):
         lst = getattr(self, '_gallery_list', [])
