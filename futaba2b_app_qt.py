@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.271"
+APP_VER = "0.9.272"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -623,6 +623,24 @@ class WrapTabBar(QTabBar):
         self._tab_rects_cache_val = rects
         return rects
 
+    def _widget_for_paint(self, i: int, parent_tw=None):
+        """描画中のタブ位置 i に対応するウィジェットを返す。
+        ドラッグ中は _move_tab が表示順のみ入れ替え、stacked の実ウィジェット順は
+        リリース時（_sync_stacked_to_tabbar）まで変わらない。そのため
+        parent_tw.widget(i) を使うとピンや×が移動前の位置に残ってしまう。
+        ドラッグ中は並べ替え済みの _drag_widget_order を優先する。"""
+        _wo = self._drag_widget_order
+        if _wo and len(_wo) == self.count() and 0 <= i < len(_wo):
+            return _wo[i]
+        if parent_tw is None:
+            parent_tw = self.parentWidget()
+        if parent_tw is None:
+            return None
+        try:
+            return parent_tw.widget(i)
+        except (RuntimeError, AttributeError):
+            return None
+
     def _idx_at(self, pos):
         for i, r in self._tab_rects().items():
             if r.contains(pos): return i
@@ -771,10 +789,13 @@ class WrapTabBar(QTabBar):
                 p.drawPixmap(icon_rect, pix)
 
             # ── ピン留め: アイコン領域に半透明で重ねる（左端）──
-            is_pinned = False
-            if self._pinned_widgets and parent_tw:
-                w = parent_tw.widget(i)
-                is_pinned = (w in self._pinned_widgets)
+            # ドラッグ中は _move_tab が表示順だけ入れ替え、stacked の実ウィジェット
+            # 順はリリース時まで変わらない。parent_tw.widget(i) を見るとピンや×が
+            # 元の位置に residual として残るため、ドラッグ中は _drag_widget_order
+            # （並べ替え済みのウィジェット順）を優先して参照する。
+            w_i = self._widget_for_paint(i, parent_tw)
+            is_pinned = bool(self._pinned_widgets) and (w_i is not None
+                                                        and w_i in self._pinned_widgets)
             if is_pinned:
                 # テーマの pin.png を初回のみ読み込みキャッシュ
                 # テーマフォルダ優先 → theme/直下 fallback
@@ -825,12 +846,10 @@ class WrapTabBar(QTabBar):
                        self.tabText(i))
             cr = self._close_rect(rect)
             # カタログタブは閉じられない → × を描画しない
-            _is_catalog = False
-            if parent_tw:
-                try:
-                    _is_catalog = isinstance(parent_tw.widget(i), CatalogView)
-                except Exception:
-                    _is_catalog = False
+            try:
+                _is_catalog = isinstance(w_i, CatalogView)
+            except Exception:
+                _is_catalog = False
             if not _is_catalog:
                 p.setPen(QColor(self._C_CLZ))
                 p.drawText(cr, Qt.AlignmentFlag.AlignCenter, "×")
