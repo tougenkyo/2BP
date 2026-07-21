@@ -559,6 +559,18 @@ class MainWindow(QMainWindow):
         hm.addAction(QAction("バージョン情報(&A)…", self, triggered=self._show_about))
 
         # Ctrl+F は WindowShortcut で一元管理（メニューに表示しない）
+        # _build_menu は設定適用のたびに呼ばれる。menuBar().clear() では
+        # QShortcut は消えないため、旧インスタンスを明示的に破棄してから作り直す。
+        # （残すと同一キーが重複し、Qt が Ambiguous と判定して Ctrl+F が
+        #   どれも発火しなくなる＝「検索バーが出ない」不具合になる）
+        _old_find = getattr(self, "_sc_find", None)
+        if _old_find is not None:
+            try:
+                _old_find.setEnabled(False)
+                _old_find.setParent(None)
+                _old_find.deleteLater()
+            except RuntimeError:
+                pass
         self._sc_find = QShortcut(QKeySequence(_sc("find_in_view") or QKeySequence("Ctrl+F")), self, self._find_in_view)
 
     # ── ブックマーク ─────────────────────────────────────────────────────────

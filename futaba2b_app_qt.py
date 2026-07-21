@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.270"
+APP_VER = "0.9.271"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2413,6 +2413,11 @@ class BoardPane(QWidget):
         for aid, fn in _sc_actions:
             _key = _saved_sc.get(aid, "") or _sc_defaults[aid]
             sc = QShortcut(QKeySequence(_key), self, fn)
+            # 板タブ(BoardPane)ごとに同じキーが登録されるため、既定の
+            # WindowShortcut のままだと板を複数開いた時点で同一キーが重複し、
+            # Qt が Ambiguous と判定してどれも発火しなくなる。
+            # このペイン配下にフォーカスがある時だけ効くよう限定する。
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self._sc_map[aid] = sc
 
     def update_shortcuts(self, settings):
@@ -3679,6 +3684,10 @@ class ThreadView(QWidget):
 
         _extract_key = (getattr(self._settings, 'shortcuts', {}) or {}).get("extract_focus", "") or "Ctrl+Shift+F"
         self._sc_extract = QShortcut(QKeySequence(_extract_key), self, self._focus_search)  # 抽出フォーカス
+        # スレタブごとに同じキーが登録されるため、WindowShortcut のままだと
+        # タブを複数開いた時点で重複し Ambiguous でどれも発火しなくなる。
+        # このスレタブ配下にフォーカスがある時だけ効くよう限定する。
+        self._sc_extract.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         # スクロール位置復元用
         self._view.loadFinished.connect(self._on_load_finished_scroll)
         self._view.loadFinished.connect(lambda _: QTimer.singleShot(50, self._inject_popup_js))
