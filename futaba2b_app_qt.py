@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.273"
+APP_VER = "0.9.274"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9822,9 +9822,14 @@ class AutoRefreshManager(QObject):
         """カタログビューを安全にリロードする（メインスレッド）"""
         if app_is_shutting_down():
             return
+        # 破棄済み(C++側が消えた)ビューに reload() すると Qt 内部の非同期処理と
+        # 競合してネイティブクラッシュしうるため、生存判定してから呼ぶ。
+        if view is None:
+            return
+        if _sb_valid is not None and not _sb_valid(view):
+            return
         try:
-            if view:
-                view.reload()
+            view.reload()
         except RuntimeError:
             pass
 

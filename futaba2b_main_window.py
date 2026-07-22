@@ -1765,6 +1765,13 @@ class MainWindow(QMainWindow):
             tabs = pane._tabs
             for i in range(tabs.count()):
                 w = tabs.widget(i)
+                # 自動更新から先に解除する。板タブごと閉じる経路は個別タブの
+                # tab_closing を通らないため、解除しないと破棄済みビューが
+                # 自動更新に残り、次の更新でスレ/カタログを触ってクラッシュする。
+                try:
+                    self._ar_mgr.remove_by_view(w)
+                except Exception:
+                    pass
                 try:
                     if hasattr(w, 'cleanup'):
                         w.cleanup()
