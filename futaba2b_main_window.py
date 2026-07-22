@@ -5282,6 +5282,23 @@ def _setup_file_logging():
     import atexit
     atexit.register(lambda: (_logf.flush(), _logf.close()))
     print(f"[LOG] ファイル出力: {logpath}", flush=True)
+    # バージョン等はこの tee 設定より前に print されるためログに残らない。
+    # 不具合報告のログから版数・環境を特定できるよう、ここで改めて記録する。
+    try:
+        import platform as _pf
+        from futaba2b_app_qt import APP_VER as _VER
+        try:
+            from PySide6 import __version__ as _PSV
+            from PySide6.QtCore import qVersion as _qv
+            _qt = f"PySide6 {_PSV} / Qt {_qv()}"
+        except Exception:
+            _qt = "PySide6 ?"
+        print(f"[VER] 2BP v{_VER}", flush=True)
+        print(f"[VER] {_qt} / Python {_pf.python_version()}", flush=True)
+        print(f"[VER] {_pf.platform()}", flush=True)
+        print(f"[VER] 起動: {_dt.datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
+    except Exception as _e:
+        print(f"[VER] 記録失敗: {_e}", flush=True)
 
 
 def main():
