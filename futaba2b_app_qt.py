@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.272"
+APP_VER = "0.9.273"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -7532,6 +7532,27 @@ class _FindBar(QWidget):
         self._edit.selectAll()
 
     def hide_bar(self):
+        # 検索欄にフォーカスがある状態で隠すと、フォーカスが WebView へ戻る際に
+        # ページ先頭までスクロールしてしまう（閉じると一番上に戻る不具合）。
+        # 隠す前に現在のスクロール位置を控え、フォーカス移動後に復元する。
+        page = self._page_getter()
+        had_focus = self.isVisible() and self.isAncestorOf(QApplication.focusWidget() or self)
+        if page is not None and had_focus:
+            def _restore(pos):
+                try:
+                    _y = int(pos or 0)
+                except (TypeError, ValueError):
+                    return
+                if _y <= 0:
+                    return
+                p2 = self._page_getter()
+                if p2 is not None:
+                    # フォーカス移動に伴うスクロールの後に戻す（2フレーム待つ）
+                    p2.runJavaScript(
+                        "(function(){var y=%d;requestAnimationFrame(function(){"
+                        "requestAnimationFrame(function(){"
+                        "if(Math.abs(window.scrollY-y)>2)window.scrollTo(0,y);});});})();" % _y)
+            page.runJavaScript("window.scrollY", _restore)
         self.setVisible(False)
         self._clear_highlights()
         self._lbl_count.setText("")
