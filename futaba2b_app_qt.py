@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.276"
+APP_VER = "0.9.277"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4716,6 +4716,7 @@ class ThreadView(QWidget):
                       f'⚠ {thread.error}{_cn}</div>')
             self._error_banner_html = banner
             html = html.replace("<body>", f"<body>{banner}", 1)
+            html = html.replace("</body>", f"{banner}</body>", 1)   # 上下に表示
         else:
             self._error_banner_html = ""
         # 全体再描画でバナーの有無が確定する → エラー状態を記録
@@ -6239,7 +6240,8 @@ class ThreadView(QWidget):
             f"{WEBCHANNEL_JS}"
             f"{_scroll_js}"
             f"</head><body>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}"
-            f"{self._expiry_banner_html(self._thread)}{res_pool}{self._thread_footer_html(self._thread)}</body></html>"
+            f"{self._expiry_banner_html(self._thread)}{res_pool}{self._thread_footer_html(self._thread)}"
+            f"{getattr(self,'_error_banner_html','')}</body></html>"   # 返信モード同様、下にも表示
         )
         url = (self._thread.url if self._thread else None) or "https://www.2chan.net/"
         self._load_html_via_tempfile(html, QUrl(url))
@@ -6392,7 +6394,8 @@ class ThreadView(QWidget):
 
         body_html = (getattr(self, "_error_banner_html", "") + "\n".join(rows)
                      + self._expiry_banner_html(self._thread)
-                     + res_pool + self._thread_footer_html(self._thread))
+                     + res_pool + self._thread_footer_html(self._thread)
+                     + getattr(self, "_error_banner_html", ""))   # 返信モード同様、下にも表示
         body_js = _json.dumps(body_html, ensure_ascii=False)
         css_js  = _json.dumps(_QT_MODE_CSS, ensure_ascii=False)
         js = (
@@ -6490,7 +6493,8 @@ class ThreadView(QWidget):
               f'</head><body>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
               f'{self._gal_sel_ui_html()}'
               f'{self._expiry_banner_html(self._thread)}'
-              f'{res_pool}{self._thread_footer_html(self._thread)}</body></html>')
+              f'{res_pool}{self._thread_footer_html(self._thread)}'
+              f'{getattr(self,"_error_banner_html","")}</body></html>')   # 返信モード同様、下にも表示
         url=(self._thread.url if self._thread else None) or 'https://www.2chan.net/'
         self._load_html_via_tempfile(html, QUrl(url))
         self._loaded_page_mode = 'image'
@@ -6563,7 +6567,8 @@ class ThreadView(QWidget):
                      + self._gal_sel_ui_html()
                      + self._expiry_banner_html(self._thread)
                      + res_pool
-                     + self._thread_footer_html(self._thread))
+                     + self._thread_footer_html(self._thread)
+                     + getattr(self, "_error_banner_html", ""))   # 返信モード同様、下にも表示
         import json as _json
         grid_js = _json.dumps(grid_html, ensure_ascii=False)
         # _gallery_list も JS側に同期
