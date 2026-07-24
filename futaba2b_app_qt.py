@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.275"
+APP_VER = "0.9.276"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6680,11 +6680,16 @@ class ThreadView(QWidget):
 
             # 自分レスを「行」に分解したマップ: no -> list[str]（strip済み・空行除去）。
             # 引用判定は行単位で行う（>を含む引用行 と 地の文 を区別するため）。
-            my_res_lines = {}
+            # テキスト引用の照合は「自分のレス」だけでなく全レスを対象にする。
+            # ▼(_computeQuotedBy)と同じく、引用元より前のレスのうち最後に一致した
+            # 1件だけを引用先とみなすため、他人のレスも候補に含める必要がある。
+            # （自分レスの語句が他人宛ての引用に部分一致して誤通知になるのを防ぐ）
+            all_res_lines = []      # [(no, [行...]), ...] レス番号昇順
             for r in thread.res_list:
-                if r.no in my_nos:
-                    _txt = _html.unescape(r.comment_text or "")
-                    my_res_lines[r.no] = [ln.strip() for ln in _txt.splitlines() if ln.strip()]
+                _txt = _html.unescape(r.comment_text or "")
+                all_res_lines.append(
+                    (r.no, [ln.strip() for ln in _txt.splitlines() if ln.strip()]))
+            all_res_lines.sort(key=lambda t: t[0])
 
             for r in new_res:
                 if r.no in my_nos:
@@ -6747,16 +6752,23 @@ class ThreadView(QWidget):
                                     if _n < r.no:
                                         hit_nos.add(_n)
                                 continue
-                            # テキスト引用: 自分レスの「行」と照合。
-                            #   ・どの行とも完全一致なら自分宛て（引用行 >X への >>X 返信を含む）。
-                            #   ・地の文（>で始まらない行）に限り部分一致も許容（部分引用対策）。
-                            for no, lines in my_res_lines.items():
+                            # テキスト引用: ▼(_computeQuotedBy)と同じ判定にする。
+                            # 引用元より前のレスを順に走査し、最後に一致した1件だけを
+                            # 引用先とみなす（＝直近のレス宛て）。その1件が自分のレス
+                            # だった時だけ通知する。全一致レスを拾うと、自分のレスに
+                            # 含まれる語句が他人宛ての引用に部分一致して誤通知になる。
+                            #   ・完全一致（引用行 >X への >>X 返信を含む）
+                            #   ・地の文（>で始まらない行）は部分一致も許容（部分引用対策）
+                            _near = None
+                            for no, lines in all_res_lines:
                                 if no >= r.no:
-                                    continue
+                                    break          # レス番号昇順なので以降は対象外
                                 for ln in lines:
                                     if content == ln or (not ln.startswith(">") and content in ln):
-                                        hit_nos.add(no)
+                                        _near = no
                                         break
+                            if _near is not None and _near in my_nos:
+                                hit_nos.add(_near)
 
                 if hit_nos:
                     cmt = _re.sub(r"<[^>]+>", "", ct).strip()[:80]
