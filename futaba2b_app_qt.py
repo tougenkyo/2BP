@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.278"
+APP_VER = "0.9.279"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -7707,7 +7707,7 @@ class CatalogView(QWidget):
     _catalog_json_ready = Signal(object)  # mode=json取得結果 {"map":{no:{email,id}}, "nos":set} or None
     _catalog_del_result = Signal(bool, str)  # 削除依頼(del)の結果（ok, msg）
     _entries_ready = Signal(list)   # スレッド→UI の安全な橋渡し
-    _hover_img_ready  = Signal(bytes, object)  # (img_data, cursor_pos) BGスレッド→UIスレッド
+    _hover_img_ready  = Signal(bytes, object, int)  # (img_data, cursor_pos, hover_seq) BG→UI
     error_band_changed = Signal(str)  # 通信エラー赤帯（text=詳細, ""=解除）をスレタブへ伝播
     quar_nos_changed   = Signal(object)  # 隔離スレNo集合が更新された（スレタブのオレンジ色再評価用）
     _catalog_err_sig   = Signal(str)  # BGスレッド→UI: カタログfetch失敗の詳細
@@ -7723,6 +7723,7 @@ class CatalogView(QWidget):
         self._pending_light_body: str | None = None  # ロード完了前に来たマージ再描画body（loadFinished後に適用）
         self._light_render_once = False  # _re_render_light 実行中フラグ（_renderでbody入替に切替）
         self._hovering: bool = False  # マウスがカタログエントリ上にあるか
+        self._hover_seq: int = 0      # ホバー世代。遅れて届いた別セルの画像を捨てる
         self._pending_catset: callable | None = None  # fetch完了後に1回だけ実行するcatset
         self._email_cache: dict = {}            # {no: email} board_top取得済みemail（二重レンダリング防止）
         self._catalog_json_cache: dict = {}     # {no: {"email","id"}} mode=json取得済み
@@ -7940,21 +7941,35 @@ class CatalogView(QWidget):
             self._hover_popup.show()
             self._hover_popup.raise_()
 
-        if zoom_on and thumb_url:
+        # ホバーの世代を進める。カタログ上でマウスを速く動かすと複数セルの画像
+        # ロードが並行し、遅れて届いた「前のセル」の画像がそのまま表示されて
+        # テキスト(同期セット)と食い違っていた。世代が変わった結果は破棄する。
+        self._hover_seq = getattr(self, "_hover_seq", 0) + 1
+        _seq = self._hover_seq
+        if not (zoom_on and thumb_url):
+            # 画像を出さないホバー → 前のセルの画像が残らないよう消す
+            self._hover_img_popup.hide()
+            self._hover_img_lbl.clear()
+        else:
             import threading as _th, urllib.request as _ur
             _thumb_url = thumb_url.replace("/cat/", "/thumb/")
-            def _load_img():
+            def _load_img(_s=_seq):
                 try:
                     with _ur.urlopen(_thumb_url, timeout=3) as resp:
                         data = resp.read()
-                    self._hover_img_ready.emit(data, cursor_pos)
+                    if _s != getattr(self, "_hover_seq", 0):
+                        return          # 既に別のセルへ移った → 破棄
+                    self._hover_img_ready.emit(data, cursor_pos, _s)
                 except Exception:
                     pass
             _th.Thread(target=_load_img, daemon=True).start()
 
-    def _show_hover_img(self, data: bytes, cursor_pos):
+    def _show_hover_img(self, data: bytes, cursor_pos, seq: int = -1):
         """BGスレッドから渡された画像データをポップアップ表示（UIスレッド）"""
         from PySide6.QtGui import QPixmap
+        # 最新のホバー以外（マウスが既に別セルへ移った後に届いた結果）は捨てる。
+        if seq >= 0 and seq != getattr(self, "_hover_seq", 0):
+            return
         pix = QPixmap()
         pix.loadFromData(data)
         if pix.isNull():
@@ -7978,6 +7993,8 @@ class CatalogView(QWidget):
     def _on_cat_hover_leave(self):
         """カタログエントリからマウスアウト：ポップアップ非表示"""
         self._hovering = False
+        # 実行中の画像ロード結果を無効化（離脱後に届いて表示されるのを防ぐ）
+        self._hover_seq = getattr(self, "_hover_seq", 0) + 1
         self._hover_popup.hide()
         self._hover_img_popup.hide()
         self._hover_img_lbl.clear()
