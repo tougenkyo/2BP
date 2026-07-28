@@ -2451,12 +2451,25 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         # hover用データ属性とイベント
         _hover_attrs = ""
         if hover_zoom or hover_comment:
-            _raw_comment = (e.title or '').replace('\\', '\\\\').replace("'", "\\'").replace('\n', ' ').replace('\r', '')
-            _raw_thumb   = (e.thumb_url or '').replace("'", "\\'")
-            _raw_url     = (e.thread_url or '').replace("'", "\\'")
+            # JS文字列としてエスケープした後、HTML属性値としてもエスケープする。
+            # 本文に " が含まれると属性が途中で閉じ、JSが切れて
+            # 「Uncaught SyntaxError: Invalid or unexpected token」になり、
+            # そのページのJS（ポップアップ/スクロール更新等）が全て止まっていた。
+            # U+2028/2029 はJS文字列リテラル内で改行扱いになるため除去する。
+            def _js_str(v: str) -> str:
+                return (str(v or '')
+                        .replace('\\', '\\\\').replace("'", "\\'")
+                        .replace('\r', '').replace('\n', ' ')
+                        .replace(' ', ' ').replace(' ', ' '))
+            _raw_comment = _js_str(e.title)
+            _raw_thumb   = _js_str(e.thumb_url)
+            _raw_url     = _js_str(e.thread_url)
+            _enter_js = (f"_b('catHoverEnter',"
+                         f"['{_raw_url}','{_raw_thumb}','{_raw_comment}'])")
+            _leave_js = "_b('catHoverLeave',[])"
             _hover_attrs = (
-                f" onmouseenter=\"_b('catHoverEnter',['{_raw_url}','{_raw_thumb}','{_raw_comment}'])\""
-                f" onmouseleave=\"_b('catHoverLeave',[])\""
+                f' onmouseenter="{_e(_enter_js)}"'
+                f' onmouseleave="{_e(_leave_js)}"'
             )
 
         return (
