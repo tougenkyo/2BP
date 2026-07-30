@@ -541,8 +541,10 @@ class AppSettings:
         self.shortcuts: dict = {}
         # マウスジェスチャー（右ドラッグの軌跡でアクション実行）。既定OFF。
         self.mouse_gesture_enabled: bool = False
-        # {方向列: action_id}。空なら MOUSE_GESTURE_DEFAULTS を使う
+        # {方向列: action_id}。未設定(configured=False)の間は MOUSE_GESTURE_DEFAULTS を使う
         self.mouse_gestures: dict = {}
+        # 一度でも設定画面で保存したか。Trueなら全削除(空)もそのまま尊重する
+        self.mouse_gestures_configured: bool = False
 
         # ─────────────────────────────────────────────────────
         # NG画像リスト
@@ -692,6 +694,7 @@ class AppSettings:
             self.shortcuts = raw.get("shortcuts", {})
             self.mouse_gesture_enabled = bool(raw.get("mouse_gesture_enabled", False))
             self.mouse_gestures = dict(raw.get("mouse_gestures", {}) or {})
+            self.mouse_gestures_configured = bool(raw.get("mouse_gestures_configured", False))
             # ── 自動更新間隔の旧形式移行（v0.8.078で分→秒・1%行追加）──
             # 旧: 5要素・分単位 / 新: 6要素・秒単位
             if isinstance(self.ar_last_intervals, list) and len(self.ar_last_intervals) == 5:
@@ -1087,6 +1090,7 @@ class AppSettings:
                         "shortcuts": self.shortcuts,
                         "mouse_gesture_enabled": self.mouse_gesture_enabled,
                         "mouse_gestures": self.mouse_gestures,
+                        "mouse_gestures_configured": self.mouse_gestures_configured,
                     },
                     f, ensure_ascii=False, indent=2,
                 )

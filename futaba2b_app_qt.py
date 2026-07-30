@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.282"
+APP_VER = "0.9.283"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1279,7 +1279,12 @@ class _MouseGestureMixin:
         if not s or not getattr(s, "mouse_gesture_enabled", False):
             return
         from futaba2b_models import MOUSE_GESTURE_DEFAULTS
-        table = dict(getattr(s, "mouse_gestures", {}) or {}) or dict(MOUSE_GESTURE_DEFAULTS)
+        # 一度でも設定を保存していればその内容だけを使う（全削除＝ジェスチャー無しを
+        # 尊重する）。未設定（保存したことがない）時のみ既定を使う。
+        if getattr(s, "mouse_gestures_configured", False):
+            table = dict(getattr(s, "mouse_gestures", {}) or {})
+        else:
+            table = dict(getattr(s, "mouse_gestures", {}) or {}) or dict(MOUSE_GESTURE_DEFAULTS)
         action = table.get(seq or "")
         if not action:
             return

@@ -4664,43 +4664,42 @@ class AppSettingsDialog(QDialog):
 
         self._mg_defs = list(MOUSE_GESTURE_DEFAULTS.items())
         self._mg_actions = list(MOUSE_GESTURE_ACTIONS)
-        _mg_table = QTableWidget(len(self._mg_defs), 2)
+        _mg_table = QTableWidget(0, 2)
         _mg_table.setHorizontalHeaderLabels(["ジェスチャー", "動作"])
         _mg_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents)
         _mg_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         _mg_table.verticalHeader().setVisible(False)
-        _mg_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        _mg_table.setFixedHeight(26 * len(self._mg_defs) + 30)
-        self._mg_combos = {}
-        for row, (seq, _dflt) in enumerate(self._mg_defs):
-            it = QTableWidgetItem(seq)
-            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            _f = it.font(); _f.setPointSize(_f.pointSize() + 3); it.setFont(_f)
-            _mg_table.setItem(row, 0, it)
-            cb = QComboBox()
-            cb.addItem("なし", "")
-            for aid, label in self._mg_actions:
-                cb.addItem(label, aid)
-            _mg_table.setCellWidget(row, 1, cb)
-            self._mg_combos[seq] = cb
+        _mg_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        _mg_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        _mg_table.setMinimumHeight(200)
         mg_lay.addWidget(_mg_table)
         self._mg_table = _mg_table
 
-        _mg_reset = QPushButton("ジェスチャーをデフォルトに戻す")
-        _mg_reset.setFixedWidth(220)
+        _mg_add  = QPushButton("追加…")
+        _mg_edit = QPushButton("ジェスチャーを変更…")
+        _mg_del  = QPushButton("削除")
+        _mg_reset = QPushButton("デフォルトに戻す")
+        for _b in (_mg_add, _mg_edit, _mg_del):
+            _b.setFixedWidth(150)
+        _mg_reset.setFixedWidth(160)
+        _mg_add.clicked.connect(self._mg_on_add)
+        _mg_edit.clicked.connect(self._mg_on_edit)
+        _mg_del.clicked.connect(self._mg_on_delete)
         def _reset_gestures():
-            for seq, dflt in self._mg_defs:
-                cb = self._mg_combos[seq]
-                i = cb.findData(dflt)
-                cb.setCurrentIndex(i if i >= 0 else 0)
+            self._mg_fill_table(dict(MOUSE_GESTURE_DEFAULTS))
         _mg_reset.clicked.connect(_reset_gestures)
         _mg_btn_lay = QHBoxLayout()
-        _mg_btn_lay.addWidget(_mg_reset); _mg_btn_lay.addStretch()
+        for _b in (_mg_add, _mg_edit, _mg_del, _mg_reset):
+            _mg_btn_lay.addWidget(_b)
+        _mg_btn_lay.addStretch()
         mg_lay.addLayout(_mg_btn_lay)
+        self._mg_buttons = (_mg_add, _mg_edit, _mg_del, _mg_reset)
 
         def _mg_toggle(on: bool):
-            _mg_table.setEnabled(on); _mg_reset.setEnabled(on)
+            _mg_table.setEnabled(on)
+            for _b in self._mg_buttons:
+                _b.setEnabled(on)
         self._mg_enabled.toggled.connect(_mg_toggle)
 
         nb.addTab(w_sc, "ショートカット")
@@ -4710,6 +4709,138 @@ class AppSettingsDialog(QDialog):
         lay.addWidget(btns)
 
     # ──────────────────────────────────────────────────────────────────────
+    # ── マウスジェスチャー: 表の編集 ──────────────────────────────────────
+    def _mg_fill_table(self, table: dict):
+        """{方向列: action_id} で表を作り直す。"""
+        t = self._mg_table
+        t.setRowCount(0)
+        for seq, aid in table.items():
+            self._mg_add_row(seq, aid)
+
+    def _mg_add_row(self, seq: str, aid: str):
+        t = self._mg_table
+        row = t.rowCount()
+        t.insertRow(row)
+        it = QTableWidgetItem(seq)
+        it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        _f = it.font(); _f.setPointSize(_f.pointSize() + 3); it.setFont(_f)
+        t.setItem(row, 0, it)
+        cb = QComboBox()
+        cb.addItem("なし", "")
+        for _aid, _label in self._mg_actions:
+            cb.addItem(_label, _aid)
+        i = cb.findData(aid)
+        cb.setCurrentIndex(i if i >= 0 else 0)
+        t.setCellWidget(row, 1, cb)
+
+    def _mg_rows(self) -> dict:
+        """表の内容を {方向列: action_id} で返す（動作「なし」の行は除く）。"""
+        out = {}
+        t = self._mg_table
+        for row in range(t.rowCount()):
+            it = t.item(row, 0)
+            cb = t.cellWidget(row, 1)
+            if it is None or cb is None:
+                continue
+            seq = it.text().strip()
+            aid = cb.currentData() or ""
+            if seq and aid:
+                out[seq] = aid
+        return out
+
+    def _mg_input_sequence(self, initial: str = "", exclude: str = "") -> str:
+        """ジェスチャー入力ダイアログ。方向ボタンで軌跡を組み立てて返す（空=中止）。"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("ジェスチャーの入力")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("方向ボタンを押して軌跡を作ります（例: ↓→）"))
+        cur = QLabel(initial or "（未入力）")
+        _cf = cur.font(); _cf.setPointSize(_cf.pointSize() + 8); _cf.setBold(True)
+        cur.setFont(_cf)
+        cur.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cur.setMinimumHeight(50)
+        cur.setStyleSheet(
+            f"border:1px solid {_TM.ui('panel_border','#444')};"
+            f"background:{_TM.ui('panel_bg2','#2a2a2a')};letter-spacing:4px;")
+        lay.addWidget(cur)
+        state = {"seq": initial or ""}
+        def _refresh():
+            cur.setText(state["seq"] or "（未入力）")
+        def _push(d):
+            # 同方向の連続は認識側でまとめられるため、ここでも重複を避ける
+            if state["seq"][-1:] != d:
+                state["seq"] += d
+                _refresh()
+        row = QHBoxLayout()
+        for _d in ("↑", "↓", "←", "→"):
+            b = QPushButton(_d); b.setFixedSize(52, 40)
+            _bf = b.font(); _bf.setPointSize(_bf.pointSize() + 6); b.setFont(_bf)
+            b.clicked.connect(lambda _=False, d=_d: _push(d))
+            row.addWidget(b)
+        lay.addLayout(row)
+        row2 = QHBoxLayout()
+        b_back = QPushButton("1つ戻す"); b_clear = QPushButton("クリア")
+        def _back():
+            state["seq"] = state["seq"][:-1]; _refresh()
+        def _clear():
+            state["seq"] = ""; _refresh()
+        b_back.clicked.connect(_back); b_clear.clicked.connect(_clear)
+        row2.addWidget(b_back); row2.addWidget(b_clear); row2.addStretch()
+        lay.addLayout(row2)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                              QDialogButtonBox.StandardButton.Cancel)
+        lay.addWidget(bb)
+        def _accept():
+            seq = state["seq"]
+            if not seq:
+                QMessageBox.information(dlg, "ジェスチャー", "方向を1つ以上入力してください。")
+                return
+            existing = self._mg_rows()
+            if seq in existing and seq != exclude:
+                QMessageBox.information(
+                    dlg, "ジェスチャー",
+                    f"「{seq}」は既に登録されています。別の軌跡を入力してください。")
+                return
+            dlg.accept()
+        bb.accepted.connect(_accept); bb.rejected.connect(dlg.reject)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return ""
+        return state["seq"]
+
+    def _mg_on_add(self):
+        seq = self._mg_input_sequence()
+        if not seq:
+            return
+        # 追加直後に動作を選べるよう、既定は「なし」で行を足して選択状態にする
+        self._mg_add_row(seq, "")
+        self._mg_table.selectRow(self._mg_table.rowCount() - 1)
+
+    def _mg_on_edit(self):
+        row = self._mg_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "ジェスチャー", "変更する行を選んでください。")
+            return
+        it = self._mg_table.item(row, 0)
+        old = it.text() if it else ""
+        seq = self._mg_input_sequence(old, exclude=old)
+        if not seq:
+            return
+        it.setText(seq)
+
+    def _mg_on_delete(self):
+        row = self._mg_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "ジェスチャー", "削除する行を選んでください。")
+            return
+        it = self._mg_table.item(row, 0)
+        seq = it.text() if it else ""
+        if QMessageBox.question(
+                self, "削除確認", f"ジェスチャー「{seq}」を削除しますか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._mg_table.removeRow(row)
+
     def _load(self):
         s = self._settings
 
@@ -4824,16 +4955,14 @@ class AppSettingsDialog(QDialog):
             custom = _saved_sc.get(aid, "")
             self._sc_table.item(row, 2).setText(custom)
 
-        # マウスジェスチャー
+        # マウスジェスチャー（未設定なら既定を表示）
         _mg_on = bool(getattr(s, "mouse_gesture_enabled", False))
         self._mg_enabled.setChecked(_mg_on)
         _saved_mg = dict(getattr(s, "mouse_gestures", {}) or {})
-        for seq, dflt in self._mg_defs:
-            aid = _saved_mg.get(seq, dflt) if _saved_mg else dflt
-            cb = self._mg_combos[seq]
-            i = cb.findData(aid)
-            cb.setCurrentIndex(i if i >= 0 else 0)
+        self._mg_fill_table(_saved_mg if _saved_mg else dict(self._mg_defs))
         self._mg_table.setEnabled(_mg_on)
+        for _b in self._mg_buttons:
+            _b.setEnabled(_mg_on)
 
     # ──────────────────────────────────────────────────────────────────────
     def _import_nijivb_ini(self):
@@ -4963,11 +5092,10 @@ class AppSettingsDialog(QDialog):
                 sc_map[aid] = val
         s.shortcuts = sc_map
 
-        # マウスジェスチャー
+        # マウスジェスチャー（表の内容をそのまま保存＝追加・削除を反映）
         s.mouse_gesture_enabled = self._mg_enabled.isChecked()
-        s.mouse_gestures = {seq: self._mg_combos[seq].currentData()
-                            for seq, _d in self._mg_defs
-                            if self._mg_combos[seq].currentData()}
+        s.mouse_gestures = self._mg_rows()
+        s.mouse_gestures_configured = True   # 以後は全削除(空)もそのまま尊重する
 
         s.save()
         if self._on_apply: self._on_apply()
