@@ -4725,7 +4725,8 @@ class AppSettingsDialog(QDialog):
         it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
         _f = it.font(); _f.setPointSize(_f.pointSize() + 3); it.setFont(_f)
         t.setItem(row, 0, it)
-        cb = QComboBox()
+        # ホイールで項目が変わらないコンボ（表をスクロールした時の誤操作を防ぐ）
+        cb = _NoWheelComboBox()
         cb.addItem("なし", "")
         for _aid, _label in self._mg_actions:
             cb.addItem(_label, _aid)
