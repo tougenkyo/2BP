@@ -10,6 +10,7 @@ class ThreadBridge(QObject):
     """スレッドビューの JS → Python コールバック"""
 
     # Python 側が受け取るシグナル
+    mouse_gesture         = Signal(str)          # マウスジェスチャー（方向列）
     quote_no_requested    = Signal(int)          # 番号クリック → >>No.NNNN
     quote_comment_requested = Signal(int)        # コメントクリック → >本文
     quote_img_requested   = Signal(int)          # 画像クリック → 画像URLを引用
@@ -55,6 +56,11 @@ class ThreadBridge(QObject):
     @Slot(int)
     def quoteComment(self, no: int):
         self.quote_comment_requested.emit(no)
+
+    @Slot(str)
+    def mouseGesture(self, seq: str):
+        """マウスジェスチャー成立（右ドラッグの方向列）"""
+        self.mouse_gesture.emit(seq)
 
     @Slot(int)
     def quoteImg(self, no: int):
@@ -209,6 +215,7 @@ class CatalogBridge(QObject):
     scroll_top_reached       = Signal()      # スクロール先頭 → 更新トリガー
     cat_hover_enter          = Signal(str, str, str)  # (url, thumb_url, comment)
     cat_hover_leave          = Signal()
+    mouse_gesture            = Signal(str)   # マウスジェスチャー（方向列）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -246,6 +253,11 @@ class CatalogBridge(QObject):
     def scrollTop(self):
         """スクロール先頭検知 → 更新トリガー"""
         self.scroll_top_reached.emit()
+
+    @Slot(str)
+    def mouseGesture(self, seq: str):
+        """マウスジェスチャー成立（右ドラッグの方向列）"""
+        self.mouse_gesture.emit(seq)
 
     @Slot(str, str, str)
     def catHoverEnter(self, url: str, thumb_url: str, comment: str):

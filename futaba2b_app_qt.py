@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.281"
+APP_VER = "0.9.282"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1204,6 +1204,129 @@ def _img_mode_css(cols: int) -> str:
             "#_selbar ._selgrp{display:inline-flex}"
             "#_selbar ._selgrp button{padding:3px 7px}"
             "#_selbar label{cursor:pointer;user-select:none;white-space:nowrap}")
+
+
+def _mouse_gesture_js(enabled: bool = False, step: int = 30) -> str:
+    """マウスジェスチャー（右ドラッグの軌跡）認識JS。
+    右ボタン押下→移動で方向列(↑↓←→)を作り、離した時に _b('mouseGesture',[列]) を
+    通知する。同方向の連続は1つにまとめる。ジェスチャー成立時は contextmenu を
+    抑止して右クリックメニューを出さない（不成立＝ただの右クリックなら通常表示）。
+    移動中は画面右下に軌跡を表示する。"""
+    return (
+        "(function(){"
+        "if(window._mgInit)return; window._mgInit=true;"
+        f"window._mgEnabled={'true' if enabled else 'false'};"
+        f"var STEP={int(step)};"
+        "var on=false,lx=0,ly=0,seq=[],moved=false;"
+        "function ind(){var e=document.getElementById('_mg_ind');"
+        "if(!e){e=document.createElement('div');e.id='_mg_ind';"
+        "e.style.cssText='position:fixed;right:18px;bottom:18px;z-index:2147483647;"
+        "background:rgba(0,0,0,.66);color:#fff;font-size:15pt;font-weight:bold;"
+        "padding:5px 14px;border-radius:16px;pointer-events:none;letter-spacing:2px;';"
+        "document.body.appendChild(e);}return e;}"
+        "function hide(){var e=document.getElementById('_mg_ind');if(e)e.remove();}"
+        "function push(d){if(seq.length===0||seq[seq.length-1]!==d){seq.push(d);"
+        "var e=ind();e.textContent=seq.join('');e.style.display='block';}}"
+        "document.addEventListener('mousedown',function(ev){"
+        "if(!window._mgEnabled||ev.button!==2)return;"
+        "on=true;moved=false;seq=[];lx=ev.clientX;ly=ev.clientY;},true);"
+        "document.addEventListener('mousemove',function(ev){"
+        "if(!on)return;"
+        "var dx=ev.clientX-lx,dy=ev.clientY-ly;"
+        "if(Math.abs(dx)<STEP&&Math.abs(dy)<STEP)return;"
+        "moved=true;"
+        "if(Math.abs(dx)>Math.abs(dy)){push(dx>0?'\\u2192':'\\u2190');}"
+        "else{push(dy>0?'\\u2193':'\\u2191');}"
+        "lx=ev.clientX;ly=ev.clientY;},true);"
+        "document.addEventListener('mouseup',function(ev){"
+        "if(!on||ev.button!==2)return;"
+        "on=false;hide();"
+        "if(seq.length&&typeof _b==='function'){"
+        "window._mgFired=Date.now();"          # contextmenu 抑止の目印
+        "_b('mouseGesture',[seq.join('')]);}"
+        "seq=[];},true);"
+        # ジェスチャーが成立した直後の contextmenu は出さない
+        "document.addEventListener('contextmenu',function(ev){"
+        "if(window._mgFired&&Date.now()-window._mgFired<600){"
+        "ev.preventDefault();ev.stopPropagation();window._mgFired=0;}},true);"
+        "window._mgSetEnabled=function(v){window._mgEnabled=!!v;"
+        "if(!v){on=false;seq=[];hide();}};"
+        "})();"
+    )
+
+
+class _MouseGestureMixin:
+    """右ドラッグのマウスジェスチャーを扱う（ThreadView / CatalogView 共通）。
+    JS側で方向列を作り、_b('mouseGesture',[列]) で通知される。"""
+
+    def inject_mouse_gesture_js(self):
+        """表示中ページへジェスチャー認識JSを注入する（読込完了ごとに呼ぶ）。"""
+        s = getattr(self, "_settings", None)
+        en = bool(getattr(s, "mouse_gesture_enabled", False)) if s else False
+        _safe_run_js(getattr(self, "_view", None), _mouse_gesture_js(en))
+
+    def apply_mouse_gesture_setting(self):
+        """設定変更を表示中ページへ即時反映する（再読込不要）。"""
+        s = getattr(self, "_settings", None)
+        en = bool(getattr(s, "mouse_gesture_enabled", False)) if s else False
+        _safe_run_js(getattr(self, "_view", None),
+                     "if(window._mgSetEnabled)window._mgSetEnabled(%s);"
+                     % ("true" if en else "false"))
+
+    def _on_mouse_gesture(self, seq: str):
+        """ジェスチャー成立 → 割り当てアクションを実行する。"""
+        s = getattr(self, "_settings", None)
+        if not s or not getattr(s, "mouse_gesture_enabled", False):
+            return
+        from futaba2b_models import MOUSE_GESTURE_DEFAULTS
+        table = dict(getattr(s, "mouse_gestures", {}) or {}) or dict(MOUSE_GESTURE_DEFAULTS)
+        action = table.get(seq or "")
+        if not action:
+            return
+        self._run_gesture_action(action)
+
+    def _main_window(self):
+        w = self
+        while w is not None and not hasattr(w, "_ar_mgr"):
+            w = w.parent()
+        return w
+
+    def _run_gesture_action(self, action: str):
+        """action_id を実行する。ハンドラは既存のメニュー/タブ処理を再利用する。"""
+        mw = self._main_window()
+        pane = self
+        while pane is not None and not isinstance(pane, BoardPane):
+            pane = pane.parent()
+
+        def _pane(name, *a):
+            f = getattr(pane, name, None) if pane else None
+            if callable(f):
+                f(*a); return True
+            return False
+
+        def _mw(name, *a):
+            f = getattr(mw, name, None) if mw else None
+            if callable(f):
+                f(*a); return True
+            return False
+
+        if   action == "close_tab":       _mw("_close_current_tab")
+        elif action == "close_all_tabs":  _pane("_gesture_close_all")
+        elif action == "refresh_current": _mw("_refresh_current")
+        elif action == "refresh_board":   _mw("_refresh_board")
+        elif action == "catalog":         _mw("_show_board_view", "catalog")
+        elif action == "board_top":       _mw("_show_board_view", "board")
+        elif action == "reply":           _mw("_reply_current")
+        elif action == "new_thread":      _mw("_new_thread")
+        elif action == "find_in_view":    _mw("_find_in_view")
+        elif action == "toggle_pin":      _pane("_toggle_pin")
+        elif action == "save_last":       _pane("_save_current_default")
+        elif action == "save_mht":        _pane("_save_mht_current")
+        elif action == "save_html":       _pane("_save_html_current")
+        elif action == "save_zip":        _pane("_save_zip_current")
+        elif action == "scroll_top":      _pane("_scroll_top")
+        elif action == "scroll_bottom":   _pane("_scroll_bottom")
+        elif action == "open_browser":    _pane("_ctx_open_browser")
 
 
 # 画像モードの一括保存・選択UI用JS（window関数として定義・多重定義ガード付き。
@@ -3055,6 +3178,20 @@ class BoardPane(QWidget):
             return w._board.catalog_url
         return ""
 
+    def _gesture_close_all(self):
+        """全てのビューを閉じる（マウスジェスチャー用）。
+        カタログタブとピン留めタブは他の「閉じる」操作と同様に残す。"""
+        for i in range(self._tabs.count() - 1, -1, -1):
+            _w = self._tabs.widget(i)
+            if isinstance(_w, CatalogView) or _w in self._pinned:
+                continue
+            self.tab_closing.emit(_w)
+            self._tabs.removeTab(i)
+            _dispose_tab_view(_w)
+        if self._tabs.count() == 0:
+            self._tab_stack.setCurrentIndex(1)
+            self._title_lbl.setFullText("")
+
     def _ctx_close_others(self):
         keep = self._ctx_tab_idx
         for i in range(self._tabs.count() - 1, -1, -1):
@@ -3492,7 +3629,7 @@ def _build_error_band_js(text: str) -> str:
             "}catch(_){}})();")
 
 
-class ThreadView(QWidget):
+class ThreadView(_MouseGestureMixin, QWidget):
     open_reply_window = Signal(int, str)
     open_image_tab    = Signal(str, list, int)
     open_image_tab_bg = Signal(str, list, int)   # 中クリック：非アクティブで開く
@@ -3721,6 +3858,7 @@ class ThreadView(QWidget):
         self._bridge.url_open_external_requested.connect(_open_url)
         self._bridge.scroll_bottom_reached.connect(self._on_scroll_bottom)
         self._bridge.scroll_top_reached.connect(self._on_scroll_top)
+        self._bridge.mouse_gesture.connect(self._on_mouse_gesture)
         self._bridge.scroll_count_updated.connect(self._on_scroll_count)
         self._bridge.unread_state_changed.connect(self.unread_state_changed)
         self._bridge.bottom_seen.connect(self._on_bottom_seen)
@@ -3740,6 +3878,8 @@ class ThreadView(QWidget):
         self._sc_extract.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         # スクロール位置復元用
         self._view.loadFinished.connect(self._on_load_finished_scroll)
+        # マウスジェスチャー認識JSを読込完了ごとに注入（設定OFFなら待機のみ）
+        self._view.loadFinished.connect(lambda _: self.inject_mouse_gesture_js())
         self._view.loadFinished.connect(lambda _: QTimer.singleShot(50, self._inject_popup_js))
         # 再描画でHTMLに焼き込まれる TOPNEED/NEED が既定(0)に戻り「先頭/末尾スクロール
         # で更新」が効かなくなる経路（そ順トグル→_rebuild_last_html、自動更新の
@@ -7725,7 +7865,7 @@ class _FindBar(QWidget):
         if page:
             page.findText("")   # ハイライト解除
 
-class CatalogView(QWidget):
+class CatalogView(_MouseGestureMixin, QWidget):
     thread_open    = Signal(str)
     thread_open_bg = Signal(str)   # バックグラウンドで開く
     thread_open_mode    = Signal(str, int)  # url, open_mode
@@ -7843,6 +7983,7 @@ class CatalogView(QWidget):
         self._view.setZoomFactor(_default_zoom())
         self._view._source_callback = self._show_catalog_source
         self._view.loadFinished.connect(self._on_cat_load_finished)
+        self._view.loadFinished.connect(lambda _: self.inject_mouse_gesture_js())
         lay.addWidget(self._view)
         self._find_bar = _FindBar(lambda: self._page, self)
         lay.addWidget(self._find_bar)
@@ -7868,6 +8009,7 @@ class CatalogView(QWidget):
             lambda: QTimer.singleShot(1000, self.reload))
         self._bridge.cat_hover_enter.connect(self._on_cat_hover_enter)
         self._bridge.cat_hover_leave.connect(self._on_cat_hover_leave)
+        self._bridge.mouse_gesture.connect(self._on_mouse_gesture)
 
         # ホバーポップアップウィジェット
         # Qt.Tool: システム全体の最前面ではなく本ソフトの前面に表示（親=メインウインドウ）。

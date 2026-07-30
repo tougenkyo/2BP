@@ -4647,6 +4647,62 @@ class AppSettingsDialog(QDialog):
         _sc_btn_lay.addStretch()
         f_sc.addLayout(_sc_btn_lay)
 
+        # ── マウスジェスチャー ────────────────────────────────────────────
+        from futaba2b_models import MOUSE_GESTURE_ACTIONS, MOUSE_GESTURE_DEFAULTS
+        g_mg = QGroupBox("マウスジェスチャー"); f_sc.addWidget(g_mg)
+        mg_lay = QVBoxLayout(g_mg)
+        self._mg_enabled = QCheckBox("マウスジェスチャーを使用する")
+        self._mg_enabled.setToolTip(
+            "右ボタンを押しながらマウスを動かし、離すと軌跡に対応した動作を実行します。\n"
+            "ジェスチャーが成立した時は右クリックメニューを表示しません。")
+        mg_lay.addWidget(self._mg_enabled)
+        _mg_hint = QLabel("右ドラッグの軌跡（↑↓←→）で動作を実行します。"
+                          "「なし」を選ぶとそのジェスチャーは無効になります。")
+        _mg_hint.setStyleSheet("color: gray; font-size: 11px;")
+        _mg_hint.setWordWrap(True)
+        mg_lay.addWidget(_mg_hint)
+
+        self._mg_defs = list(MOUSE_GESTURE_DEFAULTS.items())
+        self._mg_actions = list(MOUSE_GESTURE_ACTIONS)
+        _mg_table = QTableWidget(len(self._mg_defs), 2)
+        _mg_table.setHorizontalHeaderLabels(["ジェスチャー", "動作"])
+        _mg_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        _mg_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        _mg_table.verticalHeader().setVisible(False)
+        _mg_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        _mg_table.setFixedHeight(26 * len(self._mg_defs) + 30)
+        self._mg_combos = {}
+        for row, (seq, _dflt) in enumerate(self._mg_defs):
+            it = QTableWidgetItem(seq)
+            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            _f = it.font(); _f.setPointSize(_f.pointSize() + 3); it.setFont(_f)
+            _mg_table.setItem(row, 0, it)
+            cb = QComboBox()
+            cb.addItem("なし", "")
+            for aid, label in self._mg_actions:
+                cb.addItem(label, aid)
+            _mg_table.setCellWidget(row, 1, cb)
+            self._mg_combos[seq] = cb
+        mg_lay.addWidget(_mg_table)
+        self._mg_table = _mg_table
+
+        _mg_reset = QPushButton("ジェスチャーをデフォルトに戻す")
+        _mg_reset.setFixedWidth(220)
+        def _reset_gestures():
+            for seq, dflt in self._mg_defs:
+                cb = self._mg_combos[seq]
+                i = cb.findData(dflt)
+                cb.setCurrentIndex(i if i >= 0 else 0)
+        _mg_reset.clicked.connect(_reset_gestures)
+        _mg_btn_lay = QHBoxLayout()
+        _mg_btn_lay.addWidget(_mg_reset); _mg_btn_lay.addStretch()
+        mg_lay.addLayout(_mg_btn_lay)
+
+        def _mg_toggle(on: bool):
+            _mg_table.setEnabled(on); _mg_reset.setEnabled(on)
+        self._mg_enabled.toggled.connect(_mg_toggle)
+
         nb.addTab(w_sc, "ショートカット")
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -4767,6 +4823,17 @@ class AppSettingsDialog(QDialog):
         for row, (aid, label, default) in enumerate(self._sc_defs):
             custom = _saved_sc.get(aid, "")
             self._sc_table.item(row, 2).setText(custom)
+
+        # マウスジェスチャー
+        _mg_on = bool(getattr(s, "mouse_gesture_enabled", False))
+        self._mg_enabled.setChecked(_mg_on)
+        _saved_mg = dict(getattr(s, "mouse_gestures", {}) or {})
+        for seq, dflt in self._mg_defs:
+            aid = _saved_mg.get(seq, dflt) if _saved_mg else dflt
+            cb = self._mg_combos[seq]
+            i = cb.findData(aid)
+            cb.setCurrentIndex(i if i >= 0 else 0)
+        self._mg_table.setEnabled(_mg_on)
 
     # ──────────────────────────────────────────────────────────────────────
     def _import_nijivb_ini(self):
@@ -4895,6 +4962,12 @@ class AppSettingsDialog(QDialog):
             if val:
                 sc_map[aid] = val
         s.shortcuts = sc_map
+
+        # マウスジェスチャー
+        s.mouse_gesture_enabled = self._mg_enabled.isChecked()
+        s.mouse_gestures = {seq: self._mg_combos[seq].currentData()
+                            for seq, _d in self._mg_defs
+                            if self._mg_combos[seq].currentData()}
 
         s.save()
         if self._on_apply: self._on_apply()

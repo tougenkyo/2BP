@@ -153,3 +153,39 @@ class AutoRefreshEntry:
     adaptive_intervals: list = field(
         default_factory=lambda: [dict(r) for r in AR_ADAPTIVE_DEFAULTS]
     )
+
+
+# ── マウスジェスチャー ───────────────────────────────────────────────────────
+# 右ボタンドラッグの軌跡（↑↓←→の並び）に割り当てるアクション。
+# action_id は既存のキーボードショートカット定義と共通。表示名も既存表記に合わせる。
+MOUSE_GESTURE_ACTIONS: list[tuple[str, str]] = [
+    ("close_tab",       "このビューを閉じる"),
+    ("close_all_tabs",  "全てのビューを閉じる"),
+    ("refresh_current", "このビューの更新"),
+    ("refresh_board",   "この板の更新"),
+    ("catalog",         "カタログ表示"),
+    ("board_top",       "掲示板を表示する"),
+    ("reply",           "返信ダイアログを開く"),
+    ("new_thread",      "スレッドを立てる"),
+    ("find_in_view",    "ページ内検索"),
+    ("toggle_pin",      "ピン留め"),
+    ("save_last",       "最後に保存した形式で保存"),
+    ("save_mht",        "MHT形式で保存"),
+    ("save_html",       "HTML形式で保存"),
+    ("save_zip",        "ZIP形式で保存"),
+    ("scroll_top",      "ページ先頭へ移動"),
+    ("scroll_bottom",   "ページ末尾へ移動"),
+    ("open_browser",    "外部ブラウザにアドレスを送る"),
+]
+
+# 既定の割り当て（旧2B準拠）。キーは方向列。
+MOUSE_GESTURE_DEFAULTS: dict[str, str] = {
+    "↓→": "close_tab",
+    "↓":  "refresh_current",
+    "↓↑": "refresh_board",
+    "←→": "catalog",
+    "←":  "scroll_top",
+    "→":  "scroll_bottom",
+    "↑":  "save_last",
+    "→←": "board_top",
+}

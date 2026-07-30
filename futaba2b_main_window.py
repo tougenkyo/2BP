@@ -4640,6 +4640,12 @@ class MainWindow(QMainWindow):
             # ツールバーの文字表示ON/OFFを即時反映
             if isinstance(pane, BoardPane) and hasattr(pane, 'apply_toolbar_labels'):
                 pane.apply_toolbar_labels(self._settings)
+            # マウスジェスチャーのON/OFFを開いている全ビューへ即時反映
+            if isinstance(pane, BoardPane):
+                for _j in range(pane._tabs.count()):
+                    _v = pane._tabs.widget(_j)
+                    if hasattr(_v, 'apply_mouse_gesture_setting'):
+                        _v.apply_mouse_gesture_setting()
         # テーマ変更をステータスバーへ再適用（個別styleSheetはアプリ全体スタイルより
         # 優先されるため、明示的に塗り直さないと色が変わらない）
         self._apply_statusbar_theme()
