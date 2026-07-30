@@ -305,8 +305,20 @@ QCheckBox::indicator:checked {{
     {_check_img}
 }}
 QCheckBox::indicator:disabled {{
-    border-color: {c("text_muted", "#555555")};
+    /* 無効時は通常より枠を暗くして「押せない」ことを見た目で示す。
+       text_muted はダークテーマだと checkbox_border より明るく、無効の方が
+       目立ってしまうため、専用キー checkbox_border_disabled を使う。 */
+    border-color: {c("checkbox_border_disabled", "#3a3a3a")};
     background: {c("window_bg", "#1e1e1e")};
+}}
+QCheckBox:disabled {{
+    color: {c("text_disabled", "#666666")};
+}}
+QRadioButton::indicator:disabled {{
+    border-color: {c("checkbox_border_disabled", "#3a3a3a")};
+}}
+QRadioButton:disabled {{
+    color: {c("text_disabled", "#666666")};
 }}
 QRadioButton {{
     color: {c("text_primary", "#e8e8e8")};

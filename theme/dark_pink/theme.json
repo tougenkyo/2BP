@@ -12,6 +12,7 @@
     "text_primary":       "#f0d0dc",
     "text_secondary":     "#7a4060",
     "text_muted":         "#885060",
+    "text_disabled":      "#6a4050",
     "text_danger":        "#f88888",
 
     "btn_bg":             "#3d2030",
@@ -58,6 +59,7 @@
     "popup_border":       "#6a3850",
 
     "checkbox_border":    "#6a3850",
+    "checkbox_border_disabled": "#40222f",
 
     "new_res_unread":     "#4488ff",
     "new_res_tab_update": "#ff4444",
