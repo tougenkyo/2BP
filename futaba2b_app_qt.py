@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.279"
+APP_VER = "0.9.280"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2248,16 +2248,21 @@ class BoardPane(QWidget):
             " text-align: center;"
             "}"
         )
+        # ツールバーの文字(キャプション)表示。OFF時はアイコンのみで高さも詰める。
+        _show_lbl = bool(getattr(self._settings, 'toolbar_show_labels', True))
+        self._tb_btn_style = _BTN_STYLE
         def _itb(label: str, sp, theme_name: str = ""):
             b = QToolButton()
             b.setText(label)
             b.setIcon(_theme_icon(theme_name or f"btn_{label}", sp))
             b.setIconSize(QSize(24, 24))
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+                                 if _show_lbl else Qt.ToolButtonStyle.ToolButtonIconOnly)
             b.setAutoRaise(True)
-            b.setFixedHeight(46)
+            b.setFixedHeight(46 if _show_lbl else 32)
             b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             b.setStyleSheet(_BTN_STYLE)
+            b.setToolTip(label)          # 文字を消してもツールチップで判るように
             return b
 
         # 左側: スレタイ表示ラベル（stretch=1 で余白をすべて取る）
@@ -2282,9 +2287,11 @@ class BoardPane(QWidget):
         self._btn_move.setText("移動")
         self._btn_move.setIcon(_theme_icon("btn_move", _SP.SP_ArrowForward))
         self._btn_move.setIconSize(QSize(24, 24))
-        self._btn_move.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self._btn_move.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+                                          if _show_lbl else Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self._btn_move.setToolTip("移動")
         self._btn_move.setAutoRaise(True)
-        self._btn_move.setFixedHeight(46)
+        self._btn_move.setFixedHeight(46 if _show_lbl else 32)
         self._btn_move.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._btn_move.setStyleSheet(_BTN_STYLE)
         self._btn_move.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
@@ -2307,9 +2314,11 @@ class BoardPane(QWidget):
         self._btn_save.setText("保存")
         self._btn_save.setIcon(_theme_icon("btn_save", _SP.SP_DialogSaveButton))
         self._btn_save.setIconSize(QSize(24, 24))
-        self._btn_save.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self._btn_save.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+                                          if _show_lbl else Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self._btn_save.setToolTip("保存")
         self._btn_save.setAutoRaise(True)
-        self._btn_save.setFixedHeight(46)
+        self._btn_save.setFixedHeight(46 if _show_lbl else 32)
         self._btn_save.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._btn_save.setStyleSheet(_BTN_STYLE)
         self._btn_save.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
@@ -2438,6 +2447,28 @@ class BoardPane(QWidget):
             # このペイン配下にフォーカスがある時だけ効くよう限定する。
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self._sc_map[aid] = sc
+
+    def apply_toolbar_labels(self, settings=None):
+        """ツールバーの文字(キャプション)表示を設定に合わせて即時反映する。
+        OFF時はアイコンのみ表示＋ボタン高さを詰めてスッキリさせる。"""
+        s = settings or getattr(self, "_settings", None)
+        show = bool(getattr(s, 'toolbar_show_labels', True)) if s else True
+        style = (Qt.ToolButtonStyle.ToolButtonTextUnderIcon if show
+                 else Qt.ToolButtonStyle.ToolButtonIconOnly)
+        h = 46 if show else 32
+        for name in ("_btn_stop", "_btn_update", "_btn_reply", "_btn_new_thread",
+                     "_btn_move", "_btn_ar", "_btn_save", "_btn_close",
+                     "_btn_ng_settings"):
+            b = getattr(self, name, None)
+            if b is None:
+                continue
+            try:
+                if not b.toolTip():
+                    b.setToolTip(b.text())
+                b.setToolButtonStyle(style)
+                b.setFixedHeight(h)
+            except RuntimeError:
+                pass
 
     def update_shortcuts(self, settings):
         """設定変更後にショートカットキーを再設定する"""

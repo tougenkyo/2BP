@@ -4190,6 +4190,11 @@ class AppSettingsDialog(QDialog):
                              "フォルダを追加すると自動でリストに表示されます。")
         _theme_hint.setStyleSheet("color: gray; font-size: 11px;")
         tf2.addRow("", _theme_hint)
+        self._toolbar_show_labels = QCheckBox("ツールバーボタンに文字を表示する")
+        self._toolbar_show_labels.setToolTip(
+            "OFFにするとアイコンのみになり、ツールバーが縦に短くなります。\n"
+            "（文字を消してもマウスを乗せるとボタン名が出ます）")
+        tf2.addRow("", self._toolbar_show_labels)
 
         def _apply_theme_now(name: str):
             _TM.load(name)
@@ -4710,6 +4715,8 @@ class AppSettingsDialog(QDialog):
         self._theme_combo.blockSignals(True)
         self._theme_combo.setCurrentIndex(max(0, _theme_idx))
         self._theme_combo.blockSignals(False)
+        self._toolbar_show_labels.setChecked(
+            bool(getattr(s, "toolbar_show_labels", True)))
 
         # ログ保存
         self._log_dir.setText(getattr(s, "log_save_dir", ""))
@@ -4845,6 +4852,7 @@ class AppSettingsDialog(QDialog):
 
         # 外観
         s.theme                   = self._theme_combo.currentText()
+        s.toolbar_show_labels     = self._toolbar_show_labels.isChecked()
 
         # ログ保存
         s.log_save_dir            = self._log_dir.text().strip()

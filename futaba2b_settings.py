@@ -492,6 +492,7 @@ class AppSettings:
         self.catalog_sort_type: int        = 0
         self.catalog_sort_desc: bool       = False
         self.theme: str                    = "dark"  # "dark" or "light"
+        self.toolbar_show_labels: bool     = True    # ツールバーボタンの文字(キャプション)表示
         self.img_overlay_res: bool         = False   # 画像タブ「レス」オーバーレイ
         self.img_overlay_info: bool        = False   # 画像タブ「情報」オーバーレイ
         self.video_volume: int             = 80      # 動画音量 (0-100)
@@ -815,6 +816,7 @@ class AppSettings:
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
             self.id_warn_count = int(raw.get("id_warn_count", 5))
             self.theme = str(raw.get("theme", "dark"))
+            self.toolbar_show_labels = bool(raw.get("toolbar_show_labels", True))
             self.thread_open_mode    = int(raw.get("thread_open_mode", 0))
             self.thread_open_bg_mode = int(raw.get("thread_open_bg_mode", 0))
             self.image_display_mode  = int(raw.get("image_display_mode", 0))
@@ -1007,6 +1009,7 @@ class AppSettings:
                         "image_mode_cols": self.image_mode_cols,
                         "id_warn_count": self.id_warn_count,
                         "theme": self.theme,
+                        "toolbar_show_labels": self.toolbar_show_labels,
                         "thread_open_mode":    self.thread_open_mode,
                         "thread_open_bg_mode": self.thread_open_bg_mode,
                         "image_display_mode":  self.image_display_mode,

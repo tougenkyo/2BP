@@ -256,29 +256,69 @@ class MainWindow(QMainWindow):
 
     # ── UI 構築 ──────────────────────────────────────────────────────────────
 
+    def _apply_statusbar_theme(self):
+        """ステータスバーの配色をテーマから適用する。
+        ステータスバーとその子ラベルはウィジェット固有の setStyleSheet を持つため、
+        アプリ全体スタイル(QApplication.setStyleSheet)より優先され、テーマ切替時に
+        そのままでは色が変わらない。テーマ変更後にこれを呼んで再適用する。"""
+        _fg  = ThemeManager.ui('statusbar_fg', '#ccc')
+        _bg  = ThemeManager.ui('statusbar_bg', '#2d2d2d')
+        _brd = ThemeManager.ui('statusbar_border', '#555')
+        _pbg = ThemeManager.ui('progress_bg', '#444')
+        _pbd = ThemeManager.ui('btn_border', '#666')
+        _pck = ThemeManager.ui('progress_chunk', '#5588cc')
+        self._status.setStyleSheet(
+            f"QStatusBar{{background:{_bg};border-top:1px solid {_brd}}}"
+            "QStatusBar::item{border:none;}"
+            f"QStatusBar QLabel{{color:{_fg};padding:0 5px;font-size:8pt;}}"
+            f"QProgressBar{{max-height:14px;font-size:7pt;color:{_fg};"
+            f"background:{_pbg};border:1px solid {_pbd};border-radius:2px;}}"
+            f"QProgressBar::chunk{{background:{_pck}}}")
+        # 個別に setStyleSheet 済みの子（ラベル/セパレータ/プログレスバー）も更新する
+        _lbl_css = f"color:{_fg}; padding:0 5px; font-size:8pt;"
+        for _n in ("_st_viewers", "_st_expiry", "_st_saved", "_st_momentum",
+                   "_st_rescount", "_st_log", "_st_scroll"):
+            _w = getattr(self, _n, None)
+            if _w is not None:
+                try:
+                    _w.setStyleSheet(_lbl_css)
+                except RuntimeError:
+                    pass
+        _sep_css = f"background:{ThemeManager.ui('text_muted','#888')};"
+        for _w in getattr(self, "_st_seps", []):
+            try:
+                _w.setStyleSheet(_sep_css)
+            except RuntimeError:
+                pass
+        _pb = getattr(self, "_st_progress", None)
+        if _pb is not None:
+            try:
+                _pb.setStyleSheet(
+                    f"QProgressBar{{color:{_fg};background:{_pbg};border:1px solid {_pbd};"
+                    f"border-radius:2px;font-size:7pt;text-align:center;}}"
+                    f"QProgressBar::chunk{{background:{_pck}}}")
+            except RuntimeError:
+                pass
+
     def _build_ui(self):
         self._status = QStatusBar()
         self._status.setSizeGripEnabled(False)
         self.setStatusBar(self._status)
 
         # ── ステータスバー: 左寄せ・白文字・UIセパレータ ────────────────────
-        self._status.setStyleSheet(
-            f"QStatusBar{{background:{ThemeManager.ui('statusbar_bg','#2d2d2d')};border-top:1px solid {ThemeManager.ui('statusbar_border','#555')}}}"
-            "QStatusBar::item{border:none;}"
-            f"QStatusBar QLabel{{color:{ThemeManager.ui('statusbar_fg','#ccc')};padding:0 5px;font-size:8pt;}}"
-            f"QProgressBar{{max-height:14px;font-size:7pt;color:{ThemeManager.ui('statusbar_fg','#ccc')};"
-            f"background:{ThemeManager.ui('progress_bg','#444')};border:1px solid {ThemeManager.ui('btn_border','#666')};border-radius:2px;}}"
-            f"QProgressBar::chunk{{background:{ThemeManager.ui('progress_chunk','#5588cc')}}}")
+        self._apply_statusbar_theme()
 
         def _lbl(txt=""):
             w = QLabel(txt)
             w.setStyleSheet(f"color:{ThemeManager.ui('statusbar_fg','#ccc')}; padding:0 5px; font-size:8pt;")
             return w
 
+        self._st_seps = []          # テーマ再適用で色を更新するため保持
         def _sep():
             w = QWidget()
             w.setFixedSize(1, 14)
             w.setStyleSheet(f"background:{ThemeManager.ui('text_muted','#888')};")
+            self._st_seps.append(w)
             return w
 
         self._st_viewers  = _lbl()
@@ -4597,6 +4637,12 @@ class MainWindow(QMainWindow):
             pane = self._outer_tabs.widget(i)
             if isinstance(pane, BoardPane) and hasattr(pane, 'update_shortcuts'):
                 pane.update_shortcuts(self._settings)
+            # ツールバーの文字表示ON/OFFを即時反映
+            if isinstance(pane, BoardPane) and hasattr(pane, 'apply_toolbar_labels'):
+                pane.apply_toolbar_labels(self._settings)
+        # テーマ変更をステータスバーへ再適用（個別styleSheetはアプリ全体スタイルより
+        # 優先されるため、明示的に塗り直さないと色が変わらない）
+        self._apply_statusbar_theme()
         # 最近閉じたスレ・最近開いた画像のリストを新しいmax件数でトリム
         _max_closed = getattr(self._settings, "recent_closed_max", 30)
         if len(self._closed_tabs) > _max_closed:
