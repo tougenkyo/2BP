@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.285"
+APP_VER = "0.9.286"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -313,6 +313,7 @@ class _DebugPage(QWebEnginePage):
 class _ImageWebView(QWebEngineView):
     """ImageTabView 用 QWebEngineView：右クリックメニューをカスタマイズする。"""
     copy_image_requested = Signal(str)   # 画像URLを親に通知
+    save_image_requested = Signal(str)   # 画像URLを親に通知（保存ダイアログ）
 
     def _current_remote_url(self) -> str:
         """表示中画像の元(リモート)URL。ローカルキャッシュ表示時はページ/メディアが
@@ -341,7 +342,6 @@ class _ImageWebView(QWebEngineView):
 
         std = self.createStandardContextMenu()
         keep = []
-        save_image_act = None
         copy_img_addr_act = None
         for act in std.actions():
             t = act.text().replace("&", "")
@@ -350,8 +350,7 @@ class _ImageWebView(QWebEngineView):
             if on_image and t in REMOVE_ON_IMAGE:
                 continue
             if t == "Save image":
-                save_image_act = act
-                continue
+                continue      # 自前の「画像を保存…」に置き換えるため除外
             if t == "Copy image address":
                 copy_img_addr_act = act
                 continue
@@ -367,15 +366,19 @@ class _ImageWebView(QWebEngineView):
             act_ext = menu.addAction("外部で開く")
             act_ext.triggered.connect(lambda: __import__('webbrowser').open(img_url))
             menu.addSeparator()
-            if save_image_act:
-                save_image_act.setText("画像を保存")
-                menu.addAction(save_image_act)
+            # Qt標準の "Save image" はダウンロード要求になり保存ダイアログが出ない
+            # ことがあるため、自前で保存先を選ばせる項目に置き換える。
+            save_act = menu.addAction("画像を保存…")
+            save_act.triggered.connect(
+                lambda _checked=False, _u=img_url: self.save_image_requested.emit(str(_u or "")))
             copy_act = menu.addAction("画像をコピー")
             copy_act.triggered.connect(
                 lambda: self.copy_image_requested.emit(img_url))
-            def _copy_addr(_u=img_url):
+            # triggered は checked(bool) を渡すため、第1引数で受けてから使う。
+            # デフォルト引数で URL を受けると bool で上書きされて TypeError になる。
+            def _copy_addr(_checked=False, _u=img_url):
                 from PySide6.QtWidgets import QApplication
-                QApplication.clipboard().setText(_u)
+                QApplication.clipboard().setText(str(_u or ""))
             addr_act = menu.addAction("画像アドレスをコピー")
             addr_act.triggered.connect(_copy_addr)
             if keep:
@@ -10817,6 +10820,7 @@ class ImageTabView(QWidget):
         self._view.loadFinished.connect(self._inject_fit_bridge)
         self._media_dl_done.connect(self._on_media_dl_done)
         self._view.copy_image_requested.connect(self._copy_image_to_clipboard)
+        self._view.save_image_requested.connect(self._save_image_as)
         self._sig_clip_image.connect(self._apply_clip_image)   # BG→メインでクリップボード反映
         lay.addWidget(self._view, 1)
 
@@ -12293,34 +12297,83 @@ class ImageTabView(QWidget):
             self._settings_ref.video_volume = v
             self._settings_ref.save()
 
+    def _read_image_bytes(self, url: str) -> bytes | None:
+        """画像の実体を取得する。ローカルキャッシュ優先→file://→data:→リモート。
+        コピー・保存で共用する（BGスレッドから呼ぶこと）。"""
+        lo = (url or "").lower()
+        if lo.startswith(("http://", "https://")):
+            try:
+                p = self._media_cache_path(url, 'img')
+                if p is not None and p.exists():
+                    return p.read_bytes()
+            except Exception:
+                pass
+            r = self._fetcher.session.get(url, timeout=(10, 30))
+            r.raise_for_status()
+            return r.content
+        if lo.startswith("file:"):
+            from urllib.parse import urlparse, unquote
+            pth = unquote(urlparse(url).path)
+            if pth.startswith("/") and len(pth) > 2 and pth[2] == ":":
+                pth = pth[1:]   # Windows: /C:/... → C:/...
+            with open(pth, "rb") as f:
+                return f.read()
+        if lo.startswith("data:"):
+            import base64
+            head, _, b64 = url.partition(",")
+            return base64.b64decode(b64) if ";base64" in head else b64.encode()
+        return None
+
+    def _save_image_as(self, url: str):
+        """右クリック「画像を保存…」: 保存先を選ばせてから保存する。"""
+        import os as _os, threading
+        from urllib.parse import urlparse, unquote
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        if not url:
+            return
+        # 既定のファイル名: URL末尾（data: は連番）
+        name = ""
+        if not url.lower().startswith("data:"):
+            name = _os.path.basename(unquote(urlparse(url).path)) or ""
+        if not name:
+            import datetime as _dt
+            name = f"image_{_dt.datetime.now():%Y%m%d_%H%M%S}.png"
+        # 保存先の初期フォルダは 前回の保存先 → 画像保存フォルダ設定(先頭) → ホーム
+        s = getattr(self, "_settings_ref", None)
+        _folders = list(getattr(s, "image_save_folders", []) or []) if s else []
+        start_dir = (getattr(s, "last_image_save_dir", "") if s else "") \
+            or (_folders[0] if _folders else "") \
+            or _os.path.expanduser("~")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "画像を保存", _os.path.join(start_dir, name),
+            "画像 (*.jpg *.jpeg *.png *.gif *.webp *.bmp);;全てのファイル (*)")
+        if not path:
+            return
+        def _do():
+            try:
+                data = self._read_image_bytes(url)
+                if not data:
+                    raise RuntimeError("画像を取得できませんでした")
+                with open(path, "wb") as f:
+                    f.write(data)
+                msg = f"保存しました: {_os.path.basename(path)}"
+            except Exception as e:
+                msg = f"保存に失敗しました: {e}"
+            self._sig_save_status.emit(msg)
+        # 次回の初期フォルダを記憶
+        if s is not None:
+            try:
+                s.last_image_save_dir = _os.path.dirname(path)
+                s.save()
+            except Exception:
+                pass
+        threading.Thread(target=_do, daemon=True).start()
+
     def _copy_image_to_clipboard(self, url: str):
         """画像をクリップボードへコピー。ローカルキャッシュ優先→file://→data:→リモート。"""
         import threading
         def _read_bytes() -> bytes | None:
-            lo = (url or "").lower()
-            # ローカルキャッシュ（data/img）があれば優先
-            if lo.startswith(("http://", "https://")):
-                try:
-                    p = self._media_cache_path(url, 'img')
-                    if p is not None and p.exists():
-                        return p.read_bytes()
-                except Exception:
-                    pass
-                r = self._fetcher.session.get(url, timeout=(10, 30))
-                r.raise_for_status()
-                return r.content
-            if lo.startswith("file:"):
-                from urllib.parse import urlparse, unquote
-                pth = unquote(urlparse(url).path)
-                if pth.startswith("/") and len(pth) > 2 and pth[2] == ":":
-                    pth = pth[1:]   # Windows: /C:/... → C:/...
-                with open(pth, "rb") as f:
-                    return f.read()
-            if lo.startswith("data:"):
-                import base64
-                head, _, b64 = url.partition(",")
-                return base64.b64decode(b64) if ";base64" in head else b64.encode()
-            return None
+            return self._read_image_bytes(url)
         def _fetch():
             try:
                 data = _read_bytes()

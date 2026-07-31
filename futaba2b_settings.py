@@ -427,6 +427,7 @@ class AppSettings:
         self.log_auto_save_full:     bool = False  # 1000レス到達時にも自動保存する
         # ── 画像保存フォルダ ─────────────────────────────────────────────────
         self.image_save_folders: list = []   # 保存先フォルダリスト（先頭がデフォルト）
+        self.last_image_save_dir: str = ""   # 右クリック「画像を保存…」で最後に選んだ保存先
         self.image_save_btn_wrap: int = 3    # フォルダボタンの折り返し列数
         self.image_save_label_len: int = 0   # ボタンラベルの最大文字数（0=全表示）
         self.img_bulk_close_on_save: bool = True  # 画像モード一括保存: 保存したら選択モードを閉じる
@@ -863,6 +864,7 @@ class AppSettings:
             self.bouyomi_voice   = int(raw.get("bouyomi_voice",   0))
             self.bouyomi_format  = raw.get("bouyomi_format", "{comment}")
             self.log_save_dir    = raw.get("log_save_dir",    "")
+            self.last_image_save_dir = raw.get("last_image_save_dir", "")
             self.log_save_images = raw.get("log_save_images", True)
             self.log_save_no_thumb = raw.get("log_save_no_thumb", False)
             self.log_save_videos = raw.get("log_save_videos", True)
@@ -1047,6 +1049,7 @@ class AppSettings:
                         "bouyomi_voice":   self.bouyomi_voice,
                         "bouyomi_format":  self.bouyomi_format,
                         "log_save_dir":    self.log_save_dir,
+                        "last_image_save_dir": self.last_image_save_dir,
                         "log_save_images": self.log_save_images,
                         "log_save_no_thumb": self.log_save_no_thumb,
                         "log_save_videos": self.log_save_videos,
