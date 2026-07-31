@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.284"
+APP_VER = "0.9.285"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11033,6 +11033,18 @@ class ImageTabView(QWidget):
         try:
             if not self._view.isVisible():
                 return
+            # DOM側でも再描画を促す。ウインドウが背面/未露出だとサイズジグルだけでは
+            # コンポジタが新フレームを出さず、前の画像が残ることがある
+            # （拡大縮小など次の操作で初めて切り替わる）。transform をわずかに
+            # 変えて戻すことで、リサイズが効かない状況でも合成をやり直させる。
+            try:
+                self._view.page().runJavaScript(
+                    "(function(){var e=document.getElementById('img');if(!e)return;"
+                    "e.style.transform='translateZ(0)';"
+                    "void e.offsetHeight;"
+                    "requestAnimationFrame(function(){e.style.transform='';});})();")
+            except Exception:
+                pass
             sz = self._view.size()
             self._view.resize(sz.width(), sz.height() + 1)
             QTimer.singleShot(0, lambda s=sz: self._restore_after_jiggle(s))
@@ -11609,6 +11621,12 @@ class ImageTabView(QWidget):
                     # コンポジットされない（ウインドウ移動でしか直らない）問題への対処。
                     "  el.onload=function(){if(window._imgSeq!==_sq)return;document.title='__imgloaded__:'+_sq;};"
                     "  el.src=tmp.src;"
+                    # キャッシュ済み画像は src 代入で load が発火しないことがあり、
+                    # その場合 __imgloaded__ が来ず強制再コンポジットが走らないため
+                    # 前の画像が residual として残る（拡大縮小で直る）。
+                    # 既にデコード済み(complete)なら自前で通知する。
+                    "  setTimeout(function(){if(window._imgSeq!==_sq)return;"
+                    "    if(el.complete&&el.naturalWidth)document.title='__imgloaded__:'+_sq;},0);"
                     "  el.style.maxWidth='none';el.style.maxHeight='none';"
                     "  el.style.display='block';el.style.margin='auto';"
                     "  if(nw>0&&nh>0){" + _size_js + "}"
@@ -11616,11 +11634,28 @@ class ImageTabView(QWidget):
                     "};"
                     "tmp.onerror=function(){if(window._imgSeq!==_sq)return;"
                     "el.onload=function(){document.title='__imgloaded__:'+_sq;};"
-                    "el.src=" + _esc + ";el.style.visibility='visible';};"
+                    "el.src=" + _esc + ";el.style.visibility='visible';"
+                    "setTimeout(function(){if(window._imgSeq!==_sq)return;"
+                    "if(el.complete&&el.naturalWidth)document.title='__imgloaded__:'+_sq;},0);};"
                     "tmp.src=" + _esc + ";"
                     "})()"
                 )
                 self._view.page().runJavaScript(swap_js)
+                # 保険: __imgloaded__ 通知が何らかの理由で届かなくても、
+                # 少し遅れて強制再コンポジットして前の画像の残留を防ぐ。
+                # （最新のswapでなくなっていたら何もしない）
+                _seq_now = self._media_seq
+                def _late_recomposite(_s=_seq_now):
+                    if getattr(self, "_media_seq", None) != _s:
+                        return
+                    try:
+                        from shiboken6 import isValid as _iv
+                        if not _iv(self):
+                            return
+                    except Exception:
+                        pass
+                    self._force_recomposite()
+                QTimer.singleShot(320, _late_recomposite)
                 # アトミック適用済みのため pending は不要
                 self._pending_fit = False
                 self._pending_zoom = None
