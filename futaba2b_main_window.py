@@ -497,6 +497,8 @@ class MainWindow(QMainWindow):
             "reply":            "Ctrl+D",
             "close_tab":        "Ctrl+W",
             "reopen_tab":       "Ctrl+Shift+T",
+            "prev_tab":         "Ctrl+PgUp",
+            "next_tab":         "Ctrl+PgDown",
             "find_in_view":     "Ctrl+F",
             "extract_focus":    "Ctrl+Shift+F",
             "open_log":         "Ctrl+Shift+O",
@@ -543,6 +545,11 @@ class MainWindow(QMainWindow):
         bm.addAction(QAction("閉じたタブを開き直す(&Z)", self,
                              triggered=self._reopen_closed_tab,
                              shortcut=_sc("reopen_tab")))
+        bm.addSeparator()
+        bm.addAction(QAction("左のタブへ移動(&P)", self,
+                             triggered=self._prev_tab, shortcut=_sc("prev_tab")))
+        bm.addAction(QAction("右のタブへ移動(&N)", self,
+                             triggered=self._next_tab, shortcut=_sc("next_tab")))
         bm.addSeparator()
         _find_hint = _sc("find_in_view").toString() or "Ctrl+F"
         bm.addAction(QAction(f"スレ内を検索(&F)\t{_find_hint}", self,
@@ -2239,6 +2246,23 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             inner.removeTab(idx)
             _dispose_tab_view(view)
+
+    def _step_tab(self, delta: int):
+        """スレタブを左右に移動する。端まで来たら反対の端へ回り込む。
+        板ペインが無い時（ようこそタブ等）は板タブを移動対象にする。"""
+        inner = self._active_inner()
+        tabs  = inner if inner is not None else self._outer_tabs
+        n = tabs.count()
+        if n < 2:
+            return
+        cur = tabs.currentIndex()
+        tabs.setCurrentIndex((cur + delta) % n)
+
+    def _prev_tab(self):
+        self._step_tab(-1)
+
+    def _next_tab(self):
+        self._step_tab(+1)
 
     def _close_current_tab(self):
         inner = self._active_inner()

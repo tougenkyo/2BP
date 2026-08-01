@@ -4596,6 +4596,8 @@ class AppSettingsDialog(QDialog):
             ("reply",           "返信ダイアログを開く",             "Ctrl+D"),
             ("close_tab",       "このビューを閉じる",               "Ctrl+W"),
             ("reopen_tab",      "閉じたタブを開き直す",             "Ctrl+Shift+T"),
+            ("prev_tab",        "左のタブへ移動",                   "Ctrl+PgUp"),
+            ("next_tab",        "右のタブへ移動",                   "Ctrl+PgDown"),
             ("find_in_view",    "ページ内検索",                     "Ctrl+F"),
             ("extract_focus",   "抽出フィールドにフォーカス",       "Ctrl+Shift+F"),
             ("open_log",        "ログを開く",                       "Ctrl+Shift+O"),
