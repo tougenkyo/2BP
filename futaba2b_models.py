@@ -112,6 +112,10 @@ class CatalogEntry:
     is_red: bool = False         # 赤字スレ判定（サーバー側）
     is_quasi_red: bool = False   # 仮赤字（残り10%以下）
     is_quarantine: bool = False  # 隔離スレ（mode=cat にあって mode=json に無い）
+    # オンマウス表示用のOP本文（mode=json の com を素テキスト化したもの）。
+    # title はカタログHTML由来で板の「文字数」までしか無いため、ホバー表示だけ
+    # こちらを使う。NG判定・カタログのセル文字は従来どおり title を使う。
+    op_comment: str = ""
     board: Optional[BoardInfo] = None
 
 

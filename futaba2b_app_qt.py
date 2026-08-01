@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.290"
+APP_VER = "0.9.291"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1207,6 +1207,23 @@ def _img_mode_css(cols: int) -> str:
             "#_selbar ._selgrp{display:inline-flex}"
             "#_selbar ._selgrp button{padding:3px 7px}"
             "#_selbar label{cursor:pointer;user-select:none;white-space:nowrap}")
+
+
+# カタログのオンマウス本文の上限文字数。板の「文字数」とは無関係にOP全文を
+# 出すが、極端に長いスレでポップアップが画面を覆わないようここで打ち切る。
+_HOVER_COMMENT_MAX = 1000
+
+
+def _json_com_to_text(com: str) -> str:
+    """mode=json の com（HTML）を素テキストにする。<br>は改行として残す。
+    カタログのオンマウス本文・隔離スレ見出しの共通処理。"""
+    import re as _re, html as _hh
+    t = _re.sub(r'<br\s*/?>', '\n', str(com or ''), flags=_re.I)
+    t = _re.sub(r'<[^>]+>', '', t)
+    t = _hh.unescape(t).replace('\r', '')
+    # 3行以上の連続空行だけ詰める（原文の段落は保つ）
+    t = _re.sub(r'\n{3,}', '\n\n', t)
+    return t.strip()
 
 
 def _mouse_gesture_js(enabled: bool = False, step: int = 30,
@@ -8047,8 +8064,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._hover_popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._hover_popup.setStyleSheet(
             f"QLabel{{background:{_TM.thread('id_popup_bg','#FFFFEE')};border:1px solid {_TM.thread('id_popup_border','#800000')};"
-            "padding:4px;font-size:9pt;max-width:300px;}")
+            "padding:4px;font-size:9pt;max-width:420px;}")
         self._hover_popup.setWordWrap(True)
+        self._hover_popup.setMaximumWidth(420)   # OP全文表示のため横に伸びすぎないよう固定
         self._hover_popup.hide()
         self._hover_img_popup = QWidget()
         self._hover_img_popup.setWindowFlags(
@@ -8065,8 +8083,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._hover_img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hover_txt_lbl = QLabel()
         self._hover_txt_lbl.setWordWrap(True)
-        self._hover_txt_lbl.setStyleSheet(f"font-size:9pt;max-width:250px;color:{_TM.thread('body_fg','#800000')};")
-        self._hover_txt_lbl.setMaximumWidth(250)
+        self._hover_txt_lbl.setStyleSheet(f"font-size:9pt;max-width:380px;color:{_TM.thread('body_fg','#800000')};")
+        self._hover_txt_lbl.setMaximumWidth(380)
         _hov_lay.addWidget(self._hover_img_lbl)
         _hov_lay.addWidget(self._hover_txt_lbl)
         self._hover_img_popup.hide()
@@ -8122,6 +8140,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
         from PySide6.QtGui import QCursor
         cursor_pos = QCursor.pos()
         offset_x, offset_y = 16, 16
+
+        # 本文は mode=json のOP全文。極端に長いスレでポップアップが画面を
+        # 覆わないよう、この長さで打ち切る（通常のスレはまず収まる）。
+        if comment and len(comment) > _HOVER_COMMENT_MAX:
+            comment = comment[:_HOVER_COMMENT_MAX].rstrip() + "…"
 
         # _hover_txt_lbl に常にテキストをセット（zoom_on時は画像の下に表示）
         self._hover_txt_lbl.setText(comment if comment else "")
@@ -8424,6 +8447,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
                     if _ji.get("email"):
                         _e_ent.email = _ji["email"]
                     _e_ent.op_id = _ji.get("id", "")
+                    # オンマウス表示用のOP本文（title はカタログHTML由来のまま）
+                    _e_ent.op_comment = _json_com_to_text(_ji.get("com", ""))
             # 隔離スレNo集合（json∖cat）を算出。タブのオレンジ判定用で、
             # 「最下部にまとめる」表示設定(catalog_quarantine_bottom)とは独立に持つ。
             if self._catalog_json_nos:
@@ -8531,13 +8556,10 @@ class CatalogView(_MouseGestureMixin, QWidget):
     def _make_quarantine_entry(self, no: int, ji: dict) -> CatalogEntry:
         """json専用スレ（隔離スレ）から合成カタログエントリを作る。
         ※ json にレス数は無いため res_count=0（カタログ未掲載のため不明）。"""
-        import re as _re, html as _hh
         com = (ji.get("com", "") or "")
         sub = (ji.get("sub", "") or "").strip()
-        # com の HTML を素テキスト化（<br>→空白、タグ除去、実体参照復元）
-        t = _re.sub(r'<br\s*/?>', ' ', com, flags=_re.I)
-        t = _re.sub(r'<[^>]+>', '', t)
-        t = _hh.unescape(t).strip()
+        # com の HTML を素テキスト化（title 用は1行に潰す）
+        t = _json_com_to_text(com).replace("\n", " ").strip()
         if sub and sub not in ("無念",):
             title = (sub + " " + t).strip()
         else:
@@ -8552,6 +8574,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             email      = ji.get("email", ""),
             op_id      = ji.get("id", ""),
             is_quarantine = True,
+            op_comment = _json_com_to_text(com),   # ホバー表示用（改行を保持した全文）
             board      = board,
         )
 
@@ -8592,6 +8615,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
                     e.email = _em; changed = True
                 if e.op_id != _id:
                     e.op_id = _id; changed = True
+                # オンマウス表示用のOP本文。カタログHTMLは板の「文字数」までしか
+                # 本文を含まないため、ホバーだけ json の全文を使う。
+                _cm = _json_com_to_text(ji.get("com", ""))
+                if _cm and e.op_comment != _cm:
+                    e.op_comment = _cm; changed = True
         # 2) 隔離スレ（json∖cat）を合成して最下部用に同期
         if getattr(self._settings, 'catalog_quarantine_bottom', True):
             real = [e for e in self._all_entries if not getattr(e, 'is_quarantine', False)]

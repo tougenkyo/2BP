@@ -2456,12 +2456,15 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             # 「Uncaught SyntaxError: Invalid or unexpected token」になり、
             # そのページのJS（ポップアップ/スクロール更新等）が全て止まっていた。
             # U+2028/2029 はJS文字列リテラル内で改行扱いになるため除去する。
+            # 改行は \n としてJSリテラルに残し、ポップアップで元の行を保つ。
             def _js_str(v: str) -> str:
                 return (str(v or '')
                         .replace('\\', '\\\\').replace("'", "\\'")
-                        .replace('\r', '').replace('\n', ' ')
+                        .replace('\r', '').replace('\n', '\\n')
                         .replace(' ', ' ').replace(' ', ' '))
-            _raw_comment = _js_str(e.title)
+            # ホバー本文は mode=json のOP本文（全文）。未取得の板・スレでは
+            # 従来どおりカタログHTML由来の title にフォールバックする。
+            _raw_comment = _js_str(getattr(e, 'op_comment', '') or e.title)
             _raw_thumb   = _js_str(e.thumb_url)
             _raw_url     = _js_str(e.thread_url)
             _enter_js = (f"_b('catHoverEnter',"

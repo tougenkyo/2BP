@@ -4045,7 +4045,10 @@ class AppSettingsDialog(QDialog):
         g_cat_hover = QGroupBox("カタログ"); f0.addWidget(g_cat_hover)
         cat_hover_lay = QVBoxLayout(g_cat_hover)
         self._cat_hover_zoom    = QCheckBox("オンマウスでサムネイル画像を拡大表示する")
-        self._cat_hover_comment = QCheckBox("オンマウスでスレ本文（先頭120文字）を表示する")
+        self._cat_hover_comment = QCheckBox("オンマウスでスレ本文を表示する")
+        self._cat_hover_comment.setToolTip(
+            "スレ本文（OP）を表示します。板設定の「文字数」に関係なく本文全体を表示します。\n"
+            "非常に長いスレは末尾を省略します。")
         self._cat_mail_badge    = QCheckBox("メール欄/IDをサムネ右上にバッジ表示する")
         self._cat_quarantine    = QCheckBox("隔離スレを最下部に表示する")
         self._cat_common_id_bottom = QCheckBox("IDが出たスレを最下部に表示する")
@@ -5634,7 +5637,7 @@ class BoardSettingsDialog(QDialog):
         g_cat = QGroupBox("カタログ表示"); f1.addWidget(g_cat); cf = QFormLayout(g_cat)
         self._cat_cols  = _spin(1, 100); cf.addRow("横スレ数 (初期値:14):", self._cat_cols)
         self._cat_rows  = _spin(1, 100); cf.addRow("縦スレ数 (初期値:6):",  self._cat_rows)
-        self._cat_chars = _spin(0, 100); cf.addRow("文字数 (初期値:4):",    self._cat_chars)
+        self._cat_chars = _spin(0, 150); cf.addRow("文字数 (初期値:4):",    self._cat_chars)
 
         pos_w = QWidget(); pos_lay = QHBoxLayout(pos_w); pos_lay.setContentsMargins(0,0,0,0)
         self._pos_group = QButtonGroup(self)
