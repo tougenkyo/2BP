@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.289"
+APP_VER = "0.9.290"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1209,12 +1209,18 @@ def _img_mode_css(cols: int) -> str:
             "#_selbar label{cursor:pointer;user-select:none;white-space:nowrap}")
 
 
-def _mouse_gesture_js(enabled: bool = False, step: int = 30) -> str:
+def _mouse_gesture_js(enabled: bool = False, step: int = 30,
+                      via_title: bool = False) -> str:
     """マウスジェスチャー（右ドラッグの軌跡）認識JS。
     右ボタン押下→移動で方向列(↑↓←→)を作り、離した時に _b('mouseGesture',[列]) を
     通知する。同方向の連続は1つにまとめる。ジェスチャー成立時は contextmenu を
     抑止して右クリックメニューを出さない（不成立＝ただの右クリックなら通常表示）。
-    移動中は画面右下に軌跡を表示する。"""
+    移動中は画面右下に軌跡を表示する。
+
+    via_title=True: QWebChannel を持たないページ（画像タブ）用に、
+    document.title='__mg__:<列>' で通知する（titleChanged で受け取る）。"""
+    _notify = ("document.title='__mg__:'+seq.join('');" if via_title
+               else "if(typeof _b==='function')_b('mouseGesture',[seq.join('')]);")
     return (
         "(function(){"
         "if(window._mgInit)return; window._mgInit=true;"
@@ -1244,9 +1250,10 @@ def _mouse_gesture_js(enabled: bool = False, step: int = 30) -> str:
         "document.addEventListener('mouseup',function(ev){"
         "if(!on||ev.button!==2)return;"
         "on=false;hide();"
-        "if(seq.length&&typeof _b==='function'){"
+        "if(seq.length){"
         "window._mgFired=Date.now();"          # contextmenu 抑止の目印
-        "_b('mouseGesture',[seq.join('')]);}"
+        + _notify +
+        "}"
         "seq=[];},true);"
         # ジェスチャーが成立した直後の contextmenu は出さない
         "document.addEventListener('contextmenu',function(ev){"
@@ -1259,18 +1266,27 @@ def _mouse_gesture_js(enabled: bool = False, step: int = 30) -> str:
 
 
 class _MouseGestureMixin:
-    """右ドラッグのマウスジェスチャーを扱う（ThreadView / CatalogView 共通）。
-    JS側で方向列を作り、_b('mouseGesture',[列]) で通知される。"""
+    """右ドラッグのマウスジェスチャーを扱う（ThreadView / CatalogView / ImageTabView 共通）。
+    JS側で方向列を作り、_b('mouseGesture',[列]) で通知される。
+    QWebChannel を持たない画像タブは _MG_VIA_TITLE=True で document.title 経由。"""
+
+    _MG_VIA_TITLE = False
+
+    def _mg_settings(self):
+        """設定オブジェクトを返す。保持している属性名がビューごとに違うため吸収する。
+        （ThreadView/CatalogView: _settings、ImageTabView: _settings_ref）"""
+        return getattr(self, "_settings", None) or getattr(self, "_settings_ref", None)
 
     def inject_mouse_gesture_js(self):
         """表示中ページへジェスチャー認識JSを注入する（読込完了ごとに呼ぶ）。"""
-        s = getattr(self, "_settings", None)
+        s = self._mg_settings()
         en = bool(getattr(s, "mouse_gesture_enabled", False)) if s else False
-        _safe_run_js(getattr(self, "_view", None), _mouse_gesture_js(en))
+        _safe_run_js(getattr(self, "_view", None),
+                     _mouse_gesture_js(en, via_title=self._MG_VIA_TITLE))
 
     def apply_mouse_gesture_setting(self):
         """設定変更を表示中ページへ即時反映する（再読込不要）。"""
-        s = getattr(self, "_settings", None)
+        s = self._mg_settings()
         en = bool(getattr(s, "mouse_gesture_enabled", False)) if s else False
         _safe_run_js(getattr(self, "_view", None),
                      "if(window._mgSetEnabled)window._mgSetEnabled(%s);"
@@ -1278,7 +1294,7 @@ class _MouseGestureMixin:
 
     def _on_mouse_gesture(self, seq: str):
         """ジェスチャー成立 → 割り当てアクションを実行する。"""
-        s = getattr(self, "_settings", None)
+        s = self._mg_settings()
         if not s or not getattr(s, "mouse_gesture_enabled", False):
             return
         from futaba2b_models import MOUSE_GESTURE_DEFAULTS
@@ -10693,7 +10709,9 @@ class AutoRefreshDialog(QDialog):
         super().closeEvent(event)
 
 
-class ImageTabView(QWidget):
+class ImageTabView(_MouseGestureMixin, QWidget):
+    # 画像ページは QWebChannel を持たないため document.title 経由で通知する
+    _MG_VIA_TITLE = True
     # バックグラウンドスレッド → メインスレッドへのシグナル（スレッドセーフ）
     _sig_mp4_ready    = Signal(str)   # ダウンロード完了 → ローカルパス
     _sig_mp4_progress = Signal(str)   # 進捗テキスト
@@ -12035,10 +12053,34 @@ class ImageTabView(QWidget):
         self._set_zoom_pct(100)
 
 
+    def _run_gesture_action(self, action: str):
+        """画像タブのジェスチャー実行。画像表示モード=ウインドウ の時は板ペインに
+        属さないため共通の実行系が使えない。閉じる系だけウインドウを閉じる動作に
+        読み替え、他は何もしない（誤爆で予期しない操作が走らないようにする）。"""
+        if self._main_window() is None:
+            if action in ("close_tab", "close_all_tabs"):
+                win = self.window()
+                if win is not None:
+                    win.close()
+            return
+        super()._run_gesture_action(action)
+
     def _inject_fit_bridge(self, ok: bool):
         """loadFinished後にtitleChangedをfit通知として接続（初回のみ）"""
         if not ok:
             return
+        # マウスジェスチャー認識JSを注入する。動画ページでも効くよう、下の
+        # 静止画向け処理より前で行う。
+        self.inject_mouse_gesture_js()
+        # title によるJS→Python通知の接続。ジェスチャーもこの経路を使うため、
+        # 動画ページ用の early return より前で接続しておく。
+        if getattr(self, '_fit_title_connected', False):
+            try:
+                self._view.page().titleChanged.disconnect(self._on_fit_title)
+            except Exception:
+                pass
+        self._view.page().titleChanged.connect(self._on_fit_title)
+        self._fit_title_connected = True
         # 動画ページは #img 用のJS差し替え・フィット対象外。可視化は専用の
         # インラインJSが行う。ここで _img_page_ready を True にすると次ナビが
         # src差し替え経路に入り、#img を持たない動画ページ上で空振りして
@@ -12050,13 +12092,6 @@ class ImageTabView(QWidget):
         self._img_page_ready = True
         # setHtml 経路（初回/動画→静止画）の読込完了 → 砂時計を消す
         self._hide_img_spinner()
-        if getattr(self, '_fit_title_connected', False):
-            try:
-                self._view.page().titleChanged.disconnect(self._on_fit_title)
-            except Exception:
-                pass
-        self._view.page().titleChanged.connect(self._on_fit_title)
-        self._fit_title_connected = True
         # 画像読み込み完了後にフィットを適用（小さい画像でも正しく拡大）
         # %指定で継承した場合はnaturalWidth取得後にpx適用
         if getattr(self, "_pending_zoom", None):
@@ -12124,6 +12159,11 @@ class ImageTabView(QWidget):
 
     def _on_fit_title(self, title: str):
         """titleを使ったJS→Python通知を受け取る"""
+        if title.startswith("__mg__:"):
+            # マウスジェスチャー成立（画像タブはQWebChannelを持たないためtitle経由）
+            self._view.page().runJavaScript("document.title='';")
+            self._on_mouse_gesture(title.split(":", 1)[1])
+            return
         if title == "__imgloaded__" or title.startswith("__imgloaded__:"):
             self._hide_img_spinner()
             self._force_recomposite()   # 新画像ロード完了 → 強制再描画でフレーム残留を防ぐ
