@@ -2956,8 +2956,56 @@ class MainWindow(QMainWindow):
                 print(f"[LOG] 原本htmレス不足 raw≈{raw_n} < model={model_n} "
                       f"→ 不足レスを生htm形式で補完")
                 raw = self._append_missing_res_raw(raw, thread, raw_n)
+        raw = self._apply_sodane_to_raw(raw, thread)
         return self._set_log_title(
             self._strip_nosave_images(self._strip_futaba_ads(raw), thread), thread)
+
+    # 生htm内のそうだねリンク: <a ... class=sod id=sd12345>そうだねx7</a> / >+</a>
+    _SOD_ANCHOR_RE = re.compile(
+        r'<a\b([^>]*\bid=["\']?sd(\d+)["\']?[^>]*)>(.*?)</a>',
+        re.IGNORECASE | re.DOTALL)
+    _SOD_TEXT_RE = re.compile(r"そうだねx(\d+)")
+
+    def _apply_sodane_to_raw(self, raw: str, thread) -> str:
+        """生htmのそうだね数をモデルの最新値で書き戻す。
+
+        自動更新は差分APIのみで生htmキャッシュを更新しないため、スレ落ち時の
+        自動保存では fetch_raw_thread_html が404→キャッシュへフォールバックし、
+        そうだね数がスレを開いた時点の古い値のまま保存されてしまう。
+        （差分から補完したレスも生成時は常に「+」になる）
+        モデル(res.sodane)は差分APIのsd値で更新され続けているため、これを反映する。
+        原本htmの方が新しいこともあるので、大きい方を採用して減少させない。"""
+        if not raw or not getattr(thread, "res_list", None):
+            return raw
+        model = {}
+        for r in thread.res_list:
+            try:
+                model[int(r.no)] = int(getattr(r, "sodane", 0) or 0)
+            except (TypeError, ValueError):
+                pass
+        if not model:
+            return raw
+
+        def _sub(m):
+            attrs, no_s, inner = m.group(1), m.group(2), m.group(3)
+            if "sod" not in attrs.lower():
+                return m.group(0)
+            try:
+                cnt = model[int(no_s)]
+            except (KeyError, ValueError):
+                return m.group(0)
+            cur = self._SOD_TEXT_RE.search(inner)
+            if cur:
+                cnt = max(cnt, int(cur.group(1)))
+            if cnt <= 0:
+                return m.group(0)
+            return f"<a{attrs}>そうだねx{cnt}</a>"
+
+        try:
+            return self._SOD_ANCHOR_RE.sub(_sub, raw)
+        except Exception as e:
+            print(f"[LOG] そうだね反映エラー: {e}")
+            return raw
 
     def _op_thread_name(self, thread) -> str:
         """0レスめ(OP)のスレ名（ブラウザtitle用）。OPコメント先頭の有効行→題名→
@@ -3073,6 +3121,12 @@ class MainWindow(QMainWindow):
             )
             bq_style = ' style="margin-left:286px;"'
         comment = res.comment_html or ""
+        # そうだね数（0なら原本と同じ「+」表記）
+        try:
+            _sod_n = int(getattr(res, "sodane", 0) or 0)
+        except (TypeError, ValueError):
+            _sod_n = 0
+        _sod_txt = f"そうだねx{_sod_n}" if _sod_n > 0 else "+"
         return (
             f"<table border=0><tr><td class=rts>…</td><td class=rtd>"
             f'<span id="delcheck{no}" class="rsc">{rsc}</span>'
@@ -3081,7 +3135,7 @@ class MainWindow(QMainWindow):
             f'<span class="cnw">{cnw}</span>'
             f'<span class="cno">No.{no}</span>'
             f'<a href="javascript:void(0);" onclick="sd({no});return(false);" '
-            f'class=sod id=sd{no}>+</a>'
+            f'class=sod id=sd{no}>{_sod_txt}</a>'
             f"{img_part}"
             f"<blockquote{bq_style}>{comment}</blockquote>"
             f"</td></tr></table>\n"
