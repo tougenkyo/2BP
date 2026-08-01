@@ -1025,6 +1025,7 @@ class PostDialog(QDialog):
         self._img_path   = ""
         self._img_is_tmp = False
         self._clip_image = None      # クリップボード貼付時の元QImage（品質再適用用）
+        self._post_inflight = False  # POST送信スレッドが動作中か（二重投稿防止）
         self._on_success = on_success
         self._result_signal.connect(self._on_result)
         self.setAcceptDrops(True)  # D&Dを有効化
@@ -2090,6 +2091,12 @@ document.addEventListener('keydown',function(e){{
         event.ignore()
 
     def _post(self):
+        # 送信中の再実行を弾く（二重投稿防止）。
+        # 投稿ボタンは送信中 setEnabled(False) になるが、Shift+Enter は
+        # _CommentEdit.keyPressEvent から直接ここへ来るためボタンの無効化を
+        # 経由しない。連打すると POST が2回飛んでいた。
+        if not self._btn_post.isEnabled():
+            return
         text = self._comment.toPlainText().strip()
         # 記憶チェックの状態を保存（チェックONの時のみ値も保存）
         self._settings.post_save_name = self._chk_save_name.isChecked()
@@ -2107,10 +2114,26 @@ document.addEventListener('keydown',function(e){{
         # 手書きタブ選択中 かつ _img_path 未設定 → Canvas内容をPNGに変換してから投稿
         _tegaki_page = getattr(self, "_tegaki_page", None)
         if self._content_stack.currentIndex() == 1 and not self._img_path and _tegaki_page:
+            # キャプチャはJS経由の非同期。完了までの間もボタンを無効にしないと
+            # Shift+Enter 連打でキャプチャと投稿が二重に走る。
+            self._btn_post.setEnabled(False)
+            # runJavaScript のコールバックが返らなかった時に押せないままに
+            # ならないよう、送信が始まっていなければ復帰させる保険。
+            QTimer.singleShot(20000, self._release_post_button_if_idle)
             # キャプチャ完了後に投稿を実行するコールバックを渡す
             self._capture_tegaki_to_img(on_done=lambda: self._do_submit(text))
         else:
             self._do_submit(text)
+
+    def _release_post_button_if_idle(self):
+        """手書きキャプチャの応答が返らなかった場合に投稿ボタンを復帰させる。
+        送信スレッドが動いている間は触らない（応答時に _on_result が戻す）。"""
+        if self._post_inflight:
+            return
+        try:
+            self._btn_post.setEnabled(True)
+        except RuntimeError:
+            pass
 
     def _do_submit(self, text: str):
         """投稿スレッドを起動する（_postから分離）"""
@@ -2146,6 +2169,7 @@ document.addEventListener('keydown',function(e){{
                         _os.unlink(_strip_tmp)
                     except Exception:
                         pass
+                self._btn_post.setEnabled(True)   # 手書き経路で無効化済みのため戻す
                 QMessageBox.warning(
                     self, "ファイルサイズ超過",
                     f"添付ファイルが板の上限（{_mx // 1024:,}KB）を超えています。\n"
@@ -2153,6 +2177,7 @@ document.addEventListener('keydown',function(e){{
                     "画像・動画のサイズを小さくするか、別のファイルを選んでください。")
                 return
         self._btn_post.setEnabled(False)
+        self._post_inflight = True
         def _do():
             try:
                 ok, msg, new_no = self._fetcher.post_res(
@@ -2222,6 +2247,7 @@ document.addEventListener('keydown',function(e){{
         self._roll_active = False
 
     def _on_result(self, ok: bool, msg: str, new_thread_no: int = 0):
+        self._post_inflight = False
         self._btn_post.setEnabled(True)
         if ok:
             # プレビュー（サンプル）ウインドウが開いていれば一緒に閉じる

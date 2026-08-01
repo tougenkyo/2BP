@@ -666,6 +666,17 @@ class FutabaFetcher:
         fetch_post_form() でサーバー発行の hash/ptua 等を取得してから
         multipart/form-data で送信する。
         """
+        # ── 添付ファイルの実在チェック ──
+        # 添付を指定しているのに実体が無い状態でそのまま送ると、本文だけが
+        # 投稿されて「画像が貼れていない」レスになる（従来は黙って本文のみ送信
+        # していた）。投稿自体を行わず失敗として返し、ユーザーに気づかせる。
+        if image_path and not Path(image_path).exists():
+            print(f"[POST] 添付ファイルが存在しない → 送信中止: {image_path}")
+            return (False,
+                    "添付ファイルが見つかりません。投稿は行いませんでした。\n"
+                    f"{image_path}\n"
+                    "画像を貼り付け直してから投稿してください。", 0)
+
         # ── hidden フィールドを取得 (ptmt クッキーも同時にセット) ──
         hidden = self.fetch_post_form(board, thread_no=resto)
 
@@ -694,15 +705,21 @@ class FutabaFetcher:
         def _send():
             # ふたばは text-only 投稿でも multipart/form-data が必要
             # (CURL 解析で確認。application/x-www-form-urlencoded では受理されない)
-            if image_path and Path(image_path).exists():
+            # 添付指定時は open() を必ず通す。存在チェックで握り潰すと、直前に
+            # 一時ファイルが消えていた場合に本文だけ投稿されてしまうため、
+            # 開けなければ OSError を投げて失敗として扱う。
+            if image_path:
                 mime = self._guess_mime(image_path)
                 with open(image_path, "rb") as fp:
                     files = {"upfile": (Path(image_path).name, fp, mime)}
+                    print(f"[POST] 添付あり name={Path(image_path).name} "
+                          f"mime={mime} size={Path(image_path).stat().st_size}B")
                     return self.session.post(
                         board.post_url, data=data, files=files,
                         headers=headers, timeout=60,
                     )
             # ファイルなしでも multipart を強制 (空の upfile フィールドを付加)
+            print("[POST] 添付なし（本文のみ）")
             files = {"upfile": ("", b"", "application/octet-stream")}
             return self.session.post(
                 board.post_url, data=data, files=files,
@@ -802,6 +819,16 @@ class FutabaFetcher:
                 return (False, "通信が切断されました。投稿が反映されている場合があります。"
                         "スレを再読み込みして確認してから、必要なら再投稿してください。", 0)
             return False, _s, 0
+        except requests.exceptions.RequestException as e:
+            # requests系の例外は OSError を継承するため、下の OSError より先に捕まえる
+            return False, str(e), 0
+        except OSError as e:
+            # 添付ファイルを開けなかった（送信直前に消えた等）。本文だけ投稿
+            # されるのを防ぐため、ここへ来た時点で投稿は行われていない。
+            print(f"[POST] 添付ファイルを開けない → 送信中止: {image_path} ({e})")
+            return (False,
+                    "添付ファイルを読み込めませんでした。投稿は行いませんでした。\n"
+                    f"{image_path}\n{e}", 0)
         except Exception as e:
             return False, str(e), 0
 
