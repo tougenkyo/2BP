@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.308"
+APP_VER = "0.9.309"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8955,8 +8955,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._render(entries, search_sections=search_sections, ng_filter=ng_filter)
 
         # ── 逆NGアクション実行 ────────────────────────────────────────────
+        # 履歴表示では行わない。履歴は「自分が既に開いたスレ」の一覧なので、
+        # ここで逆NGの自動オープンを走らせると、履歴に並んでいるスレが次々と
+        # タブで開かれてしまう（落ちたスレまで開きに行く）。
         action = getattr(self._settings, "ng_reverse_action", 0)
-        if action > 0 and ng_filter:
+        if action > 0 and ng_filter and not _hist:
             _tc = self._reverse_ng_title_chars()
             rev_entries = [e for e in entries
                            if ng_filter.is_reverse_ng_catalog(e, title_chars=_tc)]
