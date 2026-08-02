@@ -78,6 +78,10 @@ from futaba2b_models import (
 BBSMENU_CACHE   = Path("data/log/bbsmenu_cache.html")
 THREAD_CACHE_DIR = Path("data/log")   # スレキャッシュ保存先
 IMAGE_CACHE_DIR  = Path("data/img")   # 画像キャッシュ保存先
+# スレッド履歴用のOPサムネ保管庫。data/img は保持日数(既定7日)で自動削除される
+# ため、履歴のサムネがすぐ表示できなくなる。ここは自動削除の対象外にし、
+# 履歴から外れたスレのぶんだけを掃除する（履歴の保持件数で自然に頭打ちになる）。
+HISTORY_THUMB_DIR = Path("data/histthumb")
 import os as _os
 VIDEO_CACHE_DIR  = Path(              # 動画キャッシュ保存先（app_qt と同一パス）
     _os.environ.get("LOCALAPPDATA", _os.path.expanduser("~"))
@@ -467,6 +471,115 @@ class FutabaFetcher:
         except Exception:
             pass
         return ""
+
+    # ── 履歴用サムネ保管庫 ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _hist_thumb_dir(thread_url: str) -> Optional[Path]:
+        """スレURL → 履歴サムネの保存ディレクトリ (data/histthumb/<host>/<板>)"""
+        try:
+            p = urllib.parse.urlparse(thread_url)
+            segs = [s for s in p.path.split("/") if s]
+            if not p.hostname or not segs:
+                return None
+            return HISTORY_THUMB_DIR / p.hostname / segs[0]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _thread_no_of(thread_url: str) -> str:
+        try:
+            return Path(urllib.parse.urlparse(thread_url).path).stem
+        except Exception:
+            return ""
+
+    def save_history_thumb(self, thread_url: str, thumb_url: str,
+                           data: Optional[bytes] = None) -> bool:
+        """スレのOPサムネを履歴用に保存する（既にあれば何もしない）。
+        data 省略時は fetch_image_bytes（メモリ→ディスク→HTTP）から取る。
+        スレを開いた時にタブアイコン用として既に取得済みのことが多く、
+        その場合は追加の通信は発生しない。"""
+        d = self._hist_thumb_dir(thread_url)
+        no = self._thread_no_of(thread_url)
+        if d is None or not no or not thumb_url:
+            return False
+        ext = (Path(urllib.parse.urlparse(thumb_url).path).suffix or ".jpg").lower()
+        dest = d / f"{no}{ext}"
+        try:
+            if dest.exists() and dest.stat().st_size > 0:
+                return True
+        except OSError:
+            pass
+        if data is None:
+            try:
+                data = self.fetch_image_bytes(thumb_url)
+            except Exception:
+                data = None
+        if not data:
+            return False
+        try:
+            import os
+            d.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + ".tmp")
+            tmp.write_bytes(data)
+            os.replace(tmp, dest)
+            return True
+        except Exception as e:
+            print(f"[HistThumb] 保存エラー: {e}")
+            return False
+
+    def history_thumb_map(self, board_base_url: str) -> dict:
+        """板の履歴サムネ一覧 {スレNo(int): file:// URL} を返す。
+        履歴表示は数百件を一度に組み立てるため、1件ずつ stat せず
+        ディレクトリ走査1回でまとめて引けるようにする。"""
+        import os
+        d = self._hist_thumb_dir(board_base_url + "res/0.htm")
+        out: dict = {}
+        if d is None or not d.exists():
+            return out
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    if not e.is_file():
+                        continue
+                    stem = Path(e.name).stem
+                    if not stem.isdigit():
+                        continue
+                    try:
+                        if e.stat().st_size <= 0:
+                            continue
+                        out[int(stem)] = Path(e.path).resolve().as_uri()
+                    except (OSError, ValueError):
+                        continue
+        except OSError:
+            pass
+        return out
+
+    def prune_history_thumbs(self, keep_thread_urls) -> int:
+        """履歴に残っていないスレのサムネを削除する。戻り値=削除件数。"""
+        keep: set = set()
+        for u in (keep_thread_urls or ()):
+            d = self._hist_thumb_dir(u)
+            no = self._thread_no_of(u)
+            if d is not None and no:
+                keep.add((str(d), no))
+        if not HISTORY_THUMB_DIR.exists():
+            return 0
+        removed = 0
+        try:
+            for f in HISTORY_THUMB_DIR.rglob("*"):
+                if not f.is_file():
+                    continue
+                if (str(f.parent), f.stem) in keep:
+                    continue
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        return removed
 
     # ── diffサイドカー（JSON diff API由来レスの永続化） ─────────────────────
     # HTMLキャッシュは最後のフルGET時点の内容しか持たないため、

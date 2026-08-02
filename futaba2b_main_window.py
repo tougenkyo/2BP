@@ -1014,6 +1014,9 @@ class MainWindow(QMainWindow):
                         if data:
                             # シグナル経由でメインスレッドに渡す（QTimer.singleShotより確実）
                             self._tab_icon_signal.emit(_inner, _view, data)
+                        # 取得済みのサムネを履歴用に保管（追加の通信なし）
+                        self._fetcher.save_history_thumb(
+                            board.base_url + f"res/{no}.htm", url, data)
                     threading.Thread(target=_load_icon, daemon=True).start()
             # タイトル更新「後」に左ペインを更新（先に呼ぶとNo.数字のまま）
             self._refresh_tab_pane()
@@ -1553,6 +1556,9 @@ class MainWindow(QMainWindow):
                             data = None
                         if data:
                             self._tab_icon_signal.emit(_inner, _view, data)
+                        # 取得済みのサムネを履歴用に保管（追加の通信なし）
+                        self._fetcher.save_history_thumb(
+                            board.base_url + f"res/{no}.htm", url, data)
                     threading.Thread(target=_load_icon_m, daemon=True).start()
             self._refresh_tab_pane()
         view.thread_loaded.connect(lambda _n, _c: _update_mode())
@@ -1673,6 +1679,9 @@ class MainWindow(QMainWindow):
                             data = None
                         if data:
                             self._tab_icon_signal.emit(_pane, _view, data)
+                        # 取得済みのサムネを履歴用に保管（追加の通信なし）
+                        self._fetcher.save_history_thumb(
+                            board.base_url + f"res/{no}.htm", url, data)
                     threading.Thread(target=_load_icon_bg, daemon=True).start()
             self._refresh_tab_pane()
         view.thread_loaded.connect(lambda _n, _c: _bg_update())
@@ -5100,6 +5109,10 @@ class MainWindow(QMainWindow):
                 getattr(s, "cache_thread_size_mb", 200) * 1048576 if getattr(s, "cache_thread_size_enabled", False) else 0))
         import threading
         def _run():
+            # ⓪ 履歴サムネの保管（画像キャッシュから救出）と掃除。
+            #    画像キャッシュの日数削除より先に行い、まだ残っているサムネを
+            #    履歴用の保管庫へ移しておく。
+            self._sync_history_thumbs()
             # ① 旧 QtWebEngine ディスクキャッシュの掃除
             #    v0.8.090以降は全プロファイルが off-the-record / メモリキャッシュの
             #    ため新規には作られないが、過去のnamed profile時代の残骸
@@ -5116,6 +5129,49 @@ class MainWindow(QMainWindow):
                     else:
                         print(f"[Cache] {label}自動クリーンアップ: {cnt}件 ({sz/1024:.0f} KB) 削除")
         threading.Thread(target=_run, daemon=True).start()
+
+    def _sync_history_thumbs(self):
+        """スレッド履歴のOPサムネを履歴用保管庫にそろえ、履歴外のぶんを掃除する。
+
+        ・保管庫に無いスレは、スレHTMLキャッシュからサムネURLを求め、画像キャッシュに
+          実体が残っていればコピーする（通信はしない。既に消えていれば諦める）
+        ・履歴から外れたスレのサムネは削除する（履歴の保持件数で頭打ちになる）
+        起動時にバックグラウンドで実行する。"""
+        try:
+            hist = list(self._settings.thread_history)
+        except Exception:
+            return
+        keep, saved = [], 0
+        for h in hist:
+            burl = str(h.get("url", "") or "")
+            try:
+                no = int(h.get("no", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if not burl or no <= 0:
+                continue
+            try:
+                turl = BoardInfo(name="", url=burl).base_url + f"res/{no}.htm"
+            except Exception:
+                continue
+            keep.append(turl)
+            try:
+                thumb = self._fetcher.cached_op_thumb(turl)
+                if not thumb:
+                    continue
+                # 画像キャッシュに残っている時だけ拾う（通信はしない）
+                if not self._fetcher.cached_image_file_url(thumb):
+                    continue
+                if self._fetcher.save_history_thumb(turl, thumb):
+                    saved += 1
+            except Exception:
+                pass
+        try:
+            removed = self._fetcher.prune_history_thumbs(keep)
+        except Exception:
+            removed = 0
+        if saved or removed:
+            print(f"[HistThumb] 保管: {saved}件 / 履歴外を削除: {removed}件")
 
     @staticmethod
     def _purge_legacy_webengine_cache():

@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.304"
+APP_VER = "0.9.305"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9026,6 +9026,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
         jnos = (jinfo or {}).get("nos") or set()
         base = board.base_url
         trc = dict(self._settings.thread_read_counts)
+        # 履歴用サムネ保管庫（ディレクトリ走査1回でまとめて引く）
+        hthumb = self._fetcher.history_thumb_map(base)
         out = []
         for h in list(self._settings.thread_history):
             _burl = str(h.get("url", "") or "")
@@ -9048,7 +9050,10 @@ class CatalogView(_MouseGestureMixin, QWidget):
             if ji:
                 thumb = (ji.get("thumb", "") or "")
             if not thumb:
-                # 落ちたスレ等: キャッシュ生htm → 画像ディスクキャッシュの順で復元
+                # 落ちたスレ等: 履歴用サムネ保管庫 → 画像ディスクキャッシュ の順で復元
+                # （保管庫は自動削除されないので、こちらが本命）
+                thumb = hthumb.get(no, "")
+            if not thumb:
                 _t = self._fetcher.cached_op_thumb(turl)
                 if _t:
                     thumb = self._fetcher.cached_image_file_url(_t) or ""
