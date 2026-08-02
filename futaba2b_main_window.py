@@ -2319,6 +2319,12 @@ class MainWindow(QMainWindow):
             cur = inner.currentIndex()
             if inner.count() > 1:
                 w = inner.widget(cur)
+                # ×ボタン・中クリックと同じく閉じる前に通知する。
+                # これが無いと Ctrl+W / メニュー / マウスジェスチャーで閉じた分が
+                # 「最近閉じたスレ」に積まれず Ctrl+Shift+T で開き直せない。
+                # 併せて自動更新からの登録解除（_ar_mgr.remove_by_view）も
+                # このシグナル経由で行われる。
+                inner.tab_closing.emit(w)
                 inner.removeTab(cur)
                 if not isinstance(w, CatalogView):
                     _dispose_tab_view(w)
