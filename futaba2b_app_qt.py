@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.310"
+APP_VER = "0.9.311"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8886,6 +8886,10 @@ class CatalogView(_MouseGestureMixin, QWidget):
         if _cap > 0 and len(entries) > _cap:
             entries = entries[:_cap]
         # 1. 過疎スレ非表示（板設定優先、なければAppSettings）
+        # 履歴表示では適用しない。履歴エントリの res_count は「最後に見たレス数」
+        # であって現在のレス数ではなく、記録が消えたスレは0になる。これを
+        # 過疎スレ扱いで隠すと履歴の大半が消える（板設定はマシンごとに違うため
+        # 「サブPCだけ50件しか出ない」形で表面化していた）。
         _few_hide = False
         _few_lim  = 5
         try:
@@ -8900,7 +8904,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         except Exception:
             _few_hide = getattr(self._settings, 'catalog_few_res_hide', False)
             _few_lim  = getattr(self._settings, 'catalog_few_res_count', 5)
-        if _few_hide:
+        if _few_hide and not _hist:
             entries = [e for e in entries if e.res_count > _few_lim]
         # 2. ローカルソート
         # 履歴表示では「無し」（＝スレッド履歴の並び順のまま）と「50音」のみ有効。
@@ -8963,9 +8967,12 @@ class CatalogView(_MouseGestureMixin, QWidget):
         if _hist:
             _ls = (self._local_sort_grp.checkedId()
                    if hasattr(self, '_local_sort_grp') else -1)
+            _nmatch = len(search_sections[0]) if search_sections else -1
             print(f"[History] 描画: 受領={len(self._all_entries)}件 "
                   f"→ 表示={len(entries)}件  上限={_cap or 'なし'}"
                   f"(参考:{self._display_capacity()})  "
+                  f"過疎非表示={_few_hide}(閾値{_few_lim}/履歴では不適用)  "
+                  f"検索ヒット={_nmatch}  "
                   f"showing_history={_hist} sortBtn={self._sort_grp.checkedId()} "
                   f"local_sort={_ls} 検索={kw!r}")
         self._render(entries, search_sections=search_sections, ng_filter=ng_filter)
