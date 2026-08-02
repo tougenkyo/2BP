@@ -2097,6 +2097,14 @@ class MainWindow(QMainWindow):
     def _reopen_closed_tab(self):
         """Ctrl+Shift+T: 最後に「自分で閉じた」タブを再オープン。
         スレ落ち等の自動クローズは対象外（メニューからは開ける）。"""
+        # スレタブ1枚ごとに QWebEngineProfile を1つ作るため、キーリピートや
+        # 連打で毎秒何十枚も生成されるとWebEngineのリソースが枯渇して落ちる。
+        # 短時間の連続実行は捨てる（押し続けても一定間隔で1枚ずつ開く）。
+        import time as _time
+        _now = _time.monotonic()
+        if _now - getattr(self, "_last_reopen_at", 0.0) < 0.3:
+            return
+        self._last_reopen_at = _now
         idx = -1
         for i in range(len(self._closed_tabs) - 1, -1, -1):
             if not self._entry_auto_closed(self._closed_tabs[i]):
@@ -2319,6 +2327,8 @@ class MainWindow(QMainWindow):
             cur = inner.currentIndex()
             if inner.count() > 1:
                 w = inner.widget(cur)
+                if w is None or getattr(w, '_disposed', False):
+                    return          # 連打で破棄処理中のビューには触らない
                 # ×ボタン・中クリックと同じく閉じる前に通知する。
                 # これが無いと Ctrl+W / メニュー / マウスジェスチャーで閉じた分が
                 # 「最近閉じたスレ」に積まれず Ctrl+Shift+T で開き直せない。

@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.300"
+APP_VER = "0.9.301"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -184,8 +184,18 @@ def _dispose_tab_view(w):
     Python の循環GC任せになる。循環GCは任意のスレッド（自動保存・画像DLの
     BGスレッド等）で走るため、QWebEngineView/Page/Profile が非GUIスレッドで
     破壊され 0xC0000005 クラッシュの原因になる。
-    cleanup() + deleteLater() で破棄をメインイベントループに委ね、これを防ぐ。"""
+    cleanup() + deleteLater() で破棄をメインイベントループに委ね、これを防ぐ。
+
+    連打でタブを閉じた時など、同じビューに対して二重に呼ばれることがある。
+    cleanup() を2回走らせると、破棄途中の QWebEngineView に対する setPage や
+    空ページの再生成が走ってネイティブクラッシュに至るため1回だけに制限する。"""
     if w is None:
+        return
+    try:
+        if getattr(w, '_disposed', False):
+            return
+        w._disposed = True
+    except (AttributeError, RuntimeError):
         return
     try:
         if hasattr(w, 'cleanup'):
@@ -2388,12 +2398,16 @@ class InnerTabWidget(QTabWidget):
         self.tabCloseRequested.connect(self._on_close)
 
     def _on_close(self, idx: int):
+        # 中クリック連打では、閉じた直後のタブバー再配置と次のクリックが競合して
+        # 既に無いインデックス／破棄中のビューが渡ることがある。
+        if not (0 <= idx < self.count()):
+            return
         w = self.widget(idx)
+        if w is None or getattr(w, '_disposed', False): return
         if isinstance(w, CatalogView): return   # カタログタブは閉じない
         self.tab_closing.emit(w)   # 閉じる前にビューを通知
         self.removeTab(idx)
-        if not isinstance(w, CatalogView):
-            _dispose_tab_view(w)
+        _dispose_tab_view(w)
 
 
 
@@ -2757,7 +2771,12 @@ class BoardPane(QWidget):
     def tabBar(self):              return self._wrap_bar
 
     def _on_close_tab(self, idx: int):
+        # 中クリック連打対策: 閉じた直後はタブバーの再配置と次のクリックが競合し、
+        # 既に存在しないインデックスや破棄処理中のビューが渡ることがある。
+        if not (0 <= idx < self._tabs.count()):
+            return
         w = self._tabs.widget(idx)
+        if w is None or getattr(w, '_disposed', False): return
         if isinstance(w, CatalogView): return   # カタログタブは閉じない
         if w in self._pinned: return
         self.tab_closing.emit(w)     # 閉じる前にビューを通知
@@ -3065,8 +3084,9 @@ class BoardPane(QWidget):
 
     def _on_close_current(self):
         idx = self._tabs.currentIndex()
-        if idx < 0: return
+        if not (0 <= idx < self._tabs.count()): return
         w = self._tabs.widget(idx)
+        if w is None or getattr(w, '_disposed', False): return
         if w in self._pinned: return
         if isinstance(w, CatalogView): return
         self.tab_closing.emit(w)
