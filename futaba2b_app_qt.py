@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.296"
+APP_VER = "0.9.297"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5812,7 +5812,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
             setTimeout(function() {
                 var sel = window.getSelection();
                 var txt = sel ? sel.toString().trim() : '';
-                if (txt.length < 2) { if (sm) sm.style.display = 'none'; return; }
+                /* 1文字だけの選択でもメニューを出す（漢字1文字の検索など）。
+                   クリックしただけ・空白のみの選択は txt が空になるので出ない。 */
+                if (!txt) { if (sm) sm.style.display = 'none'; return; }
                 if (!sm) sm = makeSM();
                 sm._selTxt = txt; sm._selX = e.clientX; sm._selY = e.clientY;
                 sm.style.display = 'flex';
