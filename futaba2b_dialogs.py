@@ -295,11 +295,17 @@ class ThreadHistoryPane(QWidget):
         lay.addWidget(self._table)
         self.refresh()
 
+    @staticmethod
+    def _board_label(h: dict) -> str:
+        """板列の表示名。二次元裏はサブドメインを括弧書きで付ける。"""
+        from futaba2b_models import board_display_name
+        return board_display_name(str(h.get("board", "")), str(h.get("url", "")))
+
     def refresh(self):
         self._table.setRowCount(0)
         for h in self._settings.thread_history:
             row = self._table.rowCount(); self._table.insertRow(row)
-            self._table.setItem(row, 0, QTableWidgetItem(h.get("board", "")))
+            self._table.setItem(row, 0, QTableWidgetItem(self._board_label(h)))
             self._table.setItem(row, 1, QTableWidgetItem(h.get("title", "")))
             self._table.setItem(row, 2, QTableWidgetItem(h.get("time", "")))
             self._table.setItem(row, 3, QTableWidgetItem(h.get("posted", "")))
@@ -327,9 +333,15 @@ class ThreadHistoryPane(QWidget):
             self._sort_asc = True
         key_map = {0: "board", 1: "title", 2: "time", 3: "posted"}
         key_name = key_map.get(col, "time")
-        self._settings.thread_history.sort(
-            key=lambda h: str(h.get(key_name, "")).lower(),
-            reverse=not self._sort_asc)
+
+        def _key(h):
+            # 板列は表示どおり（二次元裏はサブドメイン付き）で並べる。
+            # 生の板名で並べると may / img が混ざって見える。
+            if col == 0:
+                return self._board_label(h).lower()
+            return str(h.get(key_name, "")).lower()
+
+        self._settings.thread_history.sort(key=_key, reverse=not self._sort_asc)
         self.refresh()
 
 

@@ -3,8 +3,21 @@
 """futaba2b_models.py  ─  データモデル"""
 
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+def board_display_name(board_name: str, board_url: str) -> str:
+    """板名の表示用文字列。二次元裏はサーバーが may / img 等に分かれていて
+    板名だけでは区別が付かないため、サブドメインを括弧書きで添える。
+      例: 二次元裏(may) / 二次元裏(img)
+    それ以外の板・URL不明時は板名をそのまま返す。"""
+    if board_name == "二次元裏" and board_url:
+        m = re.search(r'//(\w+)\.2chan\.net/', board_url)
+        if m:
+            return f"二次元裏({m.group(1)})"
+    return board_name
 
 
 @dataclass

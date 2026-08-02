@@ -2127,13 +2127,10 @@ class MainWindow(QMainWindow):
         return bool(entry[5]) if len(entry) > 5 else False
 
     def _board_display_name(self, board_name: str, board_url: str) -> str:
-        """板名表示用：二次元裏の場合にサブドメインを付加する"""
-        if board_name == "二次元裏" and board_url:
-            import re as _re
-            m = _re.search(r'//(\w+)\.2chan\.net/', board_url)
-            if m:
-                return f"二次元裏({m.group(1)})"
-        return board_name
+        """板名表示用：二次元裏の場合にサブドメインを付加する
+        （スレッド履歴パネルと同じ表記にするため実装を共通化）"""
+        from futaba2b_models import board_display_name
+        return board_display_name(board_name, board_url)
 
     def _build_recent_closed_menu(self):
         """「最近閉じたスレ」サブメニューを動的構築"""
