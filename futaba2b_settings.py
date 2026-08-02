@@ -375,6 +375,8 @@ class AppSettings:
         self.scroll_top_count: int = 0   # 先頭スクロール何回で更新するか（0=無効）
         self.catalog_hover_zoom:    bool = False  # カタログオンマウスで画像拡大
         self.catalog_hover_comment: bool = False  # カタログオンマウスでスレ本文表示
+        # オンマウス表示までの待ち時間(ms)。0=即時（従来の挙動）
+        self.catalog_hover_delay_ms: int = 300
         self.catalog_show_mail_badge:  bool = True  # サムネ右上にメール欄/IDバッジ表示
         self.catalog_quarantine_bottom: bool = True  # 隔離スレ(json非存在)を最下部表示
         self.catalog_common_id_bottom:  bool = True  # IDが出た(共通ID)スレを最下部に表示(OFFで非表示)
@@ -835,6 +837,11 @@ class AppSettings:
             self.scroll_top_count = int(raw.get("scroll_top_count", 0))
             self.catalog_hover_zoom    = bool(raw.get("catalog_hover_zoom",    False))
             self.catalog_hover_comment = bool(raw.get("catalog_hover_comment", False))
+            try:
+                self.catalog_hover_delay_ms = int(raw.get("catalog_hover_delay_ms", 300))
+            except (TypeError, ValueError):
+                self.catalog_hover_delay_ms = 300
+            self.catalog_hover_delay_ms = min(3000, max(0, self.catalog_hover_delay_ms))
             self.catalog_show_mail_badge  = bool(raw.get("catalog_show_mail_badge",  True))
             self.catalog_quarantine_bottom = bool(raw.get("catalog_quarantine_bottom", True))
             self.catalog_common_id_bottom = bool(raw.get("catalog_common_id_bottom", True))
@@ -1037,6 +1044,7 @@ class AppSettings:
                         "scroll_top_count": self.scroll_top_count,
                         "catalog_hover_zoom":    self.catalog_hover_zoom,
                         "catalog_hover_comment": self.catalog_hover_comment,
+                        "catalog_hover_delay_ms": self.catalog_hover_delay_ms,
                         "catalog_show_mail_badge":  self.catalog_show_mail_badge,
                         "catalog_quarantine_bottom": self.catalog_quarantine_bottom,
                         "catalog_common_id_bottom":  self.catalog_common_id_bottom,

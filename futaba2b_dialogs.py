@@ -4086,6 +4086,16 @@ class AppSettingsDialog(QDialog):
             "OFFにするとカタログに表示しません。")
         cat_hover_lay.addWidget(self._cat_hover_zoom)
         cat_hover_lay.addWidget(self._cat_hover_comment)
+        # オンマウス表示までの待ち時間
+        _hd_lay = QHBoxLayout(); _hd_lay.setContentsMargins(20, 0, 0, 0)
+        self._cat_hover_delay = _spin(0, 3000, " ms", width=90, step=50,
+            tip="カタログのオンマウス表示（拡大・本文）が出るまでの待ち時間。\n"
+                "0 = 即時（従来の動作）。カーソルが通り過ぎただけで出るのを防げます。")
+        _hd_lay.addWidget(QLabel("表示までの待ち時間:"))
+        _hd_lay.addWidget(self._cat_hover_delay)
+        _hd_lay.addWidget(QLabel("（0=即時）"))
+        _hd_lay.addStretch()
+        cat_hover_lay.addLayout(_hd_lay)
         cat_hover_lay.addWidget(self._cat_mail_badge)
         cat_hover_lay.addWidget(self._cat_common_id_bottom)
         cat_hover_lay.addWidget(self._cat_quarantine)
@@ -4962,6 +4972,7 @@ class AppSettingsDialog(QDialog):
         self._image_display_mode.setCurrentIndex(getattr(s, 'image_display_mode', 0))
         self._image_mode_hover_popup.setChecked(getattr(s, 'image_mode_hover_popup', True))
         self._cat_hover_zoom.setChecked(getattr(s, "catalog_hover_zoom", False))
+        self._cat_hover_delay.setValue(getattr(s, "catalog_hover_delay_ms", 300))
         self._cat_hover_comment.setChecked(getattr(s, "catalog_hover_comment", False))
         self._cat_mail_badge.setChecked(getattr(s, "catalog_show_mail_badge", True))
         self._cat_quarantine.setChecked(getattr(s, "catalog_quarantine_bottom", True))
@@ -5116,6 +5127,7 @@ class AppSettingsDialog(QDialog):
         s.image_display_mode      = self._image_display_mode.currentIndex()
         s.image_mode_hover_popup  = self._image_mode_hover_popup.isChecked()
         s.catalog_hover_zoom      = self._cat_hover_zoom.isChecked()
+        s.catalog_hover_delay_ms  = self._cat_hover_delay.value()
         s.catalog_hover_comment   = self._cat_hover_comment.isChecked()
         s.catalog_show_mail_badge  = self._cat_mail_badge.isChecked()
         s.catalog_quarantine_bottom = self._cat_quarantine.isChecked()

@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.320"
+APP_VER = "0.9.321"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8296,11 +8296,46 @@ class CatalogView(_MouseGestureMixin, QWidget):
         return x, y
 
     def _on_cat_hover_enter(self, url: str, thumb_url: str, comment: str):
-        """カタログエントリへのマウスオーバー：画像拡大・本文ポップアップ"""
+        """カタログエントリへのマウスオーバー。
+        設定の待ち時間ぶん置いてから表示する（0=即時＝従来の動作）。
+        カーソルが通り過ぎただけのセルで出ないようにするため、別のセルへ移ったり
+        離脱した時点で予約は取り消す。"""
+        s = self._settings
+        self._hovering = True
+        # 前のセルの表示予約を取り消す
+        _t = getattr(self, "_hover_timer", None)
+        if _t is not None:
+            _t.stop()
+        if not (getattr(s, "catalog_hover_zoom", False)
+                or getattr(s, "catalog_hover_comment", False)):
+            return
+        try:
+            _delay = int(getattr(s, "catalog_hover_delay_ms", 300) or 0)
+        except (TypeError, ValueError):
+            _delay = 300
+        _delay = max(0, min(3000, _delay))
+        if _delay <= 0:
+            self._do_cat_hover_enter(url, thumb_url, comment)
+            return
+        if _t is None:
+            _t = QTimer(self)
+            _t.setSingleShot(True)
+            self._hover_timer = _t
+        try:
+            _t.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        _t.timeout.connect(
+            lambda u=url, th=thumb_url, c=comment: self._do_cat_hover_enter(u, th, c))
+        _t.start(_delay)
+
+    def _do_cat_hover_enter(self, url: str, thumb_url: str, comment: str):
+        """待ち時間経過後の実処理：画像拡大・本文ポップアップ"""
         s = self._settings
         zoom_on    = getattr(s, "catalog_hover_zoom",    False)
         comment_on = getattr(s, "catalog_hover_comment", False)
-        self._hovering = True
+        if not self._hovering:
+            return          # 待っている間にカタログから離れた
         if not zoom_on and not comment_on:
             return
         from PySide6.QtGui import QCursor
@@ -8381,6 +8416,10 @@ class CatalogView(_MouseGestureMixin, QWidget):
     def _on_cat_hover_leave(self):
         """カタログエントリからマウスアウト：ポップアップ非表示"""
         self._hovering = False
+        # 待機中の表示予約を取り消す（離れた後に出てこないように）
+        _t = getattr(self, "_hover_timer", None)
+        if _t is not None:
+            _t.stop()
         # 実行中の画像ロード結果を無効化（離脱後に届いて表示されるのを防ぐ）
         self._hover_seq = getattr(self, "_hover_seq", 0) + 1
         self._hover_popup.hide()
