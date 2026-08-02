@@ -169,6 +169,14 @@ a.fi-inline:hover { text-decoration: underline; color: var(--link-hover); }
 .quote-ind:hover { color: var(--no-hover); }
 .quote-ind.no-quote { cursor: default; opacity: 0.4; }
 .quote-ind.no-quote:hover { color: var(--no-color); }
+/* ▼の右に出す被引用件数。色は親(.quote-ind)から継承するのでホバーも一緒に変わる。
+   pointer-events:none にして、数字の上でもクリック/ホバーは親の▼が受ける */
+.quote-ind-count {
+    font-size: 8pt;
+    margin-left: 1px;
+    vertical-align: 1px;
+    pointer-events: none;
+}
 /* サブジェクト: style4.css .csb と同一 */
 .csb    { color: var(--subject-color); font-weight: bold; margin: 0 0px; }
 /* "Name" テキスト: body text color に合わせる */
@@ -956,6 +964,10 @@ document.addEventListener('DOMContentLoaded', function() {
             btn.className = 'quote-ind';
             btn.textContent = '▼';
             btn.setAttribute('data-quoters', qs.join(','));
+            var cnt = document.createElement('span');
+            cnt.className = 'quote-ind-count';
+            cnt.textContent = qs.length;
+            btn.appendChild(cnt);
         } else {
             btn.className = 'quote-ind no-quote';
             btn.textContent = '…';
@@ -1322,6 +1334,10 @@ function _rebuildQuoteIndicators() {
             btn.className = 'quote-ind';
             btn.textContent = '▼';
             btn.setAttribute('data-quoters', qs.join(','));
+            var cnt = document.createElement('span');
+            cnt.className = 'quote-ind-count';
+            cnt.textContent = qs.length;
+            btn.appendChild(cnt);
         } else {
             btn.className = 'quote-ind no-quote';
             btn.textContent = '…';

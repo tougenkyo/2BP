@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.319"
+APP_VER = "0.9.320"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1188,6 +1188,8 @@ def _img_mode_css(cols: int) -> str:
             "width:80px;box-sizing:border-box;position:relative}.gi:hover{background:#F0E0D6}"
             ".gi-qi{position:absolute;top:3px;right:2px;color:#800000;font-size:9pt;line-height:1;"
             "cursor:pointer;user-select:none;z-index:2}.gi-qi:hover{color:#cc0000}"
+            # ▼の右の被引用件数（返信モードと同じクラス名。セルが狭いので少し小さく）
+            ".gi-qi .quote-ind-count{font-size:7pt;margin-left:1px;pointer-events:none}"
             # 親.giは flex-column なので cross-axis(=横)は既定で stretch され、
             # .gn の背景が80px幅いっぱいに伸びて右上の▼(.gi-qi)まで到達する。
             # align-self:flex-start で自身のcross-axisサイズを内容分に縮める。
@@ -5709,6 +5711,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
             btn.className = 'gi-qi';
             btn.textContent = '▼';
             btn.setAttribute('data-quoters', qs.join(','));
+            var cnt = document.createElement('span');
+            cnt.className = 'quote-ind-count';
+            cnt.textContent = qs.length;
+            btn.appendChild(cnt);
             cell.appendChild(btn);
             var nos = qs.slice();
             function _showQ(e) {
