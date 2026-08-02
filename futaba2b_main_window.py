@@ -773,6 +773,16 @@ class MainWindow(QMainWindow):
         self._show_board_view("catalog", board)
 
     def _show_board_view(self, view: str, board: BoardInfo | None = None):
+        # 板の指定が無いとき（メニュー「カタログ」/F9/マウスジェスチャー）は
+        # 前面の板タブの板を使う。_current_board は板ツリー・URLバーで板を選んだ
+        # 時にしか代入されないので、これを最優先にすると
+        #   ・タブ復元しただけで板を選んでいない起動直後は None → 何も起きない
+        #   ・別の板タブを見ている時は「最後に選んだ板」のカタログを更新して
+        #     そちらの板へ飛ばされる
+        # という状態になっていた（他の board 解決箇所と同じ書き方に揃える）。
+        if board is None:
+            inner = self._active_inner()
+            board = getattr(inner, "_board", None) if inner else None
         board = board or self._current_board
         if not board:
             return
