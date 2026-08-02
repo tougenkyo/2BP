@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.311"
+APP_VER = "0.9.312"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2475,7 +2475,13 @@ class BoardPane(QWidget):
         # QToolBar はオーバーフロー時にボタンを隠すため QWidget+QHBoxLayout を使用
         _tb_widget = QWidget()
         _tb_widget.setFixedHeight(50)
-        _tb_widget.setStyleSheet("background: transparent;")
+        # セレクタ無しの "background: transparent;" は子孫ウィジェットにも波及する。
+        # 「保存」「移動」ボタンのドロップダウンは QMenu(ボタン) と子として作るため、
+        # ポップアップの背景まで透明(alpha=0)になり、テーマのQMenu指定が効かなくなる。
+        # darkは文字が明るいので気づかないが、lightは文字が暗いため
+        # 「黒背景に鼠色の文字」になって読めない。自分自身だけに限定する。
+        _tb_widget.setObjectName("bpToolbar")
+        _tb_widget.setStyleSheet("QWidget#bpToolbar { background: transparent; }")
         tb = QHBoxLayout(_tb_widget)
         tb.setContentsMargins(2, 2, 2, 2)
         tb.setSpacing(0)
