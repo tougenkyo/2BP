@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.291"
+APP_VER = "0.9.292"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1212,6 +1212,25 @@ def _img_mode_css(cols: int) -> str:
 # カタログのオンマウス本文の上限文字数。板の「文字数」とは無関係にOP全文を
 # 出すが、極端に長いスレでポップアップが画面を覆わないようここで打ち切る。
 _HOVER_COMMENT_MAX = 1000
+
+
+# エラーページ（取得失敗・スレ落ちでキャッシュも無い時）用の最小ブリッジ。
+# 通常のスレHTMLは WEBCHANNEL_JS で _b() を定義するが、エラーページはそれを
+# 含まないため _b が未定義になり、マウスジェスチャーが成立しても Python 側へ
+# 通知されず「落ちたスレだけジェスチャーが効かない」状態になっていた。
+# スレ本文用の関数は不要なので、_b() の定義だけを持つ最小版を入れる。
+_MINIMAL_BRIDGE_JS = (
+    '<script src="qrc:///qtwebchannel/qwebchannel.js"></script>'
+    "<script>"
+    "var bridge=null;"
+    "document.addEventListener('DOMContentLoaded',function(){"
+    "  if(typeof QWebChannel!=='undefined'){"
+    "    new QWebChannel(qt.webChannelTransport,function(ch){bridge=ch.objects.bridge;});"
+    "  }"
+    "});"
+    "function _b(method,args){if(bridge&&bridge[method])bridge[method].apply(bridge,args||[]);}"
+    "</script>"
+)
 
 
 def _json_com_to_text(com: str) -> str:
@@ -5243,6 +5262,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         _usr_e = f"<style>{_ucss_e}</style>" if _ucss_e else ""
         html = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            + _MINIMAL_BRIDGE_JS +
             f"<style>{THREAD_CSS}"
             ".err-banner{"
             "  background:#cc0000;color:#fff;font-size:10pt;font-weight:bold;"
