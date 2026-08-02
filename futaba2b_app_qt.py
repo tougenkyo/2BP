@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.313"
+APP_VER = "0.9.314"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2918,7 +2918,7 @@ class BoardPane(QWidget):
                     w._pending_frags = []
                     w._view.page().runJavaScript(
                         f"appendNewReplies({_json_r.dumps(_frags_r, ensure_ascii=False)});"
-                        + w._expiry_banner_sync_js(w._thread))
+                        + w._expiry_sync_js(w._thread))
                 else:
                     # フラグメントが無い（エラー再ロードで破棄済み等）または
                     # ページ未ロード → 従来どおり最新HTMLをフルリロード（取りこぼし防止）
@@ -2963,6 +2963,14 @@ class BoardPane(QWidget):
             # 180ms後に実行されるため、その間にタブが閉じられている可能性がある
             QTimer.singleShot(180, lambda v=_wv: _safe_run_js(
                 v, "try{window._checkUnreadAtBottom&&window._checkUnreadAtBottom();}catch(e){}"))
+            # 非表示中の自動更新では落ち予定の表示を同期していないため、
+            # アクティブ化した時点の値に合わせ直す（新着の有無に関わらず）。
+            def _sync_expiry_on_activate(_w=w):
+                _th = getattr(_w, '_thread', None)
+                if _th is None:
+                    return
+                _safe_run_js(getattr(_w, '_view', None), _w._expiry_sync_js(_th))
+            QTimer.singleShot(200, _sync_expiry_on_activate)
         self._search_edit.blockSignals(True) if hasattr(self, '_search_edit') else None
         w._search_edit.blockSignals(True)
         w._search_edit.setText(saved)
@@ -4973,7 +4981,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 # レス数変化なし・新着なし → appendNewReplies([]) で既読化＋仕切り線更新
                 # （新着が無くても赤字/仮赤字状態は変化しうるためバナーも同期する）
                 self._view.page().runJavaScript(
-                    "appendNewReplies([]);" + self._expiry_banner_sync_js(thread))
+                    "appendNewReplies([]);" + self._expiry_sync_js(thread))
                 self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
                 return
             # レスが減った（削除発生）→ 全体再描画に落ちる（return しない）
@@ -5121,14 +5129,14 @@ class ThreadView(_MouseGestureMixin, QWidget):
         if not fragments:
             # 差分なし（NGで全消し等）→ 仕切り線・既読化だけ更新して終了
             self._view.page().runJavaScript(
-                "appendNewReplies([]);" + self._expiry_banner_sync_js(thread))
+                "appendNewReplies([]);" + self._expiry_sync_js(thread))
             self._known_res_count = len(thread.res_list)
             self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
             return
 
         # JSON配列として渡す（エスケープ込み）
         frags_json = json.dumps(fragments, ensure_ascii=False)
-        js = f"appendNewReplies({frags_json});" + self._expiry_banner_sync_js(thread)
+        js = f"appendNewReplies({frags_json});" + self._expiry_sync_js(thread)
         self._view.page().runJavaScript(js)
 
 
@@ -6328,13 +6336,29 @@ class ThreadView(_MouseGestureMixin, QWidget):
         except Exception:
             pass
 
+    @staticmethod
+    def _expiry_text(thread) -> str:
+        """表示する「○:○頃消えます」の文字列を返す（無ければ空文字）。
+
+        expiry はスレHTMLの span.cntd 由来で、そのページを取得した時点の値。
+        自動更新はJSON差分API(mode=json)しか叩かないためHTMLは取り直されず、
+        expiry は初回取得時のまま古くなる。JSONの die は毎回届くのでそちらを
+        優先する（タブのツールチップ・ウィンドウタイトルも die_time 優先）。
+        die は "03:47" のような時刻のみなので、HTML由来と同じ見た目に揃える。"""
+        if not thread:
+            return ""
+        die = (getattr(thread, "die_time", "") or "").strip()
+        if die:
+            return die if "消えます" in die else f"{die}頃消えます"
+        return (getattr(thread, "expiry", "") or "").strip()
+
     def _expiry_line_html(self, thread) -> str:
         """スレ落ち予定（「○時頃消えます」）をフッター直上に左寄せ表示するHTML。
         赤字スレ(is_expiring)は赤、仮赤字(保存残1/10以下)はピンク、それ以外は灰色。
-        expiry未取得時は空文字を返す（表示しない）。"""
+        未取得時は空文字を返す（表示しない）。"""
         if not thread:
             return ""
-        txt = (getattr(thread, "expiry", "") or "").strip()
+        txt = self._expiry_text(thread)
         if not txt:
             return ""
         is_expiring = bool(getattr(thread, "is_expiring", False))
@@ -6362,12 +6386,17 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 'このスレは古いので、もうすぐ消えます。'
                 '</div>')
 
-    def _expiry_banner_sync_js(self, thread) -> str:
-        """差分更新(appendNewReplies等)はページ全体を再生成しないため、赤字/仮赤字状態が
-        更新途中で変化してもバナーが追随しない。この JS を差分更新のJSに連結して呼ぶことで、
-        現在の状態に合わせて .expiry-banner の追加/削除を行う（.thread-end の直後に配置、
-        返信モードのフッター＝page-footerより前）。"""
+    def _expiry_sync_js(self, thread) -> str:
+        """差分更新(appendNewReplies等)はページ全体を再生成しないため、スレ落ち関連の
+        表示が更新途中で変化しても追随しない。この JS を差分更新のJSに連結して呼ぶ。
+
+        ① 「もうすぐ消えます」バナー … 赤字/仮赤字の状態に合わせて追加/削除する
+           （.thread-end の直後＝返信モードのフッター page-footer より前）。
+        ② 「○:○頃消えます」の行 … フッターの一部なので差分更新では作り直されず、
+           初回描画時の値のまま固定されていた。現在値で差し替える。"""
+        import json as _json
         want = bool(thread and (thread.is_expiring or _is_pseudo_red_thread(thread, self._settings)))
+        line = self._expiry_line_html(thread)
         return (
             "(function(){"
             f"var want={'true' if want else 'false'};"
@@ -6379,6 +6408,16 @@ class ThreadView(_MouseGestureMixin, QWidget):
             "if(end&&end.parentNode)end.parentNode.insertBefore(d,end.nextSibling);"
             "else document.body.appendChild(d);"
             "}else if(!want&&el){el.remove();}"
+            # ── 落ち予定の行 ──
+            f"var h={_json.dumps(line)};"
+            "var ln=document.querySelector('.thread-expiry-info');"
+            "if(!h){if(ln)ln.remove();return;}"
+            "var t=document.createElement('div');t.innerHTML=h;"
+            "var nw=t.firstElementChild;if(!nw)return;"
+            "if(ln){ln.replaceWith(nw);return;}"
+            "var ft=document.querySelector('.page-footer');"
+            "if(ft&&ft.parentNode)ft.parentNode.insertBefore(nw,ft);"
+            "else document.body.appendChild(nw);"
             "})();"
         )
 
@@ -7521,7 +7560,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 f"el.parentNode.replaceChild(tmp.firstChild,el);}}"
                 f"}})();"
             )
-        js_parts.append(self._expiry_banner_sync_js(thread))
+        js_parts.append(self._expiry_sync_js(thread))
         self._view.page().runJavaScript("\n".join(js_parts))
 
     def _on_del(self, no: int):
@@ -9565,6 +9604,7 @@ class AutoRefreshManager(QObject):
     entry_added   = Signal()   # エントリが追加されたときに発火
     _view_update  = Signal(object, object, bool, bool)  # view, thread, scroll, bouyomi
     _sd_apply     = Signal(object, object)               # view, {no: count} そうだね反映
+    _expiry_sync  = Signal(object)            # view: スレ落ち予定の表示だけ同期
     _remove_later_url = Signal(str)          # URLベースの削除要求（スレッドセーフ）
     _catalog_reload   = Signal(object)       # カタログビュー更新要求（スレッドセーフ）
     _fetching_done    = Signal(str)            # BGスレッドからfetching完了通知（URLキー）
@@ -9590,6 +9630,7 @@ class AutoRefreshManager(QObject):
         self._timer.timeout.connect(self._tick)
         self._view_update.connect(self._update_view)
         self._sd_apply.connect(self._apply_sd_to_view)
+        self._expiry_sync.connect(self._sync_expiry_to_view)
         self._remove_later_url.connect(self.remove_by_url)
         self._catalog_reload.connect(self._do_catalog_reload)
         self._fetching_done.connect(lambda u: self._fetching.discard(u))
@@ -10041,6 +10082,11 @@ class AutoRefreshManager(QObject):
                     _sd = getattr(th_cur, "_sd_update", {}) if th_cur else {}
                     if _sd and view and not view.isHidden():
                         self._sd_apply.emit(view, _sd)
+                    # 新着が無いとこの先 _update_view を通らないため、スレ落ち予定
+                    # （JSONの die）だけはここで表示へ反映する。これが無いと初回
+                    # 描画時の値のまま固定され、実際の落ち時刻とズレていく。
+                    if view and not view.isHidden():
+                        self._expiry_sync.emit(view)
                     # 新着なしでも段階更新間隔は再計算する（global_maxが変化している可能性）
                     _th0 = th_cur
                     # max_saved が未取得(0)ならキャッシュから補完して自己修復
@@ -10129,6 +10175,22 @@ class AutoRefreshManager(QObject):
         th = getattr(view, '_thread', None)
         if th:
             view._check_self_res_notifications(th, [])
+
+    def _sync_expiry_to_view(self, view):
+        """新着が無い更新でもスレ落ち予定（○:○頃消えます）を追随させる
+        （メインスレッドで実行）。新着ありの回は _update_view 側で同期する。"""
+        if app_is_shutting_down():
+            return
+        try:
+            from shiboken6 import isValid
+            if not isValid(view):
+                return
+        except Exception:
+            pass
+        th = getattr(view, '_thread', None)
+        if th is None or not view.isVisible():
+            return
+        _safe_run_js(getattr(view, '_view', None), view._expiry_sync_js(th))
 
     def _update_view(self, view, thread, scroll, bouyomi=False):
         if app_is_shutting_down():
@@ -10222,18 +10284,19 @@ class AutoRefreshManager(QObject):
 
         if _is_same_thread:
             if len(thread.res_list) <= view._known_res_count:
-                # 新着なし → DOM変更不要（スクロール位置も動かさない）。
-                # ただし赤字/仮赤字は新着と無関係に変化しうるため、その状態が
-                # 変わった時だけバナーを同期し、_last_html も次回全体再描画時に
-                # 作り直されるようdirty化する（無変化時は余計な再構築をしない）。
+                # 新着なし → レスのDOM変更は不要（スクロール位置も動かさない）。
+                # ただし赤字/仮赤字と落ち予定時刻は新着と無関係に変化するので、
+                # 表示中なら同期する。_last_html は状態が変わった時だけ dirty 化
+                # する（無変化時に余計な再構築をしない）。
                 _old_t = view._thread
                 _old_exp = bool(_old_t and (_old_t.is_expiring or _is_pseudo_red_thread(_old_t, self._settings)))
                 _new_exp = bool(thread.is_expiring or _is_pseudo_red_thread(thread, self._settings))
+                _old_die = ThreadView._expiry_text(_old_t)
                 view._thread = thread
-                if _new_exp != _old_exp:
+                if _new_exp != _old_exp or ThreadView._expiry_text(thread) != _old_die:
                     view._last_html_dirty = True
-                    if view.isVisible():
-                        view._view.page().runJavaScript(view._expiry_banner_sync_js(thread))
+                if view.isVisible():
+                    view._view.page().runJavaScript(view._expiry_sync_js(thread))
                 return
 
             prev_count = view._known_res_count
@@ -10300,10 +10363,10 @@ class AutoRefreshManager(QObject):
                 elif fragments:
                     frags_json = json.dumps(fragments, ensure_ascii=False)
                     view._view.page().runJavaScript(
-                        f"appendNewReplies({frags_json});" + view._expiry_banner_sync_js(thread))
+                        f"appendNewReplies({frags_json});" + view._expiry_sync_js(thread))
                 else:
                     view._view.page().runJavaScript(
-                        "appendNewReplies([]);" + view._expiry_banner_sync_js(thread))
+                        "appendNewReplies([]);" + view._expiry_sync_js(thread))
                 if scroll and view.isVisible():
                     QTimer.singleShot(100, lambda v=view: v._view.page().runJavaScript(
                         "var el=document.querySelector('.new-res');"
