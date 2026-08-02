@@ -1080,14 +1080,30 @@ class PostDialog(QDialog):
         self._mail.setFixedWidth(200)
         self._chk_save_mail = QCheckBox("記憶")
         self._chk_save_mail.setChecked(_save_mail)
-        sage_btn = QPushButton("sage"); sage_btn.setFixedWidth(44)
-        sage_btn.setToolTip("メールにsageを入力")
-        sage_btn.setDefault(False)
-        sage_btn.setAutoDefault(False)
-        sage_btn.clicked.connect(lambda: self._mail.setText("sage"))
+        def _mail_btn(text: str, tip: str, width: int) -> QPushButton:
+            """メール欄へ定型文字列を入れるボタン（sageと同じく上書き）"""
+            b = QPushButton(text); b.setFixedWidth(width)
+            b.setToolTip(tip)
+            b.setDefault(False)
+            b.setAutoDefault(False)
+            b.clicked.connect(lambda _=None, t=text: self._mail.setText(t))
+            return b
+        self._mail_btns = [_mail_btn("sage", "メール欄に sage を入力", 44)]
+        # id表示 / ip表示 / ・3・ はスレ主のメール欄でのみ意味がある指定なので
+        # スレ立て時だけ出す（返信のメール欄に入れても効果が無い）
+        if is_new_thread:
+            self._mail_btns += [
+                _mail_btn("id表示", "メール欄に id表示 を入力\n"
+                                    "（スレ内の投稿にIDを表示する）", 52),
+                _mail_btn("ip表示", "メール欄に ip表示 を入力\n"
+                                    "（スレ内の投稿にIPを表示する）", 52),
+                _mail_btn("・3・",  "メール欄に ・3・ を入力\n"
+                                    "（スレ主のIPをスレタイに表示する）", 46),
+            ]
         mail_lay.addWidget(self._mail)
         mail_lay.addWidget(self._chk_save_mail)
-        mail_lay.addWidget(sage_btn)
+        for _b in self._mail_btns:
+            mail_lay.addWidget(_b)
         mail_lay.addStretch()
         form.addRow("E-mail", mail_lay)
 
