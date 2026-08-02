@@ -63,8 +63,10 @@ _RES_NO_RE    = re.compile(r"No\.(\d+)")
 _TRIP_RE      = re.compile(r"[!◆★☆].+")
 _SODANE_RE    = re.compile(r"そうだねx(\d+)")
 _FSIZE_RE     = re.compile(r"[\-\(](\d+)\s*B")
-_RES_ID_RE    = re.compile(r"\bID:(\S+)")
-_RES_IP_RE    = re.compile(r"\bIP:(\S+)")
+# 直前が英数字でも拾えるようにする（\b だと "…08:25:24ID:xxxx" のように
+# 区切りが失われた文字列で境界が成立せずマッチしなかった）
+_RES_ID_RE    = re.compile(r"ID:(\S+)")
+_RES_IP_RE    = re.compile(r"IP:(\S+)")
 
 from futaba2b_const import UA, BBSMENU_URL, FUTABA_ERROR_PATTERNS, SEC_CH_UA, SEC_CH_UA_MOBILE, SEC_CH_UA_PLATFORM
 from futaba2b_models import (
@@ -1463,7 +1465,12 @@ class FutabaFetcher:
             cnw_a = cnw.find("a")
             if cnw_a and cnw_a.get("href","").startswith("mailto:"):
                 email = cnw_a.get("href","")[len("mailto:"):]
-            dts = cnw.get_text(strip=True)
+            # ID表示スレのOPは日時が <a href="mailto:id表示"> で囲まれ、
+            # ID は <a> の外に出る（例: <a>26/07/19(日)08:25:24</a> ID:xxxx）。
+            # separator なしの get_text(strip=True) は各テキストを詰めて連結する
+            # ため "…08:25:24ID:xxxx" となり、\bID: が境界なしでマッチせず
+            # スレを立てた人のIDだけ取れなくなっていた。空白で連結する。
+            dts = cnw.get_text(separator=" ", strip=True)
         else:
             dts = ""
 
@@ -1528,7 +1535,8 @@ class FutabaFetcher:
             cnw_a = cnw.find("a")
             if cnw_a and cnw_a.get("href","").startswith("mailto:"):
                 email = cnw_a.get("href","")[len("mailto:"):]
-            dts = cnw.get_text(strip=True)
+            # 日時とIDが別テキストに分かれるため空白で連結する（OPと同じ理由）
+            dts = cnw.get_text(separator=" ", strip=True)
         else:
             dts = ""
         # csb（感情）を正しく取得。csbがない板（img板等）は空文字
