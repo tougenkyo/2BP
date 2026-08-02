@@ -4036,11 +4036,12 @@ class AppSettingsDialog(QDialog):
             sa = QScrollArea(); sa.setWidgetResizable(True); sa.setWidget(widget)
             return sa
 
-        def _spin(lo, hi, suffix="", tip="", width=None):
+        def _spin(lo, hi, suffix="", tip="", width=None, step=0):
             w = _NoWheelSpinBox(); w.setRange(lo, hi)
             if suffix: w.setSuffix(suffix)
             if tip:    w.setToolTip(tip)
             if width:  w.setFixedWidth(width)
+            if step:   w.setSingleStep(step)
             return w
 
         def _combo(items, tip=""):
@@ -4111,6 +4112,11 @@ class AppSettingsDialog(QDialog):
         self._recent_images_max = _spin(1, 100, " 件", width=80,
             tip="「最近開いた画像」メニューの保持件数")
         kpf.addRow("最近開いた画像:", self._recent_images_max)
+        self._thread_history_max = _spin(100, 5000, " 件", width=80, step=100,
+            tip="下部「スレッド履歴」パネルの保持件数（全板の合計）。\n"
+                "並び替え「履歴」のカタログ表示もこの履歴を使います。\n"
+                "減らすと古い順に削除されます（適用時に即反映）")
+        kpf.addRow("スレッド履歴:", self._thread_history_max)
 
         # スクロール更新
         g_scroll = QGroupBox("スクロール更新"); f0.addWidget(g_scroll); scf = QFormLayout(g_scroll)
@@ -4908,6 +4914,7 @@ class AppSettingsDialog(QDialog):
         self._image_open_actual.setChecked(getattr(s, "image_open_actual_size", False))
         self._recent_closed_max.setValue(getattr(s, "recent_closed_max", 30))
         self._recent_images_max.setValue(getattr(s, "recent_images_max", 30))
+        self._thread_history_max.setValue(getattr(s, "thread_history_max", 500))
         self._id_warn_count.setValue(getattr(s, "id_warn_count", 5))
         self._cache_max_days.setValue(max(1, getattr(s, "cache_max_days", 7)))
         self._cache_img_days_chk.setChecked(
@@ -5065,6 +5072,7 @@ class AppSettingsDialog(QDialog):
         s.image_open_actual_size  = self._image_open_actual.isChecked()
         s.recent_closed_max       = self._recent_closed_max.value()
         s.recent_images_max       = self._recent_images_max.value()
+        s.thread_history_max      = self._thread_history_max.value()
         s.id_warn_count           = self._id_warn_count.value()
         s.cache_max_days          = self._cache_max_days.value()
         s.cache_img_days_enabled    = self._cache_img_days_chk.isChecked()

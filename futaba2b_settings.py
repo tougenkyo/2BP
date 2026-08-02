@@ -381,6 +381,9 @@ class AppSettings:
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
         self.recent_closed_max: int = 30     # 最近閉じたスレの保持件数
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
+        # スレッド履歴パネルの保持件数（全板の合計）。並び替え「履歴」の
+        # カタログ表示もこの履歴を使う。
+        self.thread_history_max: int = 500
         self.history_pane_height: int = 120  # スレッド履歴パネルの高さ(px・ヘッダードラッグで調整)
         self.cache_max_days: int = 7         # 画像キャッシュ保持日数（0=無制限）
         # ── キャッシュクリーンアップ設定（種別ごとに 日数 / サイズ上限） ──
@@ -805,6 +808,7 @@ class AppSettings:
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
             self.recent_images_max = min(100, max(1, int(raw.get("recent_images_max", 30))))
+            self.thread_history_max = min(5000, max(100, int(raw.get("thread_history_max", 500))))
             self.history_pane_height = min(800, max(60, int(raw.get("history_pane_height", 120))))
             self.cache_max_days = max(0, int(raw.get("cache_max_days", 7)))
             self.cache_img_days_enabled    = bool(raw.get("cache_img_days_enabled", True))
@@ -1000,6 +1004,7 @@ class AppSettings:
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
                         "recent_images_max": self.recent_images_max,
+                        "thread_history_max": self.thread_history_max,
                         "history_pane_height": self.history_pane_height,
                         "cache_max_days": self.cache_max_days,
                         "cache_img_days_enabled":    self.cache_img_days_enabled,
@@ -1178,7 +1183,18 @@ class AppSettings:
             if not (h["board"] == board_name and h["no"] == no)
         ]
         self.thread_history.insert(0, entry)
-        self.thread_history = self.thread_history[:500]
+        self.trim_thread_history()
+
+    def trim_thread_history(self) -> None:
+        """スレッド履歴を保持件数まで詰める（末尾＝古い方から捨てる）。
+        設定変更で件数を減らした時にも呼ぶ。"""
+        try:
+            _max = int(getattr(self, "thread_history_max", 500) or 500)
+        except (TypeError, ValueError):
+            _max = 500
+        _max = min(5000, max(100, _max))
+        if len(self.thread_history) > _max:
+            self.thread_history = self.thread_history[:_max]
 
     def mark_history_posted(self, board_name: str, no: int) -> bool:
         """スレッド履歴の該当エントリに「最後に書き込んだ日時」を記録する。

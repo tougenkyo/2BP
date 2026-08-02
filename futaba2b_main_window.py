@@ -4796,6 +4796,12 @@ class MainWindow(QMainWindow):
         _max_images = getattr(self._settings, "recent_images_max", 30)
         if len(self._recent_images) > _max_images:
             self._recent_images = self._recent_images[-_max_images:]
+        # スレッド履歴の保持件数を即時反映（減らした場合は古い方を切り捨て）
+        _hist_before = len(self._settings.thread_history)
+        self._settings.trim_thread_history()
+        if len(self._settings.thread_history) != _hist_before:
+            if getattr(self, "_hist_pane", None) is not None:
+                self._hist_pane.refresh()
         # スクロール末尾カウント設定を開いている全ThreadView/CatalogViewに即時反映
         for i in range(self._outer_tabs.count()):
             inner = self._outer_tabs.widget(i)
