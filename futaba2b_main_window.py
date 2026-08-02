@@ -213,6 +213,8 @@ class MainWindow(QMainWindow):
         self._hist_visible = self._settings._app.get("hist_visible", True)
         self._current_board: BoardInfo | None = None
         self._auto_save_done:  set[str] = set()  # 自動保存済みURL（二重保存防止）
+        self._restoring_tabs:  bool = False      # 起動時のタブ復元中か
+        self._last_auto_close_at: float = 0.0    # 直近の自動クローズ時刻（間隔制御）
         self._auto_close_done: set[str] = set()  # 自動クローズ済みURL（再表示後はクローズしない）
         # タブアイコン設定シグナル（BGスレッド→メインスレッド）
         self._tab_icon_signal.connect(self._on_tab_icon_ready)
@@ -1989,6 +1991,12 @@ class MainWindow(QMainWindow):
 
     def _close_thread_view(self, view):
         """ThreadViewのタブを閉じる（自動クローズ用）。
+
+        起動直後のタブ復元中は実行を先送りする。復元はスレタブ＝QWebEngineProfile
+        を次々に生成しており、その裏で落ちスレの自動クローズがプロファイル/ページの
+        破棄を始めると、生成と破棄が同時に走ってネイティブクラッシュに至る
+        （起動直後にタブが開きながら落ちる事象）。復元が終わってから閉じる。
+        また連続クローズも間隔を空け、破棄が固まらないようにする。
         QTimer.singleShot(1500, ...) で予約後、その間に別経路で
         view のC++オブジェクトが既に破棄されている場合があり、
         その状態で tabs.indexOf(view) 等を呼ぶと
@@ -2007,6 +2015,18 @@ class MainWindow(QMainWindow):
                 return
         except ImportError:
             pass
+        # 復元中は破棄を始めない（生成と破棄の同時進行を避ける）
+        if getattr(self, "_restoring_tabs", False):
+            QTimer.singleShot(1000, lambda _v=view: self._close_thread_view(_v))
+            return
+        # 連続する自動クローズの間隔を空ける（破棄が固まらないように）
+        import time as _t
+        _now = _t.monotonic()
+        _last = getattr(self, "_last_auto_close_at", 0.0)
+        if _now - _last < 0.4:
+            QTimer.singleShot(400, lambda _v=view: self._close_thread_view(_v))
+            return
+        self._last_auto_close_at = _now
         try:
             for ti in range(self._outer_tabs.count()):
                 pane = self._outer_tabs.widget(ti)
@@ -5337,6 +5357,7 @@ class MainWindow(QMainWindow):
                             pane._tabs.setCurrentIndex(ai)
 
         def _finalize():
+            self._restoring_tabs = False   # 以後は自動クローズを許可する
             # アクティブ外側（板）タブを選択
             if active_url:
                 for i in range(self._outer_tabs.count()):
@@ -5375,6 +5396,13 @@ class MainWindow(QMainWindow):
 
             QTimer.singleShot(_gap_ms, lambda i=idx+1: _open_next(i))
 
+        # 復元中は落ちスレの自動クローズ（＝WebEngineの破棄）を止める。
+        # 生成と破棄が同時に走るとネイティブクラッシュの原因になる。
+        self._restoring_tabs = True
+        # 途中で例外等により _finalize に到達しなかった場合の保険
+        _guard_ms = len(tasks) * max(_gap_ms, 50) + 30000
+        QTimer.singleShot(_guard_ms,
+                          lambda: setattr(self, "_restoring_tabs", False))
         if len(tasks) > 8:
             self._st_log.setText(f"前回のタブ状態を復元中... ({len(tasks)}件)")
         _open_next(0)
