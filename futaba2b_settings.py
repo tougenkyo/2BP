@@ -3,7 +3,7 @@
 """futaba2b_settings.py  ─  設定管理・NGフィルタ"""
 
 from __future__ import annotations
-import json, re, time, random, string
+import json, os as _os2, re, time, random, string
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -634,12 +634,45 @@ class AppSettings:
 
     # ── ロード ──────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _read_settings_json():
+        """設定JSONを読む。本体が壊れていたら .bak から復帰する。
+        読めるものが無ければ None（＝初期値のまま）を返す。
+
+        save() は毎回ファイル全体を書き直すため、書き込み中にプロセスが落ちると
+        本体が途中までのJSONになって全設定を失う。1世代前を .bak に残しておき、
+        ここで拾えるようにしている。"""
+        _bak = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".bak")
+        for _p, _is_bak in ((SETTINGS_FILE, False), (_bak, True)):
+            if not _p.exists():
+                continue
+            try:
+                with open(_p, encoding="utf-8") as f:
+                    _raw = json.load(f)
+            except Exception as e:
+                print(f"[Settings] {_p.name} を読めません: {e}")
+                continue
+            if not isinstance(_raw, dict):
+                print(f"[Settings] {_p.name} の形式が不正です")
+                continue
+            if _is_bak:
+                print(f"[Settings] 本体が読めないため {_p.name} から復帰しました")
+                # 壊れた本体は消さずに残す（原因調査用）
+                try:
+                    _brk = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".broken")
+                    if SETTINGS_FILE.exists():
+                        _os2.replace(SETTINGS_FILE, _brk)
+                        print(f"[Settings] 壊れた設定を {_brk.name} に退避しました")
+                except OSError:
+                    pass
+            return _raw
+        return None
+
     def load(self) -> None:
-        if not SETTINGS_FILE.exists():
+        raw = self._read_settings_json()
+        if raw is None:
             return
         try:
-            with open(SETTINGS_FILE, encoding="utf-8") as f:
-                raw = json.load(f)
 
             self._app                = raw.get("app", {})
             self.favorites           = raw.get("favorites", [])
@@ -932,7 +965,13 @@ class AppSettings:
             _del_res      = {k: list(v) for k, v in self.del_res_nos.items() if v}
             _global_max   = dict(self.global_max_no_by_board)
             _max_saved_bb = dict(self.max_saved_by_board)
-            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            # 一時ファイルへ書いてから置き換える（板設定・diffサイドカーと同じ方式）。
+            # 直接 open(..., "w") すると開いた瞬間に0バイトになり、800KBを書き終える
+            # 前にプロセスが落ちると全設定を失う。save() は投稿・カタログ描画・
+            # 自動更新のフラッシュなど50箇所以上から高頻度で呼ばれるため、
+            # クラッシュと重なる可能性は無視できない。
+            _tmp = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".tmp")
+            with open(_tmp, "w", encoding="utf-8") as f:
                 json.dump(
                     {
                         "app":                  self._app,
@@ -1106,8 +1145,25 @@ class AppSettings:
                     },
                     f, ensure_ascii=False, indent=2,
                 )
+                f.flush()
+                _os2.fsync(f.fileno())   # 置き換え前に確実にディスクへ
+            # 直前の内容を1世代だけ .bak に残してから置き換える。
+            # 本体が壊れた場合は load() がこちらから復帰する。
+            _bak = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".bak")
+            if SETTINGS_FILE.exists():
+                try:
+                    _os2.replace(SETTINGS_FILE, _bak)
+                except OSError as e:
+                    print(f"[Settings] バックアップ作成に失敗: {e}")
+            _os2.replace(_tmp, SETTINGS_FILE)
         except Exception as e:
             print(f"[Settings] 保存エラー: {e}")
+            try:
+                _tmp = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".tmp")
+                if _tmp.exists():
+                    _tmp.unlink()
+            except OSError:
+                pass
 
     def _dump_app_config(self) -> dict:
         """NijiAppConfig 相当の全設定を dict に変換"""

@@ -9,6 +9,9 @@ dist/
 
 # ── 2BP ユーザーデータ（個人設定・キャッシュ・ログ）──────
 futaba2b_settings.json
+futaba2b_settings.json.bak
+futaba2b_settings.json.tmp
+futaba2b_settings.json.broken
 futaba2b_boards.json
 futaba2b_board_*.json
 futaba2b_cache.json
