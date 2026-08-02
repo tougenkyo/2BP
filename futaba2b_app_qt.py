@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.309"
+APP_VER = "0.9.310"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8512,6 +8512,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             sort = self._SERVER_SORTS[saved_ss] \
                    if 0 <= saved_ss < len(self._SERVER_SORTS) else 0
         if self.is_history_mode():
+            print(f"[History] load: 板={board.base_url} で履歴表示を開始")
             self._load_history()   # ふたばからは取得しない
             return
         self._apply_local_sort_availability()
@@ -8541,6 +8542,13 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._clear_error_band()
         self.error_band_changed.emit("")
         # 削除依頼(del)したスレはカタログから除外（セッション中保持）
+        if self.is_history_mode():
+            # 並び替えが「履歴」に切り替わった後に、それ以前に始まっていた
+            # カタログ取得が遅れて完了したケース。これを反映すると履歴一覧が
+            # カタログ（表示上限で切られたもの）に置き換わってしまう。
+            # 低スペック機で取得が遅いほど起きやすい＝「スレッド: 50件」の原因。
+            print(f"[History] カタログ受領を破棄（現在は履歴モード）: {len(entries)}件")
+            return
         _delh = getattr(self, "_del_hidden_urls", None)
         if _delh:
             entries = [e for e in entries if (e.thread_url or "") not in _delh]
@@ -8952,6 +8960,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 search_sections = (_m, list(_u) + _quar_entries)
             else:
                 entries = entries + _quar_entries
+        if _hist:
+            _ls = (self._local_sort_grp.checkedId()
+                   if hasattr(self, '_local_sort_grp') else -1)
+            print(f"[History] 描画: 受領={len(self._all_entries)}件 "
+                  f"→ 表示={len(entries)}件  上限={_cap or 'なし'}"
+                  f"(参考:{self._display_capacity()})  "
+                  f"showing_history={_hist} sortBtn={self._sort_grp.checkedId()} "
+                  f"local_sort={_ls} 検索={kw!r}")
         self._render(entries, search_sections=search_sections, ng_filter=ng_filter)
 
         # ── 逆NGアクション実行 ────────────────────────────────────────────
@@ -9046,16 +9062,25 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # 履歴用サムネ保管庫（ディレクトリ走査1回でまとめて引く）
         hthumb = self._fetcher.history_thumb_map(base)
         out = []
-        for h in list(self._settings.thread_history):
+        _hist_all = list(self._settings.thread_history)
+        # ── 診断ログ用の内訳カウンタ ──
+        _sk_nourl = _sk_board = _sk_no = 0
+        _base_count: dict = {}
+        for h in _hist_all:
             _burl = str(h.get("url", "") or "")
             if not _burl:
+                _sk_nourl += 1
                 continue
             # 板の一致は base_url で見る（二次元裏は may/img/jun が別サーバー）
-            if BoardInfo(name="", url=_burl).base_url != base:
+            _hb = BoardInfo(name="", url=_burl).base_url
+            _base_count[_hb] = _base_count.get(_hb, 0) + 1
+            if _hb != base:
+                _sk_board += 1
                 continue
             try:
                 no = int(h.get("no", 0) or 0)
             except (TypeError, ValueError):
+                _sk_no += 1
                 continue
             if no <= 0:
                 continue
@@ -9086,10 +9111,23 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 is_dead    = (not alive),
                 has_cache  = self._fetcher.has_thread_cache(turl),
             ))
+        # ── 診断ログ: 履歴が何件あって、何件が表示対象になったか ──
+        _tops = sorted(_base_count.items(), key=lambda kv: -kv[1])[:5]
+        print(f"[History] 履歴={len(_hist_all)}件 上限={getattr(self._settings, 'thread_history_max', 500)} "
+              f"板={base} → 対象={len(out)}件  "
+              f"除外[URL無={_sk_nourl} 別板={_sk_board} No不正={_sk_no}]  "
+              f"json[生存={len(jnos)} map={len(jmap)}]  サムネ保管={len(hthumb)}件")
+        print(f"[History] 履歴内の板内訳: "
+              + " / ".join(f"{k}={v}" for k, v in _tops))
         return out
 
     def _on_history_ready(self, entries: list):
         """履歴エントリの受け取り（隔離合成・json マージは通さない）。"""
+        if not self.is_history_mode():
+            # 履歴以外に切り替わった後に届いた古い結果 → 破棄
+            print(f"[History] 受領破棄（履歴モードではない）: {len(entries)}件")
+            return
+        print(f"[History] 受領: {len(entries)}件 → 描画へ")
         self._on_cat_hover_leave()
         self._clear_error_band()
         self.error_band_changed.emit("")
@@ -9326,6 +9364,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
                     f" ({_DAY_JP[dt.weekday()]})"
                     f" {dt.hour}:{dt.minute:02d}:{dt.second:02d}")
         n_total  = len(entries)
+        if _hist_render:
+            print(f"[History] フッタ表示件数: {n_total}件")
         now_str  = _fmt_dt(_dt.datetime.now())
         _footer  = (
             f'<div class="page-footer">'
