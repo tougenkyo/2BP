@@ -2006,17 +2006,23 @@ class MainWindow(QMainWindow):
                 tabs = pane._tabs
                 idx = tabs.indexOf(view)
                 if idx >= 0:
-                    # pane.tab_closing を発火して _closed_tabs に積む
-                    # （「最近閉じたスレ」から復帰できるように残す）。
-                    # ただし自動クローズは落ちたスレ＝再取得しても404であり、
-                    # これを Ctrl+Shift+T の対象にすると「自分が閉じたタブ」より
-                    # 後に積まれて別のスレが開いてしまうため、印を付けて除外する。
-                    view._auto_closed = True
-                    pane.tab_closing.emit(view)
-                    self._ar_mgr.remove_by_view(view)
                     if tabs.count() > 1:
+                        # pane.tab_closing を発火して _closed_tabs に積む
+                        # （「最近閉じたスレ」から復帰できるように残す）。
+                        # ただし自動クローズは落ちたスレ＝再取得しても404であり、
+                        # これを Ctrl+Shift+T の対象にすると「自分が閉じたタブ」より
+                        # 後に積まれて別のスレが開いてしまうため、印を付けて除外する。
+                        view._auto_closed = True
+                        pane.tab_closing.emit(view)
+                        self._ar_mgr.remove_by_view(view)
                         tabs.removeTab(idx)
                         _dispose_tab_view(view)
+                    else:
+                        # 最後の1枚は閉じない（従来動作）。実際には閉じていないので
+                        # 履歴には積まず、_auto_closed の印も付けない。
+                        # （印を残すと、後でユーザーが手で閉じた時に自動クローズ扱いに
+                        #   なって Ctrl+Shift+T の対象から外れてしまう）
+                        self._ar_mgr.remove_by_view(view)
                     return
         except RuntimeError:
             # view のC++オブジェクトが処理中に破棄された場合の保険
@@ -2066,10 +2072,27 @@ class MainWindow(QMainWindow):
             _auto = bool(getattr(view, "_auto_closed", False))
             self._closed_tabs.append(
                 (board.url, board.name, thread_no, thread_url, label, _auto))
-            # スタックは設定件数まで
-            _max = getattr(self._settings, "recent_closed_max", 30)
-            if len(self._closed_tabs) > _max:
-                self._closed_tabs.pop(0)
+            self._trim_closed_tabs()
+
+    def _trim_closed_tabs(self):
+        """「最近閉じたスレ」を保持件数まで詰める。
+
+        単純に先頭から捨てると、スレ落ち・逆NGのバックグラウンド自動クローズが
+        次々に積まれた時に「自分で閉じたタブ」が押し出され、Ctrl+Shift+T が
+        「再オープンできるタブがありません」になってしまう。
+        溢れた分は自動クローズ由来から先に捨て、手で閉じた履歴を守る。"""
+        _max = getattr(self._settings, "recent_closed_max", 30)
+        try:
+            _max = max(1, int(_max))
+        except (TypeError, ValueError):
+            _max = 30
+        while len(self._closed_tabs) > _max:
+            drop = 0   # 自動クローズが無ければ従来どおり最古を捨てる
+            for i, e in enumerate(self._closed_tabs):
+                if self._entry_auto_closed(e):
+                    drop = i
+                    break
+            self._closed_tabs.pop(drop)
 
     def _reopen_closed_tab(self):
         """Ctrl+Shift+T: 最後に「自分で閉じた」タブを再オープン。
@@ -2080,7 +2103,13 @@ class MainWindow(QMainWindow):
                 idx = i
                 break
         if idx < 0:
-            self._st_log.setText("再オープンできるタブがありません")
+            if self._closed_tabs:
+                # 自動クローズ分しか残っていない → メニューから開ける旨を案内する
+                self._st_log.setText(
+                    "再オープンできるタブがありません"
+                    "（自動で閉じたスレは[ファイル]-[最近閉じたスレ]から開けます）")
+            else:
+                self._st_log.setText("再オープンできるタブがありません")
             return
         self._reopen_closed_at(idx)
 
@@ -4750,9 +4779,7 @@ class MainWindow(QMainWindow):
         # 優先されるため、明示的に塗り直さないと色が変わらない）
         self._apply_statusbar_theme()
         # 最近閉じたスレ・最近開いた画像のリストを新しいmax件数でトリム
-        _max_closed = getattr(self._settings, "recent_closed_max", 30)
-        if len(self._closed_tabs) > _max_closed:
-            self._closed_tabs = self._closed_tabs[-_max_closed:]
+        self._trim_closed_tabs()   # 自動クローズ分から先に捨てる
         _max_images = getattr(self._settings, "recent_images_max", 30)
         if len(self._recent_images) > _max_images:
             self._recent_images = self._recent_images[-_max_images:]
