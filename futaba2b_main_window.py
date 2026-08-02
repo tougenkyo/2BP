@@ -225,7 +225,8 @@ class MainWindow(QMainWindow):
         # settings から復元（永続化）
         self._closed_tabs: list[tuple] = [
             (r.get("board_url",""), r.get("board_name",""),
-             r.get("thread_no",0),  r.get("thread_url",""), r.get("label",""))
+             r.get("thread_no",0),  r.get("thread_url",""), r.get("label",""),
+             bool(r.get("auto_closed", False)))
             for r in getattr(self._settings, "recent_closed_list", [])
         ]
         # 最近開いた画像: [{url, name, board_name, board_url}, ...]
@@ -2005,7 +2006,12 @@ class MainWindow(QMainWindow):
                 tabs = pane._tabs
                 idx = tabs.indexOf(view)
                 if idx >= 0:
-                    # pane.tab_closing を発火して _closed_tabs に積む（Ctrl+Shift+T で復帰可能に）
+                    # pane.tab_closing を発火して _closed_tabs に積む
+                    # （「最近閉じたスレ」から復帰できるように残す）。
+                    # ただし自動クローズは落ちたスレ＝再取得しても404であり、
+                    # これを Ctrl+Shift+T の対象にすると「自分が閉じたタブ」より
+                    # 後に積まれて別のスレが開いてしまうため、印を付けて除外する。
+                    view._auto_closed = True
                     pane.tab_closing.emit(view)
                     self._ar_mgr.remove_by_view(view)
                     if tabs.count() > 1:
@@ -2055,34 +2061,33 @@ class MainWindow(QMainWindow):
         if getattr(view, '_is_log', False):
             label = f"{label}（ログ）"
         if thread_no:
+            # 自動クローズ（スレ落ち・1000レス到達）で閉じたものは印を付ける。
+            # メニューには残すが Ctrl+Shift+T の対象からは外す。
+            _auto = bool(getattr(view, "_auto_closed", False))
             self._closed_tabs.append(
-                (board.url, board.name, thread_no, thread_url, label))
+                (board.url, board.name, thread_no, thread_url, label, _auto))
             # スタックは設定件数まで
             _max = getattr(self._settings, "recent_closed_max", 30)
             if len(self._closed_tabs) > _max:
                 self._closed_tabs.pop(0)
 
     def _reopen_closed_tab(self):
-        """Ctrl+Shift+T: 閉じたタブを再オープン"""
-        if not self._closed_tabs:
+        """Ctrl+Shift+T: 最後に「自分で閉じた」タブを再オープン。
+        スレ落ち等の自動クローズは対象外（メニューからは開ける）。"""
+        idx = -1
+        for i in range(len(self._closed_tabs) - 1, -1, -1):
+            if not self._entry_auto_closed(self._closed_tabs[i]):
+                idx = i
+                break
+        if idx < 0:
             self._st_log.setText("再オープンできるタブがありません")
             return
-        board_url, board_name, thread_no, thread_url, label = self._closed_tabs.pop()
-        # 既存の板タブを検索（base_urlで一致判定）
-        board_base = board_url.rsplit("/futaba.htm", 1)[0].rstrip("/") + "/"
-        target_board: BoardInfo | None = None
-        for ti in range(self._outer_tabs.count()):
-            pane = self._outer_tabs.widget(ti)
-            if isinstance(pane, BoardPane) and pane._board:
-                if pane._board.base_url == board_base:
-                    target_board = pane._board
-                    break
-        if target_board is None:
-            # 板タブが閉じられている場合はスタックに戻す
-            self._closed_tabs.append((board_url, board_name, thread_no, thread_url, label))
-            self._st_log.setText(f"板タブが閉じられているため復元できません: {board_name}")
-            return
-        self._open_thread(target_board, thread_no)
+        self._reopen_closed_at(idx)
+
+    @staticmethod
+    def _entry_auto_closed(entry) -> bool:
+        """閉じたタブ情報が自動クローズ由来か（旧形式の5要素タプルは False）。"""
+        return bool(entry[5]) if len(entry) > 5 else False
 
     def _board_display_name(self, board_name: str, board_url: str) -> str:
         """板名表示用：二次元裏の場合にサブドメインを付加する"""
@@ -2101,13 +2106,17 @@ class MainWindow(QMainWindow):
             a.setEnabled(False)
             return
         # 新しい順（末尾が最新）で表示
-        for i, (board_url, board_name, thread_no, thread_url, label) in enumerate(
-                reversed(self._closed_tabs)):
+        for entry in reversed(list(self._closed_tabs)):
+            board_url, board_name, thread_no, thread_url, label = entry[:5]
             bdn = self._board_display_name(board_name, board_url)
             text = f"{bdn} / {label}" if label else f"{bdn} / No.{thread_no}"
+            if self._entry_auto_closed(entry):
+                text += "（自動で閉じた）"
             act = self._menu_recent_closed.addAction(text)
-            _idx = len(self._closed_tabs) - 1 - i
-            act.triggered.connect(lambda checked=False, idx=_idx: self._reopen_closed_at(idx))
+            # インデックスではなくエントリ自体を渡す。メニュー表示中に自動
+            # クローズ等でスタックが変化すると、控えた添字が別のスレを指す。
+            act.triggered.connect(
+                lambda checked=False, _e=entry: self._reopen_closed_entry(_e))
         self._menu_recent_closed.addSeparator()
         self._menu_recent_closed.addAction("すべてクリア").triggered.connect(
             lambda: (self._closed_tabs.clear(),
@@ -2117,7 +2126,17 @@ class MainWindow(QMainWindow):
         """指定インデックスの閉じたタブを再オープン"""
         if idx < 0 or idx >= len(self._closed_tabs):
             return
-        board_url, board_name, thread_no, thread_url, label = self._closed_tabs.pop(idx)
+        self._reopen_closed_entry(self._closed_tabs[idx])
+
+    def _reopen_closed_entry(self, entry):
+        """閉じたタブ情報から再オープンする。エントリ自体で位置を特定するため、
+        メニュー表示中にスタックが変化しても別のスレを開かない。"""
+        try:
+            idx = self._closed_tabs.index(entry)
+        except ValueError:
+            self._st_log.setText("この項目は既に開き直されています")
+            return
+        board_url, board_name, thread_no, thread_url, label = entry[:5]
         board_base = board_url.rsplit("/futaba.htm", 1)[0].rstrip("/") + "/"
         target_board = None
         for ti in range(self._outer_tabs.count()):
@@ -2126,9 +2145,10 @@ class MainWindow(QMainWindow):
                 if pane._board.base_url == board_base:
                     target_board = pane._board; break
         if target_board is None:
-            self._closed_tabs.insert(idx, (board_url, board_name, thread_no, thread_url, label))
+            # 板タブが閉じられている場合はスタックに残したまま中止する
             self._st_log.setText(f"板タブが閉じられているため復元できません: {board_name}")
             return
+        self._closed_tabs.pop(idx)
         self._open_thread(target_board, thread_no)
 
     def _build_recent_images_menu(self):
@@ -5322,7 +5342,8 @@ class MainWindow(QMainWindow):
         # 最近閉じたスレ・最近開いた画像を永続化
         self._settings.recent_closed_list = [
             {"board_url": t[0], "board_name": t[1],
-             "thread_no": t[2], "thread_url": t[3], "label": t[4]}
+             "thread_no": t[2], "thread_url": t[3], "label": t[4],
+             "auto_closed": self._entry_auto_closed(t)}
             for t in self._closed_tabs
         ]
         self._settings.recent_images_list = list(self._recent_images)
