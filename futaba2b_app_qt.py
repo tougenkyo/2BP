@@ -76,7 +76,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QDialogButtonBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QMenu, QListWidget, QListWidgetItem,
     QTabBar, QScrollArea, QInputDialog, QButtonGroup, QRadioButton, QStyle,
-    QStackedWidget, QFrame,
+    QStackedWidget, QFrame, QSlider,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore    import (
@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.295"
+APP_VER = "0.9.296"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1212,6 +1212,61 @@ def _img_mode_css(cols: int) -> str:
 # カタログのオンマウス本文の上限文字数。板の「文字数」とは無関係にOP全文を
 # 出すが、極端に長いスレでポップアップが画面を覆わないようここで打ち切る。
 _HOVER_COMMENT_MAX = 1000
+
+
+class _ClickSeekSlider(QSlider):
+    """溝(groove)をクリックするとその位置へジャンプするスライダー。
+    既定の QSlider はつまみ以外をクリックしてもページ単位で少し動くだけで、
+    クリックした位置に飛べない（動画のシークバーで不便）。
+    押下時に位置を確定してから sliderPressed/sliderReleased を出すため、
+    既存の _seek_start / _seek_end 接続はそのまま使える。"""
+
+    def _value_at(self, x: int) -> int:
+        from PySide6.QtWidgets import QStyle, QStyleOptionSlider
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        gr = self.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderGroove, self)
+        sr = self.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderHandle, self)
+        span = gr.width() - sr.width()
+        if span <= 0:
+            return self.value()
+        pos = x - gr.x() - sr.width() // 2
+        return QStyle.sliderValueFromPosition(
+            self.minimum(), self.maximum(), pos, span, opt.upsideDown)
+
+    @staticmethod
+    def _x_of(ev) -> int:
+        try:
+            return int(ev.position().x())      # Qt6
+        except AttributeError:
+            return int(ev.x())
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self._click_seeking = True
+            self.setValue(self._value_at(self._x_of(ev)))
+            self.sliderPressed.emit()          # 追従更新を止める
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev):
+        if getattr(self, "_click_seeking", False):
+            self.setValue(self._value_at(self._x_of(ev)))   # そのままドラッグできる
+            ev.accept()
+            return
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev):
+        if getattr(self, "_click_seeking", False) and ev.button() == Qt.MouseButton.LeftButton:
+            self._click_seeking = False
+            self.setValue(self._value_at(self._x_of(ev)))
+            self.sliderReleased.emit()         # ここで実シークが走る
+            ev.accept()
+            return
+        super().mouseReleaseEvent(ev)
 
 
 # エラーページ（取得失敗・スレ落ちでキャッシュも無い時）用の最小ブリッジ。
@@ -3454,7 +3509,8 @@ class VideoPlayerWindow(QWidget):
                "QSlider::sub-page:horizontal{background:#999;height:4px;border-radius:2px;}"
                "QSlider::handle:horizontal{background:#ddd;width:12px;height:12px;"
                "margin:-4px 0;border-radius:6px;}")
-        self._seek = _QSlider(Qt.Orientation.Horizontal, bar)
+        # クリックした位置へ飛べるシークバー
+        self._seek = _ClickSeekSlider(Qt.Orientation.Horizontal, bar)
         self._seek.setRange(0, 10000)
         self._seek.sliderPressed.connect(self._seek_start)
         self._seek.sliderReleased.connect(self._seek_end)
@@ -10957,7 +11013,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                "QSlider::sub-page:horizontal{background:#999;height:4px;border-radius:2px;}"
                "QSlider::handle:horizontal{background:#ddd;width:12px;height:12px;"
                "margin:-4px 0;border-radius:6px;}")
-        self._mp_seek = _QS(Qt.Orientation.Horizontal, mp_bar)
+        # クリックした位置へ飛べるシークバー
+        self._mp_seek = _ClickSeekSlider(Qt.Orientation.Horizontal, mp_bar)
         self._mp_seek.setRange(0, 10000)
         self._mp_seek.sliderPressed.connect(self._mp_seek_start)
         self._mp_seek.sliderReleased.connect(self._mp_seek_end)
