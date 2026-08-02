@@ -439,6 +439,92 @@ class FutabaFetcher:
         except Exception:
             return False
 
+    def _rescount_index(self) -> dict:
+        """スレHTMLキャッシュのレス数インデックス {相対パス: [mtime, size, 件数]}。
+        遅延読み込みしてプロセス内で保持する。"""
+        idx = getattr(self, "_rescount_idx", None)
+        if idx is None:
+            idx = {}
+            try:
+                p = THREAD_CACHE_DIR / "_rescount.json"
+                if p.exists():
+                    _raw = json.loads(p.read_text(encoding="utf-8"))
+                    if isinstance(_raw, dict):
+                        idx = _raw
+            except Exception:
+                idx = {}
+            self._rescount_idx = idx
+        return idx
+
+    def _save_rescount_index(self) -> None:
+        idx = getattr(self, "_rescount_idx", None)
+        if idx is None:
+            return
+        try:
+            p = THREAD_CACHE_DIR / "_rescount.json"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_name(p.name + ".tmp")
+            tmp.write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
+            _os.replace(tmp, p)
+        except Exception as e:
+            print(f"[Cache] レス数インデックス保存エラー: {e}")
+
+    def cached_res_counts(self, urls: list) -> dict:
+        """キャッシュ済み生htmから返信数（OP除く）をまとめて数える {url: 件数}。
+
+        落ちたスレは thread_read_counts が掃除で消えることがあり、履歴表示の
+        レス数が0になる。「キャ有」のスレはキャッシュから数えて埋める。
+        返信は <input id="delcheckNNN" class="rsc"> を1件ずつ持つので rsc の
+        出現数がそのまま返信数（OPには rsc が付かない）。diffサイドカーに
+        HTML化されていない新着が溜まっている場合はその分を足す。
+
+        数百件ぶんのHTMLを毎回読むとサブPCで体感が出るため、
+        更新時刻とサイズをキーにインデックスへメモ化する（ワーカースレッドから
+        呼ばれる前提）。"""
+        out: dict = {}
+        if not urls:
+            return out
+        idx = self._rescount_index()
+        dirty = False
+        for url in urls:
+            if not url:
+                continue
+            try:
+                p = self._cache_path(url)
+                st = p.stat()
+            except Exception:
+                continue
+            key = url
+            ent = idx.get(key)
+            if (isinstance(ent, list) and len(ent) == 3
+                    and ent[0] == int(st.st_mtime) and ent[1] == st.st_size):
+                out[url] = int(ent[2])
+                continue
+            try:
+                s = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            n = s.count('class="rsc"')
+            d = p.with_name(p.name + ".diff.json")
+            if d.exists():
+                try:
+                    j = json.loads(d.read_text(encoding="utf-8"))
+                    # htm に既に入っているレスは二重に数えない
+                    n += sum(1 for k in j if f'"delcheck{k}"' not in s)
+                except Exception:
+                    pass
+            out[url] = n
+            idx[key] = [int(st.st_mtime), st.st_size, n]
+            dirty = True
+        if dirty:
+            # 消えたキャッシュのぶんは残しておいても害が無いが、際限なく
+            # 増えないよう問い合わせ対象に無い古い項目をここで間引く
+            if len(idx) > 20000:
+                for k in list(idx)[:len(idx) - 10000]:
+                    idx.pop(k, None)
+            self._save_rescount_index()
+        return out
+
     def cached_op_thumb(self, url: str) -> str:
         """キャッシュ済み生htmからOP（スレ主）のサムネイルURLを取り出す。
         落ちたスレのサムネを履歴表示に出すため。OPは先頭にあるので冒頭だけ読む

@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.315"
+APP_VER = "0.9.316"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9155,10 +9155,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 _t = self._fetcher.cached_op_thumb(turl)
                 if _t:
                     thumb = self._fetcher.cached_image_file_url(_t) or ""
+            # thread_read_counts はOP込みの件数。カタログのレス数は返信数
+            # （OP除く）なので揃える。落ちて記録が消えたスレは0のままにして
+            # おき、あとでキャッシュから埋める。
+            _rc = int(trc.get(turl, 0) or 0)
             out.append(CatalogEntry(
                 no         = no,
                 thumb_url  = thumb,
-                res_count  = int(trc.get(turl, 0) or 0),
+                res_count  = max(0, _rc - 1),
                 thread_url = turl,
                 title      = str(h.get("title", "") or ""),
                 email      = (ji or {}).get("email", ""),
@@ -9167,6 +9171,24 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 is_dead    = (not alive),
                 has_cache  = self._fetcher.has_thread_cache(turl),
             ))
+        # ── レス数が取れなかったスレをHTMLキャッシュから埋める ──────────────
+        # 板から落ちたスレは thread_read_counts が掃除で消えるため0になる。
+        # 「キャ有」のスレはキャッシュに全レスが残っているのでそこから数える。
+        _need = [e.thread_url for e in out if e.res_count <= 0 and e.has_cache]
+        _filled = 0
+        if _need:
+            try:
+                _cnt = self._fetcher.cached_res_counts(_need)
+            except Exception as e:
+                print(f"[History] キャッシュからのレス数取得に失敗: {e}")
+                _cnt = {}
+            for e in out:
+                if e.res_count <= 0:
+                    _n = int(_cnt.get(e.thread_url, 0) or 0)
+                    if _n > 0:
+                        e.res_count = _n
+                        _filled += 1
+        _zero = sum(1 for e in out if e.res_count <= 0)
         # ── 診断ログ: 履歴が何件あって、何件が表示対象になったか ──
         _tops = sorted(_base_count.items(), key=lambda kv: -kv[1])[:5]
         print(f"[History] 履歴={len(_hist_all)}件 上限={getattr(self._settings, 'thread_history_max', 500)} "
@@ -9175,6 +9197,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
               f"json[生存={len(jnos)} map={len(jmap)}]  サムネ保管={len(hthumb)}件")
         print(f"[History] 履歴内の板内訳: "
               + " / ".join(f"{k}={v}" for k, v in _tops))
+        print(f"[History] レス数: キャッシュから復元={_filled}/{len(_need)}件  "
+              f"不明(0のまま)={_zero}件")
         return out
 
     def _on_history_ready(self, entries: list):
@@ -9515,9 +9539,26 @@ class CatalogView(_MouseGestureMixin, QWidget):
         live_urls = {e.thread_url for e in _live_real if e.thread_url}
         if self._board:
             res_prefix = self._board.base_url + "res/"
+            # スレッド履歴に載っているスレの既読レス数(trc)は残す。
+            # 板から落ちた瞬間にここで消えるため、履歴表示のレス数が0になって
+            # いた。履歴には保持件数の上限があるので trc が際限なく増えることは
+            # ない。catalog_read_counts(rc) は生きているカタログの＋N基準値
+            # なので従来どおり掃除する。
+            _hist_urls = set()
+            for h in self._settings.thread_history:
+                _hu = str(h.get("url", "") or "")
+                if not _hu:
+                    continue
+                try:
+                    _hno = int(h.get("no", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if _hno > 0 and BoardInfo(name="", url=_hu).base_url == self._board.base_url:
+                    _hist_urls.add(res_prefix + f"{_hno}.htm")
             for key in [k for k in rc if k.startswith(res_prefix) and k not in live_urls]:
                 del rc[key]
-            for key in [k for k in trc if k.startswith(res_prefix) and k not in live_urls]:
+            for key in [k for k in trc if k.startswith(res_prefix)
+                        and k not in live_urls and k not in _hist_urls]:
                 del trc[key]
         for e in _live_real:
             if e.thread_url and e.res_count > 0 and e.thread_url not in rc:
