@@ -5289,6 +5289,13 @@ class MainWindow(QMainWindow):
         tasks = tasks_active + tasks_rest
         n_active = len(tasks_active)
 
+        # 復元は1枚ずつ間隔を空けて行う。スレタブ1枚につき QWebEngineProfile を
+        # 1つ作り、さらに取得スレッドを1本起こすため、singleShot(0) で一気に
+        # 開くと数十枚ぶんが同時に走る。低スペック機ではここでリソースが枯渇し、
+        # 「起動直後にタブが開きながら落ちる」ネイティブクラッシュになる。
+        # （タブ数が多いほど間隔を空ける。UIは待ちの間も操作できる）
+        _gap_ms = 0 if len(tasks) <= 8 else (80 if len(tasks) <= 24 else 150)
+
         def _restore_pins_and_active():
             """全タブ生成後に、保存時の type/no で実タブを照合してピン留め・
             アクティブ内側タブを復元する（タブ位置は保存順のまま保持済み）"""
@@ -5366,8 +5373,10 @@ class MainWindow(QMainWindow):
                         if isinstance(w, BoardPane) and w._board.url == active_url:
                             self._outer_tabs.setCurrentIndex(i); break
 
-            QTimer.singleShot(0, lambda i=idx+1: _open_next(i))
+            QTimer.singleShot(_gap_ms, lambda i=idx+1: _open_next(i))
 
+        if len(tasks) > 8:
+            self._st_log.setText(f"前回のタブ状態を復元中... ({len(tasks)}件)")
         _open_next(0)
 
     # ── 終了処理 ─────────────────────────────────────────────────────────────
