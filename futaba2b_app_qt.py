@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.305"
+APP_VER = "0.9.306"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8036,6 +8036,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._cat_page_live = False   # カタログページのDOMがロード完了済みか（body入替可能か）
         self._pending_light_body: str | None = None  # ロード完了前に来たマージ再描画body（loadFinished後に適用）
         self._light_render_once = False  # _re_render_light 実行中フラグ（_renderでbody入替に切替）
+        self._showing_history: bool = False  # 表示中が履歴由来のエントリか
         self._hovering: bool = False  # マウスがカタログエントリ上にあるか
         self._hover_seq: int = 0      # ホバー世代。遅れて届いた別セルの画像を捨てる
         self._pending_catset: callable | None = None  # fetch完了後に1回だけ実行するcatset
@@ -8543,6 +8544,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         _delh = getattr(self, "_del_hidden_urls", None)
         if _delh:
             entries = [e for e in entries if (e.thread_url or "") not in _delh]
+        self._showing_history = False   # ふたばのカタログ由来のエントリ
         self._all_entries = entries
         # 取得済みemail情報を初回レンダリング前に先行適用
         # （board_top取得完了後の _merge_email_data で差分なし→二重レンダリング防止）
@@ -8869,7 +8871,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # （サーバ順=取得順の先頭）に絞り「14×6+隔離」相当に振る舞う。
         # あふれた分は隔離検出・read_counts追跡用に _all_entries 側に保持し表示からのみ除外。
         # 履歴表示はスレッド履歴そのものを見せるのが目的なので件数で切らない。
-        _hist = self.is_history_mode()
+        # 判定はボタンではなく「今持っているデータ」で行う（ボタン状態を見ると
+        # 食い違ったタイミングで履歴が縦×横件に切られてしまう）。
+        _hist = self.is_showing_history()
         _cap = 0 if _hist else self._display_capacity()
         if _cap > 0 and len(entries) > _cap:
             entries = entries[:_cap]
@@ -8963,11 +8967,21 @@ class CatalogView(_MouseGestureMixin, QWidget):
     _HISTORY_SORT_ID = 5   # 「履歴」ボタンのID（サーバー取得せずスレッド履歴から作る）
 
     def is_history_mode(self) -> bool:
-        """並び替え=履歴 か。ふたばから取得せずスレッド履歴を一覧表示するモード。"""
+        """並び替えボタンが「履歴」か。＝これから何を取得するかの判断に使う。
+        ※ 描画側の分岐には使わないこと。ボタン状態と実際に保持しているデータは
+          一致しないタイミングがあるため、描画は _showing_history を見る。"""
         try:
             return self._sort_grp.checkedId() == self._HISTORY_SORT_ID
         except Exception:
             return False
+
+    def is_showing_history(self) -> bool:
+        """今 _all_entries に入っているのが「スレッド履歴由来のエントリ」か。
+        描画時の分岐はボタンではなくこちらを見る。ボタン状態を見ていると、
+        何らかの理由でボタンが「履歴」以外になっていた場合に、履歴一覧が
+        カタログの表示上限(縦×横)で切り詰められてしまう（低スペック機で
+        「スレッド: 50件」しか出ない不具合の原因）。"""
+        return bool(getattr(self, "_showing_history", False))
 
     def _apply_local_sort_availability(self):
         """履歴表示では意味を持たないローカル並び替えを無効化する。
@@ -9076,6 +9090,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._on_cat_hover_leave()
         self._clear_error_band()
         self.error_band_changed.emit("")
+        self._showing_history = True   # 描画側の分岐はこのフラグを見る
         self._all_entries = entries
         self._quar_nos = set()
         self._re_render()
@@ -9301,7 +9316,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
 
     def _render(self, entries, **kwargs):
         import datetime as _dt
-        _hist_render = self.is_history_mode()
+        _hist_render = self.is_showing_history()
         _DAY_JP = ['月','火','水','木','金','土','日']
         def _fmt_dt(dt):
             return (f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
