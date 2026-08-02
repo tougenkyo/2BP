@@ -62,6 +62,8 @@ _SRC_HREF_RE  = re.compile(r"/src/")
 _RES_NO_RE    = re.compile(r"No\.(\d+)")
 _TRIP_RE      = re.compile(r"[!◆★☆].+")
 _SODANE_RE    = re.compile(r"そうだねx(\d+)")
+# 生htm冒頭からOPのサムネイルURLを拾う（履歴表示で落ちたスレのサムネ復元用）
+_OP_THUMB_SRC_RE = re.compile(r'<img[^>]+src="([^"]*/thumb/[^"]+)"', re.I)
 _FSIZE_RE     = re.compile(r"[\-\(](\d+)\s*B")
 # 直前が英数字でも拾えるようにする（\b だと "…08:25:24ID:xxxx" のように
 # 区切りが失われた文字列で境界が成立せずマッチしなかった）
@@ -421,6 +423,50 @@ class FutabaFetcher:
         except Exception as e:
             print(f"[Cache] 読み込みエラー: {e}")
         return None
+
+    # ── 履歴カタログ用のキャッシュ照会 ─────────────────────────────────────
+
+    def has_thread_cache(self, url: str) -> bool:
+        """スレHTMLキャッシュが残っているか（履歴表示の「キャ有」判定）。"""
+        if not url:
+            return False
+        try:
+            return self._cache_path(url).exists()
+        except Exception:
+            return False
+
+    def cached_op_thumb(self, url: str) -> str:
+        """キャッシュ済み生htmからOP（スレ主）のサムネイルURLを取り出す。
+        落ちたスレのサムネを履歴表示に出すため。OPは先頭にあるので冒頭だけ読む
+        （履歴数百件ぶんを全読みするとディスクI/Oが重すぎるため）。"""
+        if not url:
+            return ""
+        try:
+            p = self._cache_path(url)
+            if not p.exists():
+                return ""
+            with p.open("r", encoding="utf-8", errors="replace") as f:
+                head = f.read(8192)
+        except Exception:
+            # URLが壊れている(hostname無し等)場合も _cache_path で失敗しうる
+            return ""
+        m = _OP_THUMB_SRC_RE.search(head)
+        if not m:
+            return ""
+        return urllib.parse.urljoin(url, m.group(1))
+
+    def cached_image_file_url(self, url: str) -> str:
+        """画像ディスクキャッシュに実体があれば file:// URL を返す（無ければ空）。
+        落ちたスレはふたば側から画像も消えているため、キャッシュから復元する。"""
+        if not url:
+            return ""
+        try:
+            p = self._img_disk_path(url)
+            if p.exists() and p.stat().st_size > 0:
+                return p.resolve().as_uri()
+        except Exception:
+            pass
+        return ""
 
     # ── diffサイドカー（JSON diff API由来レスの永続化） ─────────────────────
     # HTMLキャッシュは最後のフルGET時点の内容しか持たないため、

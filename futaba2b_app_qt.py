@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.302"
+APP_VER = "0.9.303"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8024,6 +8024,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
     error_band_changed = Signal(str)  # 通信エラー赤帯（text=詳細, ""=解除）をスレタブへ伝播
     quar_nos_changed   = Signal(object)  # 隔離スレNo集合が更新された（スレタブのオレンジ色再評価用）
     _catalog_err_sig   = Signal(str)  # BGスレッド→UI: カタログfetch失敗の詳細
+    _history_ready     = Signal(list)  # 履歴表示用エントリ（BG→UI）
 
     def __init__(self, fetcher: FutabaFetcher, settings: AppSettings, parent=None):
         super().__init__(parent)
@@ -8048,6 +8049,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._view_state_save_timer.setInterval(500)
         self._view_state_save_timer.timeout.connect(self._save_view_state)
         self._entries_ready.connect(self._on_entries_ready)
+        self._history_ready.connect(self._on_history_ready)
         self._hover_img_ready.connect(self._show_hover_img)
 
         lay = QVBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0)
@@ -8116,6 +8118,10 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # file:// 経由でロードしたHTMLからhttps://サムネイルを読み込めるようにする
         self._profile.settings().setAttribute(
             QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        # 履歴表示で、落ちたスレのサムネを画像ディスクキャッシュ(file://)から
+        # 出すために必要（カタログHTML自体も一時ファイル=file://から読む）。
+        self._profile.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         self._page    = _DebugPage(self._profile, self._profile)  # page親=profile→warning回避
         self._channel = QWebChannel(self._page)
         self._bridge  = CatalogBridge(self)
@@ -8191,6 +8197,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
     def reload(self):
         """現在の板・ソートで再読み込み（自動更新から呼ばれる）"""
         if self._board:
+            if self.is_history_mode():
+                # 履歴表示はふたばのカタログを取らない。落ち判定の更新のため
+                # mode=json だけ取り直して組み立て直す。
+                self._load_history()
+                return
             saved_ss = self._sort_grp.checkedId()
             sort = self._SERVER_SORTS[saved_ss] \
                    if 0 <= saved_ss < len(self._SERVER_SORTS) else 0
@@ -8499,6 +8510,10 @@ class CatalogView(_MouseGestureMixin, QWidget):
             saved_ss = self._sort_grp.checkedId()
             sort = self._SERVER_SORTS[saved_ss] \
                    if 0 <= saved_ss < len(self._SERVER_SORTS) else 0
+        if self.is_history_mode():
+            self._load_history()   # ふたばからは取得しない
+            return
+        self._apply_local_sort_availability()
         threading.Thread(target=self._fetch, args=(board, sort), daemon=True).start()
 
     def _fetch(self, board, sort):
@@ -8853,7 +8868,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # 大取得方式: _all_entries は板の全生存スレ。表示は cols×rows 件
         # （サーバ順=取得順の先頭）に絞り「14×6+隔離」相当に振る舞う。
         # あふれた分は隔離検出・read_counts追跡用に _all_entries 側に保持し表示からのみ除外。
-        _cap = self._display_capacity()
+        # 履歴表示はスレッド履歴そのものを見せるのが目的なので件数で切らない。
+        _hist = self.is_history_mode()
+        _cap = 0 if _hist else self._display_capacity()
         if _cap > 0 and len(entries) > _cap:
             entries = entries[:_cap]
         # 1. 過疎スレ非表示（板設定優先、なければAppSettings）
@@ -8874,7 +8891,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
         if _few_hide:
             entries = [e for e in entries if e.res_count > _few_lim]
         # 2. ローカルソート
-        if hasattr(self, '_local_sort_grp'):
+        # 履歴表示では「無し」（＝スレッド履歴の並び順のまま）と「50音」のみ有効。
+        # 「読」は全て既読、「勢」はレス数が揃わないため意味を持たない。
+        if hasattr(self, '_local_sort_grp') and not _hist:
             idx  = self._local_sort_grp.checkedId()
             # 「読」: thread_read_counts (実際に開いたスレ) を使って既読を上に
             read = self._settings.thread_read_counts
@@ -8887,21 +8906,28 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 entries.sort(key=lambda e: e.res_count)
             elif idx == 4:
                 entries.sort(key=lambda e: e.res_count, reverse=True)
+        elif _hist and hasattr(self, '_local_sort_grp'):
+            if self._local_sort_grp.checkedId() == 2:      # 50音
+                entries.sort(key=lambda e: (e.title or ""))
+            # 「無し」はスレッド履歴の並び順のまま（並べ替えない）
         # 3. 掲示板NGフィルタ（ng_board_hide_ng_thread）
+        # 履歴表示は「自分が開いたスレの一覧」なので、NGで欠けると用を成さない。
+        # NG非表示・字スレNG・ID非表示はいずれも適用しない。
         ng_filter = self._settings.ng_filter
-        if getattr(self._settings, "ng_board_hide_ng_thread", True):
-            entries = [e for e in entries if not ng_filter.is_ng_catalog(e)]
-        # 字スレNG（ng_board_hide_ng_threadとは独立して動作）
-        ng_empty_mode = getattr(self._settings, "ng_catalog_empty", 2)
-        if ng_empty_mode == 1:
-            # 「NGにする」: 画像なし（thumb_url空）のスレを除外
-            entries = [e for e in entries if (e.thumb_url or "").strip()]
-        elif ng_empty_mode == 0:
-            # 「本文空のみNG」: 画像なし かつ タイトルも空のスレのみ除外
-            entries = [e for e in entries if (e.thumb_url or "").strip() or (e.title or "").strip()]
-        # 3.5 IDが出た(共通ID)スレ: 「最下部に表示」OFF なら非表示にする
-        if not getattr(self._settings, "catalog_common_id_bottom", True):
-            entries = [e for e in entries if not (getattr(e, 'op_id', '') or '').strip()]
+        if not _hist:
+            if getattr(self._settings, "ng_board_hide_ng_thread", True):
+                entries = [e for e in entries if not ng_filter.is_ng_catalog(e)]
+            # 字スレNG（ng_board_hide_ng_threadとは独立して動作）
+            ng_empty_mode = getattr(self._settings, "ng_catalog_empty", 2)
+            if ng_empty_mode == 1:
+                # 「NGにする」: 画像なし（thumb_url空）のスレを除外
+                entries = [e for e in entries if (e.thumb_url or "").strip()]
+            elif ng_empty_mode == 0:
+                # 「本文空のみNG」: 画像なし かつ タイトルも空のスレのみ除外
+                entries = [e for e in entries if (e.thumb_url or "").strip() or (e.title or "").strip()]
+            # 3.5 IDが出た(共通ID)スレ: 「最下部に表示」OFF なら非表示にする
+            if not getattr(self._settings, "catalog_common_id_bottom", True):
+                entries = [e for e in entries if not (getattr(e, 'op_id', '') or '').strip()]
         # 4. 検索: ヒットを上に隔離して表示 (正規表現対応)
         kw = self._search.text().strip()
         search_sections = None
@@ -8934,6 +8960,29 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 self._exec_reverse_ng_action(rev_entries, action, ng_filter)
 
     _SERVER_SORTS = [0, 1, 2, 3, 4, 9]  # 通常/新順/古順/多順/少順/履歴
+    _HISTORY_SORT_ID = 5   # 「履歴」ボタンのID（サーバー取得せずスレッド履歴から作る）
+
+    def is_history_mode(self) -> bool:
+        """並び替え=履歴 か。ふたばから取得せずスレッド履歴を一覧表示するモード。"""
+        try:
+            return self._sort_grp.checkedId() == self._HISTORY_SORT_ID
+        except Exception:
+            return False
+
+    def _apply_local_sort_availability(self):
+        """履歴表示では意味を持たないローカル並び替えを無効化する。
+        「読」は全て既読、「勢▲▼」はレス数が揃わないため、無し/50音のみ有効。"""
+        hist = self.is_history_mode()
+        for _bid in (1, 3, 4):          # 読 / 勢▲ / 勢▼
+            b = self._local_sort_grp.button(_bid)
+            if b is None:
+                continue
+            b.setEnabled(not hist)
+            if hist and b.isChecked():
+                # 無効なものが選ばれたままだと履歴順に戻せないので「無し」へ倒す
+                b0 = self._local_sort_grp.button(0)
+                if b0 is not None:
+                    b0.setChecked(True)
 
     def _on_server_sort_changed(self, idx: int = -1):
         if idx < 0: idx = self._sort_grp.checkedId()
@@ -8941,6 +8990,91 @@ class CatalogView(_MouseGestureMixin, QWidget):
             sort = self._SERVER_SORTS[idx] if 0 <= idx < len(self._SERVER_SORTS) else 0
             self._save_view_state()
             self.load(self._board, sort)
+
+    # ── 履歴表示 ──────────────────────────────────────────────────────────
+    def _load_history(self):
+        """スレッド履歴から一覧を組み立てて表示する（ふたばのカタログは取得しない）。
+        生存判定(落ちバッジ)と生存スレのサムネ補完のため mode=json だけ取得する。"""
+        board = self._board
+        if board is None:
+            return
+        self._apply_local_sort_availability()
+
+        def _work(_b=board):
+            jinfo = None
+            try:
+                jinfo = self._fetcher.fetch_catalog_json(_b)
+            except Exception as e:
+                print(f'[History] json fetch error: {e}')
+            try:
+                entries = self._build_history_entries(_b, jinfo)
+            except Exception as e:
+                import traceback as _tb
+                print(f'[History] build error: {e}\n{_tb.format_exc()}')
+                entries = []
+            self._history_ready.emit(entries)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _build_history_entries(self, board, jinfo) -> list:
+        """スレッド履歴から、この板のぶんだけカタログ用エントリを作る。
+        ・生存スレ … mode=json の thumb/id を使う
+        ・落ちたスレ … キャッシュ生htmからサムネURLを拾い、画像ディスクキャッシュに
+                       実体が残っていれば file:// で表示する（ふたば側は404のため）
+        ※ ワーカースレッドから呼ばれる（ファイルI/Oを含むため）"""
+        jmap = (jinfo or {}).get("map") or {}
+        jnos = (jinfo or {}).get("nos") or set()
+        base = board.base_url
+        trc = dict(self._settings.thread_read_counts)
+        out = []
+        for h in list(self._settings.thread_history):
+            _burl = str(h.get("url", "") or "")
+            if not _burl:
+                continue
+            # 板の一致は base_url で見る（二次元裏は may/img/jun が別サーバー）
+            if BoardInfo(name="", url=_burl).base_url != base:
+                continue
+            try:
+                no = int(h.get("no", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if no <= 0:
+                continue
+            turl = base + f"res/{no}.htm"
+            ji = jmap.get(no)
+            # jinfo が取れなかった時は落ち判定不能 → 落ちバッジは付けない
+            alive = (no in jnos) if jnos else True
+            thumb = ""
+            if ji:
+                thumb = (ji.get("thumb", "") or "")
+            if not thumb:
+                # 落ちたスレ等: キャッシュ生htm → 画像ディスクキャッシュの順で復元
+                _t = self._fetcher.cached_op_thumb(turl)
+                if _t:
+                    thumb = self._fetcher.cached_image_file_url(_t) or ""
+            out.append(CatalogEntry(
+                no         = no,
+                thumb_url  = thumb,
+                res_count  = int(trc.get(turl, 0) or 0),
+                thread_url = turl,
+                title      = str(h.get("title", "") or ""),
+                email      = (ji or {}).get("email", ""),
+                op_id      = (ji or {}).get("id", ""),
+                board      = board,
+                is_dead    = (not alive),
+                has_cache  = self._fetcher.has_thread_cache(turl),
+            ))
+        return out
+
+    def _on_history_ready(self, entries: list):
+        """履歴エントリの受け取り（隔離合成・json マージは通さない）。"""
+        self._on_cat_hover_leave()
+        self._clear_error_band()
+        self.error_band_changed.emit("")
+        self._all_entries = entries
+        self._quar_nos = set()
+        self._re_render()
+        self._emit_catalog_status()
 
     def _open_catalog_settings(self):
         """板ごとの設定ダイアログ（カタログタブ）を開く"""
@@ -9162,6 +9296,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
 
     def _render(self, entries, **kwargs):
         import datetime as _dt
+        _hist_render = self.is_history_mode()
         _DAY_JP = ['月','火','水','木','金','土','日']
         def _fmt_dt(dt):
             return (f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
@@ -9218,8 +9353,12 @@ class CatalogView(_MouseGestureMixin, QWidget):
                             hover_comment=getattr(self._settings, "catalog_hover_comment", False),
                             show_email=False,  # カタログのメール内容バッジ（フッタ）は常に非表示
                             show_badge=getattr(self._settings, "catalog_show_mail_badge", True),
-                            quarantine_section=getattr(self._settings, "catalog_quarantine_bottom", True),
-                            common_id_section=getattr(self._settings, "catalog_common_id_bottom", True))
+                            # 履歴表示は隔離合成もID最下部送りも行わない
+                            # （履歴の並びをそのまま見せるのが目的）
+                            quarantine_section=(False if _hist_render else
+                                getattr(self._settings, "catalog_quarantine_bottom", True)),
+                            common_id_section=(False if _hist_render else
+                                getattr(self._settings, "catalog_common_id_bottom", True)))
         # マージ再描画（_re_render_light 経由）はフルリロードせず body のみ入替える。
         # 通常描画（カタログ取得・ソート・検索等）は従来どおりフルロード（先頭に戻る挙動を維持）。
         _light = self._light_render_once
@@ -9245,6 +9384,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # 大取得方式: 表示は cols×rows 件に絞っているが、read_counts の追跡対象は
         # 板の全生存スレ(_all_entries の非隔離)で行う。表示外(あふれ)スレの基準値が
         # 毎描画で消える/再登録されて +N が壊れるのを防ぐ。
+        if _hist_render:
+            # 履歴表示の _all_entries は「履歴に載っているスレ」であって板の
+            # 生存スレ一覧ではない。これを基準に既読カウントを掃除すると、
+            # 履歴に無いスレの既読数（＋Nの基準値）を消してしまうため何もしない。
+            return
         rc  = self._settings.catalog_read_counts
         trc = self._settings.thread_read_counts
         _live_real = [e for e in getattr(self, '_all_entries', [])
