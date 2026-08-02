@@ -128,6 +128,7 @@ class CatalogEntry:
     # 履歴表示（並び替え=履歴）用のフラグ
     is_dead:   bool = False      # 既に落ちたスレ（mode=json に存在しない）
     has_cache: bool = False      # スレHTMLキャッシュが残っている
+    has_posted: bool = False     # 自分が書き込んだことがある（履歴の posted 由来）
     # オンマウス表示用のOP本文（mode=json の com を素テキスト化したもの）。
     # title はカタログHTML由来で板の「文字数」までしか無いため、ホバー表示だけ
     # こちらを使う。NG判定・カタログのセル文字は従来どおり title を使う。

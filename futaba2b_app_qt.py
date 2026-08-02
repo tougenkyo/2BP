@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.316"
+APP_VER = "0.9.317"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9170,6 +9170,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 board      = board,
                 is_dead    = (not alive),
                 has_cache  = self._fetcher.has_thread_cache(turl),
+                # 履歴の posted（最後に書き込んだ日時）が入っていれば自書スレ。
+                # 返信成功時と自分で立てたスレの両方で記録される。
+                has_posted = bool(str(h.get("posted", "") or "").strip()),
             ))
         # ── レス数が取れなかったスレをHTMLキャッシュから埋める ──────────────
         # 板から落ちたスレは thread_read_counts が掃除で消えるため0になる。
@@ -9501,7 +9504,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
                             quarantine_section=(False if _hist_render else
                                 getattr(self._settings, "catalog_quarantine_bottom", True)),
                             common_id_section=(False if _hist_render else
-                                getattr(self._settings, "catalog_common_id_bottom", True)))
+                                getattr(self._settings, "catalog_common_id_bottom", True)),
+                            history_mode=_hist_render)
         # マージ再描画（_re_render_light 経由）はフルリロードせず body のみ入替える。
         # 通常描画（カタログ取得・ソート・検索等）は従来どおりフルロード（先頭に戻る挙動を維持）。
         _light = self._light_render_once

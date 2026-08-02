@@ -464,11 +464,13 @@ body {
     color: #fff; background: #cc1105; padding: 1px 2px; border-radius: 2px;
     pointer-events: none; z-index: 2;
 }
-/* キャッシュ有りバッジ（サムネ左下・緑）※履歴表示のみ */
+/* キャッシュ有りバッジ（サムネ左下・緑）※履歴表示のみ
+   左下(キャ有)と右下(自書)は横に並ぶため、最小サムネ(56px)でも重ならないよう
+   左右のpaddingを1pxに詰めている（他のバッジは2pxのまま） */
 .cat-badge-cache {
     position: absolute; bottom: 1px; left: 1px;
     font-size: 7pt; font-weight: bold; line-height: 1;
-    color: #fff; background: #2E7D32; padding: 1px 2px; border-radius: 2px;
+    color: #fff; background: #2E7D32; padding: 1px 1px; border-radius: 2px;
     pointer-events: none; z-index: 2;
 }
 /* 隔離バッジ（サムネ右下・オレンジ） */
@@ -477,6 +479,14 @@ body {
     font-size: 7pt; font-weight: bold; line-height: 1;
     color: #fff; background: #E08000; padding: 1px 2px; border-radius: 2px;
     pointer-events: none; z-index: 2;
+}
+/* 自分が書き込んだスレのバッジ（サムネ右下・青）※履歴表示のみ。
+   履歴表示では隔離バッジを出さないので右下で衝突しない */
+.cat-badge-self {
+    position: absolute; bottom: 1px; right: 1px; top: auto;
+    font-size: 7pt; font-weight: bold; line-height: 1;
+    color: #fff; background: #1a6fd4; padding: 1px 1px; border-radius: 2px;
+    pointer-events: none; z-index: 3;
 }
 .entry img {
     display: block;
@@ -2346,7 +2356,8 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                      show_email: bool = False,
                      show_badge: bool = False,
                      quarantine_section: bool = False,
-                     common_id_section: bool = False) -> str:
+                     common_id_section: bool = False,
+                     history_mode: bool = False) -> str:
     """
     search_sections: None | (matched_list, unmatched_list)
     指定された場合、matched を上にセクション表示する
@@ -2458,9 +2469,14 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                 _thumb_badge = f'<span class="cat-badge {_bc}" title="{_e(_em) or "ID"}">{_bt}</span>'
 
         # 隔離スレは右下にオレンジの隔離バッジを表示
+        # （履歴表示では隔離合成そのものを行わないため出さない。右下は自書バッジが使う）
         _quar_badge = ''
-        if getattr(e, 'is_quarantine', False):
+        if getattr(e, 'is_quarantine', False) and not history_mode:
             _quar_badge = '<span class="cat-badge-quar" title="隔離スレ">隔離</span>'
+        # 自分が書き込んだことがあるスレは右下に青の自書バッジ（履歴表示用）
+        _self_badge = ('<span class="cat-badge-self" '
+                       'title="自分が書き込んだことがあるスレ">自書</span>'
+                       if getattr(e, 'has_posted', False) else '')
         # 履歴表示用: 落ち（左上・赤）／キャッシュ有り（左下・緑）
         _dead_badge = ('<span class="cat-badge-dead" title="既に落ちたスレ">落</span>'
                        if getattr(e, 'is_dead', False) else '')
@@ -2501,7 +2517,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             f'onmousedown="handleCatMouseDown(\'{url}\',event)"'
             f'{_hover_attrs}>' +
             f'<div class="entry-img">{img_elem}{_thumb_badge}{_quar_badge}'
-            f'{_dead_badge}{_cache_badge}</div>' +
+            f'{_dead_badge}{_cache_badge}{_self_badge}</div>' +
             f'<div class="entry-title"{_title_style}>{_e(title)}</div>' +
             f'<div class="entry-foot"><span>{_rc_disp}</span><span>{delta_s}</span>'
             f'{_email_badge}</div>' +
