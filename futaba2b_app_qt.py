@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.298"
+APP_VER = "0.9.299"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1427,6 +1427,7 @@ class _MouseGestureMixin:
 
         if   action == "close_tab":       _mw("_close_current_tab")
         elif action == "close_all_tabs":  _pane("_gesture_close_all")
+        elif action == "reopen_tab":      _mw("_reopen_closed_tab")
         elif action == "prev_tab":        _mw("_prev_tab")
         elif action == "next_tab":        _mw("_next_tab")
         elif action == "refresh_current": _mw("_refresh_current")

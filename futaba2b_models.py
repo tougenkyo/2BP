@@ -165,6 +165,7 @@ class AutoRefreshEntry:
 MOUSE_GESTURE_ACTIONS: list[tuple[str, str]] = [
     ("close_tab",       "このビューを閉じる"),
     ("close_all_tabs",  "全てのビューを閉じる"),
+    ("reopen_tab",      "閉じたタブを開き直す"),
     ("prev_tab",        "左のタブへ移動"),
     ("next_tab",        "右のタブへ移動"),
     ("refresh_current", "このビューの更新"),
