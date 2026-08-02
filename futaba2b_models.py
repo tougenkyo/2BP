@@ -187,7 +187,10 @@ MOUSE_GESTURE_ACTIONS: list[tuple[str, str]] = [
     ("refresh_current", "このビューの更新"),
     ("refresh_board",   "この板の更新"),
     ("catalog",         "カタログ表示"),
-    ("board_top",       "掲示板を表示する"),
+    # 2BPには futaba.htm のスレ一覧ページを表示するビューが無いため、これは
+    # 「カタログ表示」と同じ動作になる。旧2Bからの割り当てをそのまま使えるよう
+    # 項目自体は残し、同じものだと分かるラベルにしている。
+    ("board_top",       "掲示板を表示する（カタログ表示と同じ）"),
     ("reply",           "返信ダイアログを開く"),
     ("new_thread",      "スレッドを立てる"),
     ("find_in_view",    "ページ内検索"),

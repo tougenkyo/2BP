@@ -532,7 +532,7 @@ class MainWindow(QMainWindow):
 
         bm = mb.addMenu("板・スレッド(&B)")
         bm.addAction(QAction("カタログ(&C)", self,
-                             triggered=lambda: self._show_board_view("catalog"),
+                             triggered=lambda: self._show_board_catalog(),
                              shortcut=_sc("catalog")))
         bm.addAction(QAction("この板の更新(&B)", self,
                              triggered=self._refresh_board, shortcut=_sc("refresh_board")))
@@ -770,9 +770,18 @@ class MainWindow(QMainWindow):
         self._current_board = board
         self._url_bar.setText(board.url)
         self._st_log.setText(f"板を開いています: {board.name}")
-        self._show_board_view("catalog", board)
+        self._show_board_catalog(board)
 
-    def _show_board_view(self, view: str, board: BoardInfo | None = None):
+    def _show_board_catalog(self, board: BoardInfo | None = None):
+        """板のカタログタブを前面に出して再取得する（無ければ作る）。
+
+        旧名は _show_board_view(view, board) だったが、view 引数は一度も
+        参照されておらず、"board" を渡しても "catalog" と同じ動作だった。
+        振り分けているように見えて実際はしていない、という誤解のもとになる
+        （マウスジェスチャーの「掲示板を表示する」が黙ってカタログを出して
+        いたのがその実例）ため、引数ごと削除した。
+        2BPには futaba.htm のスレ一覧ページを表示するビューは無く、板の表示は
+        カタログに一本化されている。"""
         # 板の指定が無いとき（メニュー「カタログ」/F9/マウスジェスチャー）は
         # 前面の板タブの板を使う。_current_board は板ツリー・URLバーで板を選んだ
         # 時にしか代入されないので、これを最優先にすると
@@ -2583,7 +2592,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_board(self):
         inner = self._active_inner()
-        if inner: self._show_board_view("catalog", inner._board)
+        if inner: self._show_board_catalog(inner._board)
 
     def _open_reply(self, board: BoardInfo, resto: int, quote_no: int, qt: str):
         inner = self._active_inner()
@@ -5386,7 +5395,7 @@ class MainWindow(QMainWindow):
             board, tab, foreground, entry = tasks[idx]
 
             if tab["type"] == "catalog":
-                self._show_board_view("catalog", board)
+                self._show_board_catalog(board)
             elif tab["type"] == "thread" and tab.get("no"):
                 if foreground:
                     self._open_thread(board, tab["no"])

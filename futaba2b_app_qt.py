@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.314"
+APP_VER = "0.9.315"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1442,8 +1442,12 @@ class _MouseGestureMixin:
         elif action == "next_tab":        _mw("_next_tab")
         elif action == "refresh_current": _mw("_refresh_current")
         elif action == "refresh_board":   _mw("_refresh_board")
-        elif action == "catalog":         _mw("_show_board_view", "catalog")
-        elif action == "board_top":       _mw("_show_board_view", "board")
+        elif action == "catalog":         _mw("_show_board_catalog")
+        # 2BPには futaba.htm のスレ一覧ページを表示するビューが無く、板の表示は
+        # カタログに一本化されている。旧実装は _show_board_view("board") を呼んで
+        # いたが、この関数は view 引数を見ておらず結局カタログを出していた。
+        # 動作は変えず（既存の割り当てをそのまま活かす）、同じものだと分かる形にする。
+        elif action == "board_top":       _mw("_show_board_catalog")
         elif action == "reply":           _mw("_reply_current")
         elif action == "new_thread":      _mw("_new_thread")
         elif action == "find_in_view":    _mw("_find_in_view")
