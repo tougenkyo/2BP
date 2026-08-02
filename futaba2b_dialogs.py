@@ -4161,6 +4161,12 @@ class AppSettingsDialog(QDialog):
                 "外部ブラウザ=画像を常に外部ブラウザで開く（http系URLのみ／ログ内画像はタブ）\n"
                 "隣タブ=画像タブを現在のタブの隣に開く")
         ivf.addRow("画像表示方法:", self._image_display_mode)
+        self._image_open_actual = QCheckBox("画像を原寸大（100%）で開く")
+        self._image_open_actual.setToolTip(
+            "OFF: 画面に合わせて表示（従来）\n"
+            "ON : 開いた時点で原寸大（100%）にする。\n"
+            "どちらの場合も拡大率は後から変更でき、前へ/次へでは引き継がれます。")
+        ivf.addRow(self._image_open_actual)
 
         # ── 自分のレス ──
         g_self = QGroupBox("自分のレス"); f1.addWidget(g_self); sf = QFormLayout(g_self)
@@ -4887,6 +4893,7 @@ class AppSettingsDialog(QDialog):
         self._tab_pink_op_no_id.setChecked(getattr(s, "tab_pink_op_no_id", False))
         self._tab_orange_quarantine.setChecked(getattr(s, "tab_orange_quarantine", True))
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
+        self._image_open_actual.setChecked(getattr(s, "image_open_actual_size", False))
         self._recent_closed_max.setValue(getattr(s, "recent_closed_max", 30))
         self._recent_images_max.setValue(getattr(s, "recent_images_max", 30))
         self._id_warn_count.setValue(getattr(s, "id_warn_count", 5))
@@ -5043,6 +5050,7 @@ class AppSettingsDialog(QDialog):
         s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
+        s.image_open_actual_size  = self._image_open_actual.isChecked()
         s.recent_closed_max       = self._recent_closed_max.value()
         s.recent_images_max       = self._recent_images_max.value()
         s.id_warn_count           = self._id_warn_count.value()

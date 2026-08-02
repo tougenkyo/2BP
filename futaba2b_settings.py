@@ -518,6 +518,8 @@ class AppSettings:
         self.thread_active: bool           = False
         self.link_memorized: bool          = True
         self.image_next_tab: bool          = False
+        # 画像を開いた時の初期倍率: True=原寸大(100%) / False=画面に合わせる
+        self.image_open_actual_size: bool  = False
         self.res_change_check: bool        = True
         self.thread_split_page_count: int  = 500
         self.show_res_number: bool         = True
@@ -837,6 +839,7 @@ class AppSettings:
                 elif raw.get("image_next_tab", False):
                     self.image_display_mode = 3
             self.image_mode_hover_popup = bool(raw.get("image_mode_hover_popup", True))
+            self.image_open_actual_size = bool(raw.get("image_open_actual_size", False))
             self.image_window_geometry = raw.get("image_window_geometry", None)
             self.auto_close_dead_tab    = raw.get("auto_close_dead_tab",    False)
             self.auto_close_full_tab    = raw.get("auto_close_full_tab",    False)
@@ -1025,6 +1028,7 @@ class AppSettings:
                         "thread_open_bg_mode": self.thread_open_bg_mode,
                         "image_display_mode":  self.image_display_mode,
                         "image_mode_hover_popup": self.image_mode_hover_popup,
+                        "image_open_actual_size": self.image_open_actual_size,
                         "image_window_geometry": self.image_window_geometry,
                         "auto_close_dead_tab":    self.auto_close_dead_tab,
                         "auto_close_full_tab":    self.auto_close_full_tab,

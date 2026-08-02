@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.294"
+APP_VER = "0.9.295"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10773,7 +10773,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
     open_image_tab_bg     = Signal(str, list, int)  # 中クリック → 非アクティブで画像タブを開く
 
     def __init__(self, url: str, img_list: list, idx: int,
-                 fetcher: FutabaFetcher, parent=None):
+                 fetcher: FutabaFetcher, parent=None, settings=None):
         super().__init__(parent)
         self._img_list = img_list; self._idx = idx; self._fetcher = fetcher
         self._src_thread_view = None  # 開いたThreadView（img_list更新追跡用）
@@ -10797,7 +10797,9 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._folder_bar_lay.setSpacing(3)
         self._folder_bar_lay.addStretch()
         self._fetcher_ref = fetcher  # _save_to_folder用
-        self._settings_ref = None    # MainWindowから設定参照を後でセットする
+        # 設定は set_settings でも渡されるが、初期倍率の決定は最初の表示より前に
+        # 必要なのでコンストラクタでも受け取る（省略時は従来どおり後からセット）。
+        self._settings_ref = settings
         # ⚙ ボタン（フォルダバー右端、_rebuild_folder_bar で使い回す）
         self._cfg_btn = QPushButton("⚙")
         self._cfg_btn.setFixedWidth(28); self._cfg_btn.setFixedHeight(22)
@@ -10846,6 +10848,11 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._zoom_combo.addItems(["画面に合わせる", "25%", "50%", "75%", "100%", "150%", "200%", "400%"])
         self._zoom_combo.setFixedWidth(113)
         self._zoom_combo.setToolTip("拡大率 (Ctrl+ホイール・Ctrl++/−)")
+        # 「画像を原寸大で開く」設定: 初期選択を 100% にする。以降の表示は
+        # 従来どおりコンボの現在値を継承するので、前へ/次へでも維持される。
+        if getattr(settings, "image_open_actual_size", False):
+            self._zoom_combo.setCurrentText("100%")
+            self._fit_mode = False
         self._zoom_combo.currentTextChanged.connect(self._on_zoom_combo)
         ctrl_lay.addWidget(self._zoom_combo)
         # ── 拡大縮小 −/＋ ボタン（コンボの選択を上下させて反映）──
@@ -12347,6 +12354,15 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self.image_navigated.emit(
             self._img_list[self._idx].get("url", ""),
             self._img_list, self._idx)
+
+    def apply_default_zoom(self):
+        """「画像を原寸大で開く」設定を初期倍率として適用する。
+        画像ウインドウは1つを使い回すため、新しい画像を開くたびに呼ぶ。
+        （前へ/次へは load_image を直接呼ぶので現在の倍率を引き継ぐ）"""
+        if getattr(self._settings_ref, "image_open_actual_size", False):
+            self._zoom_combo.setCurrentText("100%")
+        else:
+            self._zoom_combo.setCurrentText("画面に合わせる")
 
     def load_image(self, url: str, img_list: list, idx: int):
         """ウインドウ再利用時などに、表示中の画像を別の画像に差し替える。"""

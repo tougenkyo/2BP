@@ -2249,7 +2249,7 @@ class MainWindow(QMainWindow):
                     inner.setCurrentIndex(i); return
         name = url.split("/")[-1][:14]
         img_list = [{"url": url, "name": url.split("/")[-1]}]
-        view = ImageTabView(url, img_list, 0, self._fetcher, inner)
+        view = ImageTabView(url, img_list, 0, self._fetcher, inner, self._settings)
         view.set_settings(self._settings)
         view.open_settings.connect(lambda: self._open_settings("画像保存"))
         view.image_navigated.connect(self._record_recent_image)
@@ -2632,7 +2632,7 @@ class MainWindow(QMainWindow):
             if isinstance(w, ImageTabView) and w._img_list and 0 <= w._idx < len(w._img_list):
                 if w._img_list[w._idx].get("url") == url:
                     inner.setCurrentIndex(i); return
-        view = ImageTabView(url, img_list, idx, self._fetcher, inner)
+        view = ImageTabView(url, img_list, idx, self._fetcher, inner, self._settings)
         # 元のThreadViewを記録（img_list更新追跡用）
         src = inner.currentWidget()
         if isinstance(src, ThreadView):
@@ -2670,7 +2670,7 @@ class MainWindow(QMainWindow):
             if isinstance(w, ImageTabView) and w._img_list and 0 <= w._idx < len(w._img_list):
                 if w._img_list[w._idx].get("url") == url:
                     return
-        view = ImageTabView(url, img_list, idx, self._fetcher, inner)
+        view = ImageTabView(url, img_list, idx, self._fetcher, inner, self._settings)
         # 元のThreadViewを記録（img_list更新追跡用）
         src = inner.currentWidget()
         if isinstance(src, ThreadView):
@@ -2706,7 +2706,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         if win is None:
-            view = ImageTabView(url, img_list, idx, self._fetcher, None)
+            view = ImageTabView(url, img_list, idx, self._fetcher, None, self._settings)
             view._src_thread_view = src
             view.set_settings(self._settings)
             view.open_settings.connect(lambda: self._open_settings("画像保存"))
@@ -2734,6 +2734,8 @@ class MainWindow(QMainWindow):
             # しても前の画像が残る（ウインドウを動かすと直る）。
             win.show()
             self._raise_image_window(win, activate)
+            # 画像ウインドウは使い回すため、新しい画像を開く時は初期倍率に戻す
+            view.apply_default_zoom()
             view.load_image(url, img_list, idx)
         self._record_recent_image(url, img_list, idx)
 
