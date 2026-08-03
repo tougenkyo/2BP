@@ -6141,12 +6141,20 @@ class BoardSettingsDialog(QDialog):
             _res.toggled.connect(_sync); _ul.toggled.connect(_sync)
             _sync()
             self._bs_blur[_key] = (_res, _ul, _lv)
-        # 引用モードのうｐろだ画像はツリー行には出ず、▼のポップアップの中だけが
-        # 対象になる。誤解しないよう、そこだけ説明を足しておく。
-        self._bs_blur["quote"][1].setToolTip(
-            "引用モードのツリー行にはうｐろだの画像は出ないため、\n"
-            "▼のポップアップに出るレスの中の画像が対象です。\n\n" + _TIP_UL + _TIP_COMMON)
+        # 引用モードにはうｐろだの画像を出す場所が無い（ツリー行には出ず、
+        # ▼のポップアップも _respool 由来でうｐろだ画像を描画しない）ため、
+        # チェックできないようにしておく。
+        _q_ul = self._bs_blur["quote"][1]
+        _q_ul.setChecked(False); _q_ul.setEnabled(False)
+        _q_ul.setToolTip(
+            "引用モードにはうｐろだの画像を表示する場所がないため設定できません。\n"
+            "（ツリー行には出ず、▼のポップアップにも描画されません）")
         _gr.setColumnStretch(4, 1)
+        _note = QLabel("※ ホバーで出るレスのポップアップは、表示中のモードに関わらず"
+                       "「返信モード」の設定でぼかします。")
+        _note.setWordWrap(True)
+        _note.setStyleSheet("color: gray; font-size: 8pt;")
+        _bl.addWidget(_note)
         f1.addStretch(); nb.addTab(_scroll(w1), "カタログ")
 
         # ══════════════════════════════════════════════════════════════════
@@ -6273,6 +6281,9 @@ class BoardSettingsDialog(QDialog):
             _i = _lv.findData(getattr(bs, f"blur_{_k}_level", "mid"))
             _lv.setCurrentIndex(_i if _i >= 0 else 1)
             _lv.setEnabled(_res.isChecked() or _ul.isChecked())
+        # 引用モードのうｐろだ画像は効かせようがないので常にOFF（_build で無効化済み）。
+        # 旧バージョンから引き継いだONもここで落として保存時に消える。
+        self._bs_blur["quote"][1].setChecked(False)
 
         # 自動更新
         use_t = bs.ar_use_default_thread

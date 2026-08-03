@@ -430,14 +430,21 @@ body                { --blur-o: 0.4;  --blur-f: blur(5px) grayscale(0.5);  --blu
 body.blur-weak      { --blur-o: 0.55; --blur-f: blur(3px) grayscale(0.3);  --blur-oh: 0.8;  }
 body.blur-mid       { --blur-o: 0.4;  --blur-f: blur(5px) grayscale(0.5);  --blur-oh: 0.65; }
 body.blur-strong    { --blur-o: 0.3;  --blur-f: blur(12px) grayscale(1);   --blur-oh: 0.5;  }
-/* スレ内に貼られた画像（ふたばの添付・手書き投稿もここ）。スレ画(OP)は除く */
-body.blur-res .res:not(.op) .thumb img:not(.thumb-shown),
-body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown),
+/* ホバーで出るレスのポップアップ(._rp)は、表示中のモードではなく返信モードの
+   設定に従う（中身はレスそのものなので、どのモードから開いても同じ見え方に
+   なるようにする）。body には返信モードの分も rp-* として付けてある。 */
+body.rp-weak   ._rp { --blur-o: 0.55; --blur-f: blur(3px) grayscale(0.3);  --blur-oh: 0.8;  }
+body.rp-mid    ._rp { --blur-o: 0.4;  --blur-f: blur(5px) grayscale(0.5);  --blur-oh: 0.65; }
+body.rp-strong ._rp { --blur-o: 0.3;  --blur-f: blur(12px) grayscale(1);   --blur-oh: 0.5;  }
+/* スレ内に貼られた画像（ふたばの添付・手書き投稿もここ）。スレ画(OP)は除く。
+   :not(._rp *) でポップアップの中身を外す（そちらは下の rp-* 側で扱う） */
+body.blur-res .res:not(.op) .thumb img:not(.thumb-shown):not(._rp *),
+body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown):not(._rp *),
 body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown),
 /* 引用モードのツリー行のサムネ（.res ではなく img.qt-thumb 単独）。スレ画は除く */
 body.blur-res img.qt-thumb:not(.qt-thumb-op):not(.thumb-shown),
 /* うｐろだの直リン画像（別設定） */
-body.blur-ul .ul-thumb:not(.thumb-shown),
+body.blur-ul .ul-thumb:not(.thumb-shown):not(._rp *),
 body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
     /* 消してしまうとクリック先が分からないので「ぼんやり見えている」状態にする。
        中身が読み取れないのは blur とグレースケールで担保する。
@@ -453,12 +460,26 @@ body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
 }
 /* ホバーで少し濃くする。ぼかしと彩度落としは維持するので中身は出ない。
    クリックできる場所だと分かるようにするためだけの変化。 */
-body.blur-res .res:not(.op) .thumb img:not(.thumb-shown):hover,
-body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown):hover,
+body.blur-res .res:not(.op) .thumb img:not(.thumb-shown):not(._rp *):hover,
+body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown):not(._rp *):hover,
 body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown):hover,
 body.blur-res img.qt-thumb:not(.qt-thumb-op):not(.thumb-shown):hover,
-body.blur-ul .ul-thumb:not(.thumb-shown):hover,
+body.blur-ul .ul-thumb:not(.thumb-shown):not(._rp *):hover,
 body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown):hover {
+    opacity: var(--blur-oh);
+}
+/* ポップアップの中身（返信モードの設定で伏せる） */
+body.rp-res ._rp .res:not(.op) .thumb img:not(.thumb-shown),
+body.rp-res ._rp .res:not(.op) .video-thumb img:not(.thumb-shown),
+body.rp-ul  ._rp .ul-thumb:not(.thumb-shown) {
+    opacity: var(--blur-o);
+    filter: var(--blur-f);
+    cursor: pointer;
+    transition: opacity 0.15s, filter 0.15s;
+}
+body.rp-res ._rp .res:not(.op) .thumb img:not(.thumb-shown):hover,
+body.rp-res ._rp .res:not(.op) .video-thumb img:not(.thumb-shown):hover,
+body.rp-ul  ._rp .ul-thumb:not(.thumb-shown):hover {
     opacity: var(--blur-oh);
 }
 /* スレ画（OPの添付画像）はぼかさない。カタログで既に見えているものであり、
@@ -761,8 +782,12 @@ document.addEventListener('click', function(e) {
     var inThread = (img.closest && (img.closest('.thumb')
                                     || img.closest('.video-thumb'))) || cell || isQt;
     if (!isUl && !inThread) return;
-    /* うｐろだ由来とスレ内の画像で設定が別なので、対応する方だけ見る */
-    if (!document.body.classList.contains(isUl ? 'blur-ul' : 'blur-res')) return;
+    /* うｐろだ由来とスレ内の画像で設定が別なので、対応する方だけ見る。
+       ポップアップの中身は表示中のモードではなく返信モードの設定(rp-*)を見る */
+    var inPop = !!(img.closest && img.closest('._rp'));
+    if (!document.body.classList.contains(
+            inPop ? (isUl ? 'rp-ul' : 'rp-res')
+                  : (isUl ? 'blur-ul' : 'blur-res'))) return;
     if (!isUl) {   /* スレ画(OP)はぼかしの対象外 */
         if ((img.closest && img.closest('.res.op'))
             || (cell && cell.classList.contains('gi-op'))
@@ -786,6 +811,16 @@ function setBlurLevel(lv) {
     b.classList.remove('blur-weak', 'blur-mid', 'blur-strong');
     b.classList.add('blur-' + (lv || 'mid'));
 }
+/* ポップアップ（ホバーで出るレス）用に、返信モードの設定を body へ持たせる。
+   表示中のモードが何であれ、ポップアップの中身はこちらに従う。 */
+function setReplyBlur(onRes, onUl, lv) {
+    var b = document.body;
+    if (!b) return;
+    b.classList.toggle('rp-res', !!onRes);
+    b.classList.toggle('rp-ul',  !!onUl);
+    b.classList.remove('rp-weak', 'rp-mid', 'rp-strong');
+    b.classList.add('rp-' + (lv || 'mid'));
+}
 /* ぼかしの ON/OFF を再読込なしで切り替える（スレ内 / うｐろだ を個別に） */
 function setBlurThumbs(onRes, onUl) {
     var b = document.body;
@@ -793,8 +828,10 @@ function setBlurThumbs(onRes, onUl) {
     var wasUl  = b.classList.contains('blur-ul');
     b.classList.toggle('blur-res', !!onRes);
     b.classList.toggle('blur-ul',  !!onUl);
-    /* 再度ONにした側は、開いていたものを伏せ直す */
+    /* 再度ONにした側は、開いていたものを伏せ直す。
+       ポップアップの中身は返信モードの設定で動くので対象外。 */
     document.querySelectorAll('.thumb-shown').forEach(function(el) {
+        if (el.closest && el.closest('._rp')) return;
         var cell = el.closest('.gi');
         var isUl = el.classList.contains('ul-thumb')
                    || !!(cell && cell.classList.contains('gi-ul'));
@@ -2410,8 +2447,12 @@ def thread_to_html(thread, show_deleted: bool = False,
         body_class = ''
     # 表示モードの目印（user.css からモード別に指定できるようにする）と
     # サムネぼかし（グロ画像対策・板ごとの設定）: どちらも body クラスで効かせる
-    _bc = (["m-reply", f"blur-{blur_level or 'mid'}"]
-           + (["blur-res"] if blur_res else []) + (["blur-ul"] if blur_ul else []))
+    # rp-* はポップアップ用（返信モードの設定）。このページ自体が返信モードなので
+    # 同じ値になるが、画像/引用モードでも同じクラスが付く（そちらは _page_body_class）。
+    _lv = blur_level or "mid"
+    _bc = (["m-reply", f"blur-{_lv}", f"rp-{_lv}"]
+           + (["blur-res", "rp-res"] if blur_res else [])
+           + (["blur-ul", "rp-ul"] if blur_ul else []))
     _add = " ".join(_bc)
     body_class = (body_class.replace('class="', f'class="{_add} ')
                   if body_class else f' class="{_add}"')

@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.337"
+APP_VER = "0.9.338"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6414,19 +6414,27 @@ class ThreadView(_MouseGestureMixin, QWidget):
         画像/引用モードのHTML生成で使う（返信モードは thread_to_html 側で付ける）。
         モードの目印は user.css からモード別に指定するためのフック。"""
         _res, _ul = self._blur_flags(mode)
-        _c = ([f"m-{mode or 'reply'}", f"blur-{self._blur_level(mode)}"]
-              + (["blur-res"] if _res else []) + (["blur-ul"] if _ul else []))
+        _rr, _ru = self._blur_flags("reply")     # ポップアップ用（rp-*）
+        _c = ([f"m-{mode or 'reply'}", f"blur-{self._blur_level(mode)}",
+               f"rp-{self._blur_level('reply')}"]
+              + (["blur-res"] if _res else []) + (["blur-ul"] if _ul else [])
+              + (["rp-res"] if _rr else []) + (["rp-ul"] if _ru else []))
         return f' class="{" ".join(_c)}"'
 
     def _blur_js(self, mode: str = "") -> str:
         """ぼかしの ON/OFF と強さを現在のページへ反映するJS。
         モード切替はDOM入替（body要素は残る）なので、切替後に呼ばないと
-        前のモードのぼかし設定が残ってしまう。"""
+        前のモードのぼかし設定が残ってしまう。
+        ホバーで出るレスのポップアップは表示中のモードによらず返信モードの
+        設定に従うので、そちらも一緒に入れ直す。"""
         _res, _ul = self._blur_flags(mode)
+        _rr, _ru = self._blur_flags("reply")
+        _b = lambda x: "true" if x else "false"
         return ("if(window.setBlurLevel)setBlurLevel('%s');"
                 "if(window.setBlurThumbs)setBlurThumbs(%s,%s);"
-                % (self._blur_level(mode),
-                   "true" if _res else "false", "true" if _ul else "false"))
+                "if(window.setReplyBlur)setReplyBlur(%s,%s,'%s');"
+                % (self._blur_level(mode), _b(_res), _b(_ul),
+                   _b(_rr), _b(_ru), self._blur_level("reply")))
 
     def apply_blur_setting(self):
         """サムネぼかしの設定変更を表示中のページへ即時反映する（再読込不要）。
