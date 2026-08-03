@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.329"
+APP_VER = "0.9.330"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6875,6 +6875,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
             if _ngm and not _reveal:                        # NG使う時は非表示、解除時は帯付き表示
                 _gi_cls += " ng-hidden"
             if it.get('is_ul'):  _gi_cls += " gi-ul"        # あぷ由来（user.css用の目印）
+            # スレ画（OPの添付）はぼかしの対象外にするための目印
+            if r.res_idx == 0 and not it.get('is_ul'):
+                _gi_cls += " gi-op"
             _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
             items.append(
                 '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'" data-img-url="'+_ua+'"'

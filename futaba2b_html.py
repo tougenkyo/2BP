@@ -424,15 +424,29 @@ body.op-no-id .post-id.post-id-warn {
    グリッドをまとめて伏せる。手書きかどうかはHTML上で判別できないため、
    出所で分けずに全部伏せてクリックで1枚ずつ出す方式にしている。
    NG画像と違い hover では出さない（クリックしに行くだけで見えてしまうため）。*/
-body.blur-thumbs .thumb img:not(.thumb-shown),
+body.blur-thumbs .res:not(.op) .thumb img:not(.thumb-shown),
 body.blur-thumbs .ul-thumb:not(.thumb-shown),
-body.blur-thumbs .video-thumb img:not(.thumb-shown),
-body.blur-thumbs .gi .gt img:not(.thumb-shown) {
-    opacity: 0.05;
-    filter: blur(12px);
+body.blur-thumbs .res:not(.op) .video-thumb img:not(.thumb-shown),
+body.blur-thumbs .gi:not(.gi-op) .gt img:not(.thumb-shown) {
+    /* 消してしまうとクリック先が分からないので「ぼんやり見えている」状態にする。
+       中身が読み取れないのは blur とグレースケールで担保する。
+       グロ画像の判別は色（赤）に大きく依るため、彩度を落とすのが効く。 */
+    opacity: 0.4;
+    filter: blur(18px) grayscale(1);
     cursor: pointer;
     transition: opacity 0.15s, filter 0.15s;
 }
+/* ホバーで少し濃くする。ぼかしと彩度落としは維持するので中身は出ない。
+   クリックできる場所だと分かるようにするためだけの変化。 */
+body.blur-thumbs .res:not(.op) .thumb img:not(.thumb-shown):hover,
+body.blur-thumbs .ul-thumb:not(.thumb-shown):hover,
+body.blur-thumbs .res:not(.op) .video-thumb img:not(.thumb-shown):hover,
+body.blur-thumbs .gi:not(.gi-op) .gt img:not(.thumb-shown):hover {
+    opacity: 0.65;
+}
+/* スレ画（OPの添付画像）はぼかさない。カタログで既に見えているものであり、
+   グロ貼りは返信で起きるため。OP本文中のうｐろだ直リンは対象のまま
+   （外部の任意画像なので中身が読めない点は変わらない）。 */
 /* ─ 抽出（スレ内絞り込み）で非表示にするレス ─ */
 .res._ext_hide { display: none !important; }
 .page-footer {
