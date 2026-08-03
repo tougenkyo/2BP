@@ -4836,6 +4836,9 @@ class MainWindow(QMainWindow):
                     _v = pane._tabs.widget(_j)
                     if hasattr(_v, 'apply_mouse_gesture_setting'):
                         _v.apply_mouse_gesture_setting()
+                    # サムネぼかしのON/OFFも再読込なしで反映する
+                    if hasattr(_v, 'apply_blur_setting'):
+                        _v.apply_blur_setting()
         # テーマ変更をステータスバーへ再適用（個別styleSheetはアプリ全体スタイルより
         # 優先されるため、明示的に塗り直さないと色が変わらない）
         self._apply_statusbar_theme()

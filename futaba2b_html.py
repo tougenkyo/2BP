@@ -419,6 +419,20 @@ body.op-no-id .post-id.post-id-warn {
     opacity: 1 !important;
     filter: none !important;
 }
+/* ─ サムネのぼかし（グロ画像対策・body.blur-thumbs で有効） ─
+   ふたばの添付画像（手書き投稿もこれ）とうｐろだの直リン画像、画像モードの
+   グリッドをまとめて伏せる。手書きかどうかはHTML上で判別できないため、
+   出所で分けずに全部伏せてクリックで1枚ずつ出す方式にしている。
+   NG画像と違い hover では出さない（クリックしに行くだけで見えてしまうため）。*/
+body.blur-thumbs .thumb img:not(.thumb-shown),
+body.blur-thumbs .ul-thumb:not(.thumb-shown),
+body.blur-thumbs .video-thumb img:not(.thumb-shown),
+body.blur-thumbs .gi .gt img:not(.thumb-shown) {
+    opacity: 0.05;
+    filter: blur(12px);
+    cursor: pointer;
+    transition: opacity 0.15s, filter 0.15s;
+}
 /* ─ 抽出（スレ内絞り込み）で非表示にするレス ─ */
 .res._ext_hide { display: none !important; }
 .page-footer {
@@ -702,6 +716,30 @@ function quoteImg(no)           { _b('quoteImg',       [no]); }
 function ngRes(no)              { _b('ngRes',          [no]); }
 function quoteIdIp(no)          { _b('quoteIdIp',      [no]); }
 function sodane(no)             { _b('sodane',         [no]); }
+/* サムネぼかし: 1枚目のクリックで伏せを解除する（画像は開かない）。
+   2回目以降のクリックは従来どおり画像を開く。
+   キャプチャ段階で拾って、レス側の onclick より先に止める。 */
+document.addEventListener('click', function(e) {
+    if (!document.body.classList.contains('blur-thumbs')) return;
+    var img = e.target;
+    if (!img || img.tagName !== 'IMG') return;
+    if (img.classList.contains('thumb-shown')) return;
+    var ok = (img.closest && (img.closest('.thumb') || img.closest('.gi')
+                              || img.closest('.video-thumb')))
+             || img.classList.contains('ul-thumb');
+    if (!ok) return;
+    e.preventDefault(); e.stopPropagation();
+    img.classList.add('thumb-shown');
+}, true);
+/* ぼかしの ON/OFF を再読込なしで切り替える */
+function setBlurThumbs(on) {
+    document.body.classList.toggle('blur-thumbs', !!on);
+    if (on) {   /* 再度ONにした時は開いていたものも伏せ直す */
+        document.querySelectorAll('.thumb-shown').forEach(function(el) {
+            el.classList.remove('thumb-shown');
+        });
+    }
+}
 /* NG画像をクリックすると reveal クラスを付けて表示 */
 document.addEventListener('click', function(e) {
     var img = e.target;
@@ -2304,6 +2342,10 @@ def thread_to_html(thread, show_deleted: bool = False,
         body_class = ' class="op-no-id"'         # OP無IDなのにIDあり
     else:
         body_class = ''
+    # サムネぼかし（グロ画像対策）: body クラスで効かせる
+    if getattr(ng_settings, "blur_thumbnails", False):
+        body_class = (body_class.replace('class="', 'class="blur-thumbs ')
+                      if body_class else ' class="blur-thumbs"')
     _usr = f'<style id="__usercss">{user_css}</style>' if user_css else ''
     _scroll_js = _make_scroll_bottom_js(scroll_bottom_count, scroll_top_count)
     # テーマCSS変数を注入（ThemeManagerが利用可能なら）

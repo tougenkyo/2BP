@@ -1323,7 +1323,7 @@ class PostDialog(QDialog):
         img_lay.addWidget(self._clear_btn)
         # うｐろだ（あぷ小→入らなければあぷ）へアップロードして本文へ貼る
         self._up_btn = QToolButton()
-        self._up_btn.setText("あぷにアップロード")
+        self._up_btn.setText("うｐする")
         self._up_btn.setToolTip(
             "添付ファイルをふたばのうｐろだへアップロードします。\n"
             "あぷ小(3MB)に収まればあぷ小、超えていればあぷ(10MB)を自動で選びます。\n"
@@ -1349,7 +1349,7 @@ class PostDialog(QDialog):
         _fm = _QFM(_up_menu.font())
         _w = max((_fm.horizontalAdvance(a.text()) for a in _up_menu.actions()
                   if a.text()), default=0)
-        _up_menu.setMinimumWidth(_w )
+        _up_menu.setMinimumWidth(_w + 110)
         self._up_btn.setMenu(_up_menu)
         self._up_btn.clicked.connect(lambda: self._upload_to_uploader("auto"))
         img_lay.addWidget(self._up_btn)
@@ -2168,7 +2168,7 @@ document.addEventListener('keydown',function(e){{
         self._upload_inflight = False
         try:
             self._up_btn.setEnabled(True)
-            self._up_btn.setText("あぷ")
+            self._up_btn.setText("うｐする")
         except RuntimeError:
             return
         ok_list = [r for r in results if r.get("ok")]
@@ -4481,6 +4481,15 @@ class AppSettingsDialog(QDialog):
         self._id_warn_count = _spin(1, 9999, " 件", width=90,
             tip="同一IDの書き込み数がこの件数以上のレスはIDを赤く表示します（基本5）")
         tf.addRow("ID件数で赤字にする閾値:", self._id_warn_count)
+        self._blur_thumbs = QCheckBox("サムネイルをぼかす（クリックで1枚ずつ表示）")
+        self._blur_thumbs.setToolTip(
+            "スレに出る画像をぼかして表示します。クリックするとその1枚だけ出ます。\n"
+            "ふたばに貼られた画像（手書き投稿を含む）とうｐろだの直リン画像、\n"
+            "画像モードのサムネがまとめて対象です。\n\n"
+            "グロ画像対策向けの機能です。手書き投稿かどうかはHTML上で判別できない\n"
+            "ため、出所で分けずに全部伏せる方式にしています。\n"
+            "スレを開き直すとまた伏せた状態に戻ります。")
+        tf.addRow(self._blur_thumbs)
 
         # スレオープン時の表示モード
         _open_mode_items = ["返信", "画像", "引用"]
@@ -5281,6 +5290,7 @@ class AppSettingsDialog(QDialog):
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
         self._image_mode_include_ul.setChecked(
             getattr(s, "image_mode_include_uploader", False))
+        self._blur_thumbs.setChecked(getattr(s, "blur_thumbnails", False))
         self._uploader_del_key.setText(getattr(s, "uploader_delete_key", "") or "")
         self._uploader_insert.setChecked(
             getattr(s, "uploader_insert_to_comment", True))
@@ -5444,6 +5454,7 @@ class AppSettingsDialog(QDialog):
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.image_mode_include_uploader = self._image_mode_include_ul.isChecked()
+        s.blur_thumbnails         = self._blur_thumbs.isChecked()
         # 空にされたら削除できなくなるので、その時は新しくランダム生成する
         _uk = self._uploader_del_key.text().strip()[:10]
         if not _uk:
