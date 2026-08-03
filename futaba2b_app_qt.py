@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.335"
+APP_VER = "0.9.336"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6043,6 +6043,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """ページ読込完了後にスクロール位置を復元"""
         # スレッドページのDOMがロード完了 → モード切替をDOM入替で行える
         self._thread_page_live = True
+        # 板設定を変えた後に返信モードへ戻ると、生成済みHTML(_last_html)に
+        # 焼かれた古いぼかし設定のまま表示されるため、読込完了時に合わせ直す
+        self.apply_blur_setting()
         if self._pending_scroll > 0:
             y = self._pending_scroll
             self._pending_scroll = 0
@@ -6385,19 +6388,27 @@ class ThreadView(_MouseGestureMixin, QWidget):
         except Exception:
             return (False, False)
 
-    def _blur_body_class(self, mode: str = "") -> str:
-        """サムネぼかし用の body クラス（画像/引用モードのHTML生成で使う）"""
+    def _page_body_class(self, mode: str = "") -> str:
+        """表示モードの目印とサムネぼかしを載せた body の class 属性。
+        画像/引用モードのHTML生成で使う（返信モードは thread_to_html 側で付ける）。
+        モードの目印は user.css からモード別に指定するためのフック。"""
         _res, _ul = self._blur_flags(mode)
-        _c = (["blur-res"] if _res else []) + (["blur-ul"] if _ul else [])
-        return f' class="{" ".join(_c)}"' if _c else ""
+        _c = ([f"m-{mode or 'reply'}"]
+              + (["blur-res"] if _res else []) + (["blur-ul"] if _ul else []))
+        return f' class="{" ".join(_c)}"'
+
+    def _blur_js(self, mode: str = "") -> str:
+        """ぼかしの ON/OFF を現在のページへ反映するJS。
+        モード切替はDOM入替（body要素は残る）なので、切替後に呼ばないと
+        前のモードのぼかし設定が残ってしまう。"""
+        _res, _ul = self._blur_flags(mode)
+        return ("if(window.setBlurThumbs)setBlurThumbs(%s,%s);"
+                % ("true" if _res else "false", "true" if _ul else "false"))
 
     def apply_blur_setting(self):
         """サムネぼかしの設定変更を表示中のページへ即時反映する（再読込不要）。
         今表示しているモードの設定を使う。"""
-        _res, _ul = self._blur_flags()
-        _safe_run_js(getattr(self, "_view", None),
-                     "if(window.setBlurThumbs)setBlurThumbs(%s,%s);"
-                     % ("true" if _res else "false", "true" if _ul else "false"))
+        _safe_run_js(getattr(self, "_view", None), self._blur_js())
 
     def _expiry_line_html(self, thread) -> str:
         """スレ落ち予定（「○時頃消えます」）をフッター直上に左寄せ表示するHTML。
@@ -6569,7 +6580,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
             new_tag = ' <span class="qt-new">[新着]</span>' if is_new else ""
             _il = getattr(self, '_img_list', [])
             _ii = next((j for j, e in enumerate(_il) if e.get('url') == res.image_url), -1)
-            img_tag = (f' <img class="qt-thumb" src="{res.thumb_url}" loading="lazy"'
+            # スレ画(OP)はぼかしの対象外なので目印を付けて区別する
+            _qt_cls = "qt-thumb qt-thumb-op" if res.is_op else "qt-thumb"
+            img_tag = (f' <img class="{_qt_cls}" src="{res.thumb_url}" loading="lazy"'
                        f' onclick="openImg(\'{res.image_url}\',{_ii});return false;"'
                        f' onmousedown="if(event.button===1){{event.preventDefault();openImgBg(\'{res.image_url}\',{_ii});}}"'
                        f' data-full="{res.image_url}">'
@@ -6644,7 +6657,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             f"{_usr_q}"
             f"{WEBCHANNEL_JS}"
             f"{_scroll_js}"
-            f"</head><body{self._blur_body_class('quote')}>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}"
+            f"</head><body{self._page_body_class('quote')}>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}"
             f"{self._expiry_banner_html(self._thread)}{res_pool}{self._thread_footer_html(self._thread)}"
             f"{getattr(self,'_error_banner_html','')}</body></html>"   # 返信モード同様、下にも表示
         )
@@ -6738,7 +6751,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
             new_tag = ' <span class="qt-new">[新着]</span>' if is_new else ""
             _il = getattr(self, '_img_list', [])
             _ii = next((j for j, e in enumerate(_il) if e.get('url') == res.image_url), -1)
-            img_tag = (f' <img class="qt-thumb" src="{res.thumb_url}" loading="lazy"'
+            # スレ画(OP)はぼかしの対象外なので目印を付けて区別する
+            _qt_cls = "qt-thumb qt-thumb-op" if res.is_op else "qt-thumb"
+            img_tag = (f' <img class="{_qt_cls}" src="{res.thumb_url}" loading="lazy"'
                        f' onclick="openImg(\'{res.image_url}\',{_ii});return false;"'
                        f' onmousedown="if(event.button===1){{event.preventDefault();openImgBg(\'{res.image_url}\',{_ii});}}"'
                        f' data-full="{res.image_url}">'
@@ -6814,6 +6829,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
             "})();\n"
             f"document.body.innerHTML = {body_js};\n"
             "document.body.dataset.mode='quote';\n"
+            # body要素は残るので、モードの目印とぼかしは切替のたびに入れ直す
+            "if(window.setPageMode)setPageMode('quote');\n"
+            + self._blur_js('quote') + "\n"
             f"window.scrollTo(0, {int(scroll_y)});\n"
         )
         _pool_js = self._respool_inject_js(res_pool_html)
@@ -6939,7 +6957,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
               f'{WEBCHANNEL_JS}'
               '<script>'+_img_js+'</script>'
               f'{_scroll_js_img}'
-              f'</head><body{self._blur_body_class("image")}>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
+              f'</head><body{self._page_body_class("image")}>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
               f'{self._gal_sel_ui_html()}'
               f'{self._expiry_banner_html(self._thread)}'
               f'{res_pool}{self._thread_footer_html(self._thread)}'
@@ -7003,6 +7021,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
             + _GAL_SEL_JS + "\n"
             "document.body.innerHTML = " + grid_js + ";\n"
             "document.body.dataset.mode='image';\n"
+            # body要素は残るので、モードの目印とぼかしは切替のたびに入れ直す
+            "if(window.setPageMode)setPageMode('image');\n"
+            + self._blur_js('image') + "\n"
             "window._galleryList = " + gallery_js + ";\n"
             # body入替で選択セルは消えるため、バー表示/ボタン状態を現状態に再同期
             "window._selUpdate&&window._selUpdate();\n"

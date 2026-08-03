@@ -428,6 +428,8 @@ body.op-no-id .post-id.post-id-warn {
 body.blur-res .res:not(.op) .thumb img:not(.thumb-shown),
 body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown),
 body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown),
+/* 引用モードのツリー行のサムネ（.res ではなく img.qt-thumb 単独）。スレ画は除く */
+body.blur-res img.qt-thumb:not(.qt-thumb-op):not(.thumb-shown),
 /* うｐろだの直リン画像（別設定） */
 body.blur-ul .ul-thumb:not(.thumb-shown),
 body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
@@ -435,7 +437,9 @@ body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
        中身が読み取れないのは blur とグレースケールで担保する。
        グロ画像の判別は色（赤）に大きく依るため、彩度を落とすのが効く。
        強さを変えたい時は user.css で同じセレクタを書けば上書きできる
-       （user.css はこの後に注入されるので後勝ちになる）。 */
+       （user.css はこの後に注入されるので後勝ちになる）。
+       body には表示モードの目印（m-reply / m-quote / m-image）が付くので、
+       頭に付ければモードごとに別の強さにできる。 */
     opacity: 0.4;
     filter: blur(5px) grayscale(0.5);
     cursor: pointer;
@@ -446,6 +450,7 @@ body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
 body.blur-res .res:not(.op) .thumb img:not(.thumb-shown):hover,
 body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown):hover,
 body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown):hover,
+body.blur-res img.qt-thumb:not(.qt-thumb-op):not(.thumb-shown):hover,
 body.blur-ul .ul-thumb:not(.thumb-shown):hover,
 body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown):hover {
     opacity: 0.65;
@@ -746,18 +751,28 @@ document.addEventListener('click', function(e) {
     var cell = img.closest && img.closest('.gi');
     var isUl = img.classList.contains('ul-thumb')
                || !!(cell && cell.classList.contains('gi-ul'));
+    var isQt = img.classList.contains('qt-thumb');   /* 引用モードのツリー行 */
     var inThread = (img.closest && (img.closest('.thumb')
-                                    || img.closest('.video-thumb'))) || cell;
+                                    || img.closest('.video-thumb'))) || cell || isQt;
     if (!isUl && !inThread) return;
     /* うｐろだ由来とスレ内の画像で設定が別なので、対応する方だけ見る */
     if (!document.body.classList.contains(isUl ? 'blur-ul' : 'blur-res')) return;
     if (!isUl) {   /* スレ画(OP)はぼかしの対象外 */
         if ((img.closest && img.closest('.res.op'))
-            || (cell && cell.classList.contains('gi-op'))) return;
+            || (cell && cell.classList.contains('gi-op'))
+            || img.classList.contains('qt-thumb-op')) return;
     }
     e.preventDefault(); e.stopPropagation();
     img.classList.add('thumb-shown');
 }, true);
+/* 表示モードの目印を body に付ける（m-reply / m-quote / m-image）。
+   ぼかしの強さなどを user.css でモードごとに変えるためのフック。 */
+function setPageMode(m) {
+    var b = document.body;
+    if (!b) return;
+    b.classList.remove('m-reply', 'm-quote', 'm-image');
+    b.classList.add('m-' + m);
+}
 /* ぼかしの ON/OFF を再読込なしで切り替える（スレ内 / うｐろだ を個別に） */
 function setBlurThumbs(onRes, onUl) {
     var b = document.body;
@@ -2379,12 +2394,12 @@ def thread_to_html(thread, show_deleted: bool = False,
         body_class = ' class="op-no-id"'         # OP無IDなのにIDあり
     else:
         body_class = ''
-    # サムネぼかし（グロ画像対策・板ごとの設定）: body クラスで効かせる
-    _bc = ([" blur-res"] if blur_res else []) + ([" blur-ul"] if blur_ul else [])
-    if _bc:
-        _add = "".join(_bc).strip()
-        body_class = (body_class.replace('class="', f'class="{_add} ')
-                      if body_class else f' class="{_add}"')
+    # 表示モードの目印（user.css からモード別に指定できるようにする）と
+    # サムネぼかし（グロ画像対策・板ごとの設定）: どちらも body クラスで効かせる
+    _bc = ["m-reply"] + (["blur-res"] if blur_res else []) + (["blur-ul"] if blur_ul else [])
+    _add = " ".join(_bc)
+    body_class = (body_class.replace('class="', f'class="{_add} ')
+                  if body_class else f' class="{_add}"')
     _usr = f'<style id="__usercss">{user_css}</style>' if user_css else ''
     _scroll_js = _make_scroll_bottom_js(scroll_bottom_count, scroll_top_count)
     # テーマCSS変数を注入（ThemeManagerが利用可能なら）
