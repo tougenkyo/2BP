@@ -2103,13 +2103,19 @@ document.addEventListener('keydown',function(e){{
                 "すべてのファイル (*.*)")
             if not paths:
                 return
+            _from_attach = False       # 別途選んだファイル → 添付は触らない
         else:
             paths = [self._img_path]
-        self._upload_files(paths, which)
+            _from_attach = True        # 添付そのもの → 成功したら外す
+        self._upload_files(paths, which, clear_attachment=_from_attach)
 
-    def _upload_files(self, paths: list, which: str = "auto"):
-        """複数ファイルを順番にアップロードする。"""
+    def _upload_files(self, paths: list, which: str = "auto",
+                      clear_attachment: bool = False):
+        """複数ファイルを順番にアップロードする。
+        clear_attachment=True（添付そのものを上げた時）は、成功したら添付を外す。
+        同じ画像が「板の添付」と「あぷのリンク」で二重に出るのを防ぐ。"""
         import os, threading
+        self._upload_clears_attach = bool(clear_attachment)
         if getattr(self, "_upload_inflight", False):
             return                      # 二重アップロード防止
         _missing = [p for p in paths if not os.path.isfile(p)]
@@ -2213,6 +2219,15 @@ document.addEventListener('keydown',function(e){{
         if ok_list and not (getattr(self._settings, "uploader_delete_key", "") or "").strip():
             lines.append("\n※ 削除キーが未設定のため、上げたファイルは削除できません。\n"
                          "　 設定 → うｐろだ で削除キーを決めておくと後から消せます。")
+        # 添付そのものを上げた時は添付を外す（同じ画像が「板の添付」と
+        # 「あぷのリンク」で二重に出るのを防ぐ）。別途選んだファイルでは外さない。
+        if ok_list and getattr(self, "_upload_clears_attach", False):
+            self._upload_clears_attach = False
+            try:
+                self._clear_image()
+                lines.append("\n添付は外しました（あぷのリンクだけ残ります）")
+            except Exception as e:
+                print(f"[UP] 添付の解除に失敗: {e}")
         _txt = "\n".join(lines) or "何も行われませんでした"
         if ng_list:
             QMessageBox.warning(self, "うｐろだ", _txt)
