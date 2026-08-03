@@ -419,11 +419,17 @@ body.op-no-id .post-id.post-id-warn {
     opacity: 1 !important;
     filter: none !important;
 }
-/* ─ サムネのぼかし（グロ画像対策・body.blur-thumbs で有効） ─
+/* ─ サムネのぼかし（グロ画像対策・body.blur-res / body.blur-ul で有効） ─
    ふたばの添付画像（手書き投稿もこれ）とうｐろだの直リン画像、画像モードの
    グリッドをまとめて伏せる。手書きかどうかはHTML上で判別できないため、
    出所で分けずに全部伏せてクリックで1枚ずつ出す方式にしている。
    NG画像と違い hover では出さない（クリックしに行くだけで見えてしまうため）。*/
+/* ぼかしの強さ（板設定の 弱/中/強）。表示中のモードの分だけ body に付く。
+   値を変数にしてあるので、セレクタを並べ直さずに強さだけ差し替えられる。 */
+body                { --blur-o: 0.4;  --blur-f: blur(5px) grayscale(0.5);  --blur-oh: 0.65; }
+body.blur-weak      { --blur-o: 0.55; --blur-f: blur(3px) grayscale(0.3);  --blur-oh: 0.8;  }
+body.blur-mid       { --blur-o: 0.4;  --blur-f: blur(5px) grayscale(0.5);  --blur-oh: 0.65; }
+body.blur-strong    { --blur-o: 0.3;  --blur-f: blur(12px) grayscale(1);   --blur-oh: 0.5;  }
 /* スレ内に貼られた画像（ふたばの添付・手書き投稿もここ）。スレ画(OP)は除く */
 body.blur-res .res:not(.op) .thumb img:not(.thumb-shown),
 body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown),
@@ -436,12 +442,12 @@ body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
     /* 消してしまうとクリック先が分からないので「ぼんやり見えている」状態にする。
        中身が読み取れないのは blur とグレースケールで担保する。
        グロ画像の判別は色（赤）に大きく依るため、彩度を落とすのが効く。
-       強さを変えたい時は user.css で同じセレクタを書けば上書きできる
-       （user.css はこの後に注入されるので後勝ちになる）。
+       板設定の 弱/中/強 で足りない時は user.css で変数を書き換える。
        body には表示モードの目印（m-reply / m-quote / m-image）が付くので、
-       頭に付ければモードごとに別の強さにできる。 */
-    opacity: 0.4;
-    filter: blur(5px) grayscale(0.5);
+       モードごとに別の強さにもできる（user.css はこの後に注入されて後勝ち）:
+         body.m-image { --blur-f: blur(20px) grayscale(1); --blur-o: .2; } */
+    opacity: var(--blur-o);
+    filter: var(--blur-f);
     cursor: pointer;
     transition: opacity 0.15s, filter 0.15s;
 }
@@ -453,7 +459,7 @@ body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown):hover,
 body.blur-res img.qt-thumb:not(.qt-thumb-op):not(.thumb-shown):hover,
 body.blur-ul .ul-thumb:not(.thumb-shown):hover,
 body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown):hover {
-    opacity: 0.65;
+    opacity: var(--blur-oh);
 }
 /* スレ画（OPの添付画像）はぼかさない。カタログで既に見えているものであり、
    グロ貼りは返信で起きるため。OP本文中のうｐろだ直リンは対象のまま
@@ -772,6 +778,13 @@ function setPageMode(m) {
     if (!b) return;
     b.classList.remove('m-reply', 'm-quote', 'm-image');
     b.classList.add('m-' + m);
+}
+/* ぼかしの強さ（weak / mid / strong）を再読込なしで切り替える */
+function setBlurLevel(lv) {
+    var b = document.body;
+    if (!b) return;
+    b.classList.remove('blur-weak', 'blur-mid', 'blur-strong');
+    b.classList.add('blur-' + (lv || 'mid'));
 }
 /* ぼかしの ON/OFF を再読込なしで切り替える（スレ内 / うｐろだ を個別に） */
 function setBlurThumbs(onRes, onUl) {
@@ -2321,6 +2334,7 @@ def thread_to_html(thread, show_deleted: bool = False,
                    ng_reveal: bool = False,
                    blur_res: bool = False,
                    blur_ul: bool = False,
+                   blur_level: str = "mid",
                    pseudo_expiring: bool = False,
                    sort_by_sodane: bool = False) -> tuple[str, list]:
     """ThreadData → (HTML文字列, 画像リスト)"""
@@ -2396,7 +2410,8 @@ def thread_to_html(thread, show_deleted: bool = False,
         body_class = ''
     # 表示モードの目印（user.css からモード別に指定できるようにする）と
     # サムネぼかし（グロ画像対策・板ごとの設定）: どちらも body クラスで効かせる
-    _bc = ["m-reply"] + (["blur-res"] if blur_res else []) + (["blur-ul"] if blur_ul else [])
+    _bc = (["m-reply", f"blur-{blur_level or 'mid'}"]
+           + (["blur-res"] if blur_res else []) + (["blur-ul"] if blur_ul else []))
     _add = " ".join(_bc)
     body_class = (body_class.replace('class="', f'class="{_add} ')
                   if body_class else f' class="{_add}"')

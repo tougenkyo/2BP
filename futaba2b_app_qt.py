@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.336"
+APP_VER = "0.9.337"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5010,7 +5010,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
                                                    footer_html=_make_thread_footer(thread),
                                                    my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
                                                    pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1])
+                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1],
+                blur_level=self._blur_level('reply'))
             self._last_html = _html
             self._last_html_dirty = False
             self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
@@ -5036,7 +5037,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
                                               footer_html=_make_thread_footer(thread),
                                               my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
                                               pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1])
+                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1],
+                blur_level=self._blur_level('reply'))
         _t1 = _t.time()
         html_bytes = html.encode('utf-8')
 
@@ -6135,7 +6137,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
             footer_html=_footer(thread),
             my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
             pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1])
+                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1],
+                blur_level=self._blur_level('reply'))
         self._last_html = html
         self._last_html_dirty = False
 
@@ -6368,18 +6371,22 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return die if "消えます" in die else f"{die}頃消えます"
         return (getattr(thread, "expiry", "") or "").strip()
 
+    @staticmethod
+    def _blur_prefix(mode: str) -> str:
+        """表示モード → 板設定のキーの頭。返信モードは _loaded_page_mode が空。"""
+        return {"image": "blur_image_", "quote": "blur_quote_"}.get(mode, "blur_reply_")
+
     def _blur_flags(self, mode: str = "") -> tuple:
         """この板・この表示モードのぼかし設定 (スレ内の画像, うｐろだの画像)。
 
-        mode: "image" = 画像モード / それ以外 = 返信・引用モード。
-        返信と引用は同じレス一覧の表示なので同じ設定を使う。
+        mode: "image" = 画像モード / "quote" = 引用モード / それ以外 = 返信モード。
         省略時は現在表示しているモードを見る。"""
         _b = getattr(self, "_board", None)
         if _b is None:
             return (False, False)
         if not mode:
             mode = getattr(self, "_loaded_page_mode", "") or ""
-        _pre = "blur_image_" if mode == "image" else "blur_reply_"
+        _pre = self._blur_prefix(mode)
         try:
             from futaba2b_settings import get_board_settings as _gbs
             _bs = _gbs(_b.base_url)
@@ -6388,22 +6395,38 @@ class ThreadView(_MouseGestureMixin, QWidget):
         except Exception:
             return (False, False)
 
+    def _blur_level(self, mode: str = "") -> str:
+        """この板・この表示モードのぼかしの強さ（weak / mid / strong）。"""
+        _b = getattr(self, "_board", None)
+        if _b is None:
+            return "mid"
+        if not mode:
+            mode = getattr(self, "_loaded_page_mode", "") or ""
+        try:
+            from futaba2b_settings import get_board_settings as _gbs
+            _lv = getattr(_gbs(_b.base_url), self._blur_prefix(mode) + "level", "mid")
+            return _lv if _lv in ("weak", "mid", "strong") else "mid"
+        except Exception:
+            return "mid"
+
     def _page_body_class(self, mode: str = "") -> str:
         """表示モードの目印とサムネぼかしを載せた body の class 属性。
         画像/引用モードのHTML生成で使う（返信モードは thread_to_html 側で付ける）。
         モードの目印は user.css からモード別に指定するためのフック。"""
         _res, _ul = self._blur_flags(mode)
-        _c = ([f"m-{mode or 'reply'}"]
+        _c = ([f"m-{mode or 'reply'}", f"blur-{self._blur_level(mode)}"]
               + (["blur-res"] if _res else []) + (["blur-ul"] if _ul else []))
         return f' class="{" ".join(_c)}"'
 
     def _blur_js(self, mode: str = "") -> str:
-        """ぼかしの ON/OFF を現在のページへ反映するJS。
+        """ぼかしの ON/OFF と強さを現在のページへ反映するJS。
         モード切替はDOM入替（body要素は残る）なので、切替後に呼ばないと
         前のモードのぼかし設定が残ってしまう。"""
         _res, _ul = self._blur_flags(mode)
-        return ("if(window.setBlurThumbs)setBlurThumbs(%s,%s);"
-                % ("true" if _res else "false", "true" if _ul else "false"))
+        return ("if(window.setBlurLevel)setBlurLevel('%s');"
+                "if(window.setBlurThumbs)setBlurThumbs(%s,%s);"
+                % (self._blur_level(mode),
+                   "true" if _res else "false", "true" if _ul else "false"))
 
     def apply_blur_setting(self):
         """サムネぼかしの設定変更を表示中のページへ即時反映する（再読込不要）。
@@ -10418,7 +10441,8 @@ class AutoRefreshManager(QObject):
                                       my_nos=self._get_my_nos_for_view(view, thread),
                 id_warn_count=getattr(self._settings,'id_warn_count',5),
                 pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=view._blur_flags('reply')[0], blur_ul=view._blur_flags('reply')[1])
+                blur_res=view._blur_flags('reply')[0], blur_ul=view._blur_flags('reply')[1],
+                blur_level=view._blur_level('reply'))
             _cn = '' if 'キャッシュ表示' in (thread.error or '') else ' (キャッシュ表示)'
             banner = (f'<div style="background:#a00;color:#fff;padding:6px 8px;'
                       f'font-size:9pt;font-weight:bold;text-align:center;">'
@@ -10562,7 +10586,8 @@ class AutoRefreshManager(QObject):
                                   footer_html=view._thread_footer_html(thread),
                                   my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
                                   pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=view._blur_flags('reply')[0], blur_ul=view._blur_flags('reply')[1])
+                blur_res=view._blur_flags('reply')[0], blur_ul=view._blur_flags('reply')[1],
+                blur_level=view._blur_level('reply'))
         view._thread = thread
         view._known_res_count = len(thread.res_list)
         # _last_html を更新（モード切替・ログ保存で使われる）

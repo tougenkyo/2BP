@@ -6108,22 +6108,45 @@ class BoardSettingsDialog(QDialog):
                     "ぼかしません。")
         _TIP_UL  = ("本文中のうｐろだ直リン画像をぼかします。\n"
                     "スレ主が貼ったものも対象です（外部の任意画像のため）。")
+        _TIP_LV = ("ぼかしの強さです。\n"
+                   "  弱 … ぼんやり分かる程度（何の画像か当てが付く）\n"
+                   "  中 … 既定。何が写っているかは読み取れない\n"
+                   "  強 … 色も形もほぼ分からない\n"
+                   "どれも「うっすら見えている」状態は残します"
+                   "（クリックする場所が分からなくなるため）。\n"
+                   "これで足りない時は user.css で数値を指定できます。")
         _gr = QGridLayout(); _bl.addLayout(_gr)
-        _gr.addWidget(QLabel("返信・引用モード:"), 0, 0)
-        self._bs_blur_reply_res = QCheckBox("スレ内の画像")
-        self._bs_blur_reply_res.setToolTip(_TIP_RES + _TIP_COMMON)
-        _gr.addWidget(self._bs_blur_reply_res, 0, 1)
-        self._bs_blur_reply_ul = QCheckBox("うｐろだの画像")
-        self._bs_blur_reply_ul.setToolTip(_TIP_UL + _TIP_COMMON)
-        _gr.addWidget(self._bs_blur_reply_ul, 0, 2)
-        _gr.addWidget(QLabel("画像モード:"), 1, 0)
-        self._bs_blur_image_res = QCheckBox("スレ内の画像")
-        self._bs_blur_image_res.setToolTip(_TIP_RES + _TIP_COMMON)
-        _gr.addWidget(self._bs_blur_image_res, 1, 1)
-        self._bs_blur_image_ul = QCheckBox("うｐろだの画像")
-        self._bs_blur_image_ul.setToolTip(_TIP_UL + _TIP_COMMON)
-        _gr.addWidget(self._bs_blur_image_ul, 1, 2)
-        _gr.setColumnStretch(3, 1)
+        _gr.addWidget(QLabel("ぼかす対象"), 0, 1, 1, 2)
+        _gr.addWidget(QLabel("ぼかしの強さ"), 0, 3)
+        self._bs_blur = {}
+        for _row, (_key, _label) in enumerate(
+                (("reply", "返信モード:"), ("quote", "引用モード:"),
+                 ("image", "画像モード:")), start=1):
+            _gr.addWidget(QLabel(_label), _row, 0)
+            _res = QCheckBox("スレ内の画像")
+            _res.setToolTip(_TIP_RES + _TIP_COMMON)
+            _gr.addWidget(_res, _row, 1)
+            _ul = QCheckBox("うｐろだの画像")
+            _ul.setToolTip(_TIP_UL + _TIP_COMMON)
+            _gr.addWidget(_ul, _row, 2)
+            _lv = _NoWheelComboBox()
+            for _t, _v in (("弱", "weak"), ("中", "mid"), ("強", "strong")):
+                _lv.addItem(_t, _v)
+            _lv.setCurrentIndex(1)
+            _lv.setToolTip(_TIP_LV)
+            _gr.addWidget(_lv, _row, 3)
+            # 対象が両方OFFなら強さは触れないようにする（効かないので）
+            def _sync(_=None, _r=_res, _u=_ul, _c=_lv):
+                _c.setEnabled(_r.isChecked() or _u.isChecked())
+            _res.toggled.connect(_sync); _ul.toggled.connect(_sync)
+            _sync()
+            self._bs_blur[_key] = (_res, _ul, _lv)
+        # 引用モードのうｐろだ画像はツリー行には出ず、▼のポップアップの中だけが
+        # 対象になる。誤解しないよう、そこだけ説明を足しておく。
+        self._bs_blur["quote"][1].setToolTip(
+            "引用モードのツリー行にはうｐろだの画像は出ないため、\n"
+            "▼のポップアップに出るレスの中の画像が対象です。\n\n" + _TIP_UL + _TIP_COMMON)
+        _gr.setColumnStretch(4, 1)
         f1.addStretch(); nb.addTab(_scroll(w1), "カタログ")
 
         # ══════════════════════════════════════════════════════════════════
@@ -6244,10 +6267,12 @@ class BoardSettingsDialog(QDialog):
         self._bs_few_res_hide.setChecked(_hide)
         self._bs_few_res_count.setValue(getattr(bs, "catalog_few_res_count", 5))
         self._bs_few_res_count.setEnabled(_hide)
-        self._bs_blur_reply_res.setChecked(getattr(bs, "blur_reply_res", False))
-        self._bs_blur_reply_ul.setChecked(getattr(bs, "blur_reply_ul", False))
-        self._bs_blur_image_res.setChecked(getattr(bs, "blur_image_res", False))
-        self._bs_blur_image_ul.setChecked(getattr(bs, "blur_image_ul", False))
+        for _k, (_res, _ul, _lv) in self._bs_blur.items():
+            _res.setChecked(getattr(bs, f"blur_{_k}_res", False))
+            _ul.setChecked(getattr(bs, f"blur_{_k}_ul", False))
+            _i = _lv.findData(getattr(bs, f"blur_{_k}_level", "mid"))
+            _lv.setCurrentIndex(_i if _i >= 0 else 1)
+            _lv.setEnabled(_res.isChecked() or _ul.isChecked())
 
         # 自動更新
         use_t = bs.ar_use_default_thread
@@ -6293,10 +6318,10 @@ class BoardSettingsDialog(QDialog):
         bs.use_own_few_res       = True   # 板設定が常に有効
         bs.catalog_few_res_hide  = self._bs_few_res_hide.isChecked()
         bs.catalog_few_res_count = self._bs_few_res_count.value()
-        bs.blur_reply_res        = self._bs_blur_reply_res.isChecked()
-        bs.blur_reply_ul         = self._bs_blur_reply_ul.isChecked()
-        bs.blur_image_res        = self._bs_blur_image_res.isChecked()
-        bs.blur_image_ul         = self._bs_blur_image_ul.isChecked()
+        for _k, (_res, _ul, _lv) in self._bs_blur.items():
+            setattr(bs, f"blur_{_k}_res",   _res.isChecked())
+            setattr(bs, f"blur_{_k}_ul",    _ul.isChecked())
+            setattr(bs, f"blur_{_k}_level", _lv.currentData() or "mid")
 
         # 自動更新
         bs.ar_use_default_thread       = self._ar_use_default_thread.isChecked()

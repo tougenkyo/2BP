@@ -56,11 +56,17 @@ class BoardSettings:
         self.use_own_few_res:        bool = False
         self.catalog_few_res_hide:   bool = False
         # サムネイルをぼかす（グロ画像対策）。板ごと・表示モードごと・出所ごと。
-        # 返信モードと引用モードは同じレス一覧の表示なのでまとめて扱う。
-        self.blur_reply_res:         bool = False   # 返信/引用: スレ内の画像
-        self.blur_reply_ul:          bool = False   # 返信/引用: うｐろだの画像
+        # 引用モードのうｐろだ画像はツリー行には出ず、▼のポップアップだけが対象。
+        self.blur_reply_res:         bool = False   # 返信モード: スレ内の画像
+        self.blur_reply_ul:          bool = False   # 返信モード: うｐろだの画像
+        self.blur_quote_res:         bool = False   # 引用モード: スレ内の画像
+        self.blur_quote_ul:          bool = False   # 引用モード: うｐろだの画像
         self.blur_image_res:         bool = False   # 画像モード: スレ内の画像
         self.blur_image_ul:          bool = False   # 画像モード: うｐろだの画像
+        # ぼかしの強さ: weak / mid / strong（既定は mid＝従来の強さ）
+        self.blur_reply_level:       str  = "mid"
+        self.blur_quote_level:       str  = "mid"
+        self.blur_image_level:       str  = "mid"
         self.catalog_few_res_count:  int  = 5
 
         self._load_from_file()
@@ -107,14 +113,24 @@ class BoardSettings:
         # 設定の移行:
         #   v0.9.328〜330 blur_thumbnails（出所もモードもまとめて1つ）
         #   v0.9.331      blur_thumbs_res / blur_thumbs_ul（出所だけ分離）
-        #   v0.9.333〜    モードも分離。上位の値をそのまま引き継ぐ。
+        #   v0.9.333〜336 返信/引用 と 画像 に分離（返信と引用は同じ設定）
+        #   v0.9.337〜    引用モードも独立。返信の値をそのまま引き継ぐ。
         _blur_old = bool(_g("blur_thumbnails", False))
         _old_res = bool(_g("blur_thumbs_res", _blur_old))
         _old_ul  = bool(_g("blur_thumbs_ul",  _blur_old))
         self.blur_reply_res          = bool(_g("blur_reply_res", _old_res))
         self.blur_reply_ul           = bool(_g("blur_reply_ul",  _old_ul))
+        self.blur_quote_res          = bool(_g("blur_quote_res", self.blur_reply_res))
+        self.blur_quote_ul           = bool(_g("blur_quote_ul",  self.blur_reply_ul))
         self.blur_image_res          = bool(_g("blur_image_res", _old_res))
         self.blur_image_ul           = bool(_g("blur_image_ul",  _old_ul))
+        _LV = ("weak", "mid", "strong")
+        def _lv(key):
+            _v = str(_g(key, "mid") or "mid").lower()
+            return _v if _v in _LV else "mid"
+        self.blur_reply_level        = _lv("blur_reply_level")
+        self.blur_quote_level        = _lv("blur_quote_level")
+        self.blur_image_level        = _lv("blur_image_level")
         self.catalog_few_res_count   = int( _g("catalog_few_res_count", 5))
 
     def _read_my_section(self) -> dict | None:
@@ -189,8 +205,13 @@ class BoardSettings:
             "catalog_few_res_hide":   self.catalog_few_res_hide,
             "blur_reply_res":         self.blur_reply_res,
             "blur_reply_ul":          self.blur_reply_ul,
+            "blur_quote_res":         self.blur_quote_res,
+            "blur_quote_ul":          self.blur_quote_ul,
             "blur_image_res":         self.blur_image_res,
             "blur_image_ul":          self.blur_image_ul,
+            "blur_reply_level":       self.blur_reply_level,
+            "blur_quote_level":       self.blur_quote_level,
+            "blur_image_level":       self.blur_image_level,
             "catalog_few_res_count":  self.catalog_few_res_count,
             }
             _tmp_b = _BOARDS_FILE.with_suffix(".tmp")
