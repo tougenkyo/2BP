@@ -1132,7 +1132,8 @@ class UploaderHistoryDialog(QDialog):
 
 class PostDialog(QDialog):
     _result_signal = Signal(bool, str, int)  # 投稿結果 thread-safe (ok, msg, new_thread_no)
-    _upload_done   = Signal(object)          # うｐろだ結果 thread-safe (dict)
+    _upload_done     = Signal(object)        # うｐろだ結果 thread-safe (結果dictのlist)
+    _upload_progress = Signal(int, int)      # うｐろだ進捗 (完了数, 総数)
     pin_after_post    = Signal()        # 投稿成功後にピン留め要求
     scroll_after_post = Signal()        # 投稿成功後に最下部スクロール要求
     activate_tab      = Signal(int)     # タイトルバークリック → 対応タブをアクティブ化
@@ -1174,6 +1175,7 @@ class PostDialog(QDialog):
         self._post_inflight = False  # POST送信スレッドが動作中か（二重投稿防止）
         self._upload_inflight = False  # うｐろだ送信中か（二重アップロード防止）
         self._upload_done.connect(self._on_upload_done)
+        self._upload_progress.connect(self._on_upload_progress)
         self._on_success = on_success
         self._result_signal.connect(self._on_result)
         self.setAcceptDrops(True)  # D&Dを有効化
@@ -1333,8 +1335,12 @@ class PostDialog(QDialog):
         _up_menu.addAction("あぷ小に上げる", lambda: self._upload_to_uploader("up2"))
         _up_menu.addAction("あぷに上げる",   lambda: self._upload_to_uploader("up"))
         _up_menu.addSeparator()
-        _up_menu.addAction("別のファイルを選んで上げる…",
+        _up_menu.addAction("ファイルを選んで上げる…（複数可）",
                            lambda: self._upload_to_uploader("auto", browse=True))
+        _up_menu.addAction("あぷ小に複数上げる…",
+                           lambda: self._upload_to_uploader("up2", browse=True))
+        _up_menu.addAction("あぷに複数上げる…",
+                           lambda: self._upload_to_uploader("up", browse=True))
         _up_menu.addSeparator()
         _up_menu.addAction("アップロード履歴／削除…", self._open_upload_history)
         self._up_btn.setMenu(_up_menu)
@@ -2077,78 +2083,134 @@ document.addEventListener('keydown',function(e){{
     # ── うｐろだ（あぷ / あぷ小） ──────────────────────────────────────────
 
     def _upload_to_uploader(self, which: str = "auto", browse: bool = False):
-        """添付ファイルをふたばのうｐろだへ上げ、成功したら本文にファイル名を貼る。
+        """ファイルをふたばのうｐろだへ上げ、成功したら本文にファイル名を貼る。
+        複数選択可。うｐろだのフォームは1回に1ファイルなので順番に送る。
         送信はワーカースレッドで行い、失敗しても自動再送はしない。"""
-        import os, threading
-        path = self._img_path
-        if browse or not path:
-            start = os.path.dirname(path) if path else (
-                getattr(self._settings, "last_image_save_dir", "") or "")
-            path, _ = QFileDialog.getOpenFileName(
-                self, "アップロードするファイルを選択", start,
+        import os
+        paths = []
+        if browse or not self._img_path:
+            start = (os.path.dirname(self._img_path) if self._img_path else
+                     (getattr(self._settings, "last_image_save_dir", "") or ""))
+            paths, _ = QFileDialog.getOpenFileNames(
+                self, "アップロードするファイルを選択（複数可）", start,
                 "すべてのファイル (*.*)")
-            if not path:
+            if not paths:
                 return
-        if not os.path.isfile(path):
-            QMessageBox.warning(self, "うｐろだ",
-                                f"ファイルが見つかりません:\n{path}")
-            return
+        else:
+            paths = [self._img_path]
+        self._upload_files(paths, which)
+
+    def _upload_files(self, paths: list, which: str = "auto"):
+        """複数ファイルを順番にアップロードする。"""
+        import os, threading
         if getattr(self, "_upload_inflight", False):
             return                      # 二重アップロード防止
+        _missing = [p for p in paths if not os.path.isfile(p)]
+        paths = [p for p in paths if os.path.isfile(p)]
+        if _missing:
+            QMessageBox.warning(
+                self, "うｐろだ",
+                "見つからないファイルは除外しました:\n" + "\n".join(_missing[:5]))
+        if not paths:
+            return
+        # 1件ずつ公開うｐろだへ送るので、多い時は一度確認する
+        if len(paths) > 5 and QMessageBox.question(
+                self, "うｐろだ",
+                f"{len(paths)} 件をうｐろだへアップロードします。よろしいですか？"
+                ) != QMessageBox.StandardButton.Yes:
+            return
         key = (getattr(self._settings, "uploader_delete_key", "") or "").strip()
         self._upload_inflight = True
         self._up_btn.setEnabled(False)
-        self._up_btn.setText("送信中")
+        self._up_btn.setText(f"送信中 0/{len(paths)}" if len(paths) > 1 else "送信中")
+        _total = len(paths)
 
         def _work():
-            try:
-                res = self._fetcher.upload_to_uploader(
-                    path, comment="", delete_key=key, uploader=which)
-            except Exception as e:
-                res = {"ok": False, "message": f"アップロードに失敗しました:\n{e}"}
-            self._upload_done.emit(res)
+            results = []
+            for i, p in enumerate(paths):
+                try:
+                    r = self._fetcher.upload_to_uploader(
+                        p, comment="", delete_key=key, uploader=which)
+                except Exception as e:
+                    r = {"ok": False, "message": f"アップロードに失敗しました:\n{e}"}
+                r["path"] = p
+                results.append(r)
+                self._upload_progress.emit(i + 1, _total)
+                # 通信エラーで倒れている時は残りを投げ続けない（POSTは再送しない方針）
+                if not r.get("ok") and "再送していません" in r.get("message", ""):
+                    for rest in paths[i + 1:]:
+                        results.append({"ok": False, "path": rest,
+                                        "message": "前のファイルで通信エラーが起きたため中止しました"})
+                    break
+            self._upload_done.emit(results)
 
         threading.Thread(target=_work, daemon=True).start()
 
-    def _on_upload_done(self, res: dict):
-        """アップロード結果（メインスレッド）"""
-        import time as _t
+    def _on_upload_progress(self, done: int, total: int):
+        try:
+            if total > 1:
+                self._up_btn.setText(f"送信中 {done}/{total}")
+        except RuntimeError:
+            pass
+
+    def _on_upload_done(self, results):
+        """アップロード結果（メインスレッド）。results は1件ごとのdictのリスト。"""
+        import os, time as _t
+        if isinstance(results, dict):       # 単発呼び出しにも耐える
+            results = [results]
         self._upload_inflight = False
         try:
             self._up_btn.setEnabled(True)
             self._up_btn.setText("あぷ")
         except RuntimeError:
             return
-        if not res.get("ok"):
-            QMessageBox.warning(self, "うｐろだ", res.get("message", "失敗しました"))
-            return
-        name = res.get("name", "")
+        ok_list = [r for r in results if r.get("ok")]
+        ng_list = [r for r in results if not r.get("ok")]
         # 削除できるように履歴へ残す（キーが無い場合も記録は残す）
-        try:
-            ups = list(getattr(self._settings, "uploader_uploads", []) or [])
-            ups.insert(0, {
-                "name": name, "url": res.get("url", ""),
-                "delno": res.get("delno", ""), "uploader": res.get("uploader", ""),
-                "key": (getattr(self._settings, "uploader_delete_key", "") or ""),
-                "time": _t.strftime("%Y/%m/%d %H:%M:%S"),
-            })
-            self._settings.uploader_uploads = ups[:200]
-            self._settings.save()
-        except Exception as e:
-            print(f"[UP] 履歴の保存に失敗: {e}")
-        # 本文へファイル名を貼る（2BPのうｐろだリンク設定でリンク/サムネになる）
-        if getattr(self._settings, "uploader_insert_to_comment", True) and name:
-            cur = self._comment.toPlainText()
-            sep = "" if (not cur or cur.endswith("\n")) else "\n"
-            self._comment.setPlainText(cur + sep + name)
-            _c = self._comment.textCursor()
-            _c.movePosition(_c.MoveOperation.End)
-            self._comment.setTextCursor(_c)
-        _msg = res.get("message", "")
-        if not (getattr(self._settings, "uploader_delete_key", "") or "").strip():
-            _msg += ("\n\n※ 削除キーが未設定のため、このファイルは削除できません。\n"
-                     "　 設定 → うｐろだ で削除キーを決めておくと後から消せます。")
-        QMessageBox.information(self, "うｐろだ", f"{_msg}\n\n{name}")
+        if ok_list:
+            try:
+                ups = list(getattr(self._settings, "uploader_uploads", []) or [])
+                _now = _t.strftime("%Y/%m/%d %H:%M:%S")
+                _key = (getattr(self._settings, "uploader_delete_key", "") or "")
+                for r in reversed(ok_list):     # 新しいものが先頭に来るように
+                    ups.insert(0, {
+                        "name": r.get("name", ""), "url": r.get("url", ""),
+                        "delno": r.get("delno", ""), "uploader": r.get("uploader", ""),
+                        "key": _key, "time": _now,
+                    })
+                self._settings.uploader_uploads = ups[:200]
+                self._settings.save()
+            except Exception as e:
+                print(f"[UP] 履歴の保存に失敗: {e}")
+            # 本文へファイル名を貼る（2BPのうｐろだリンク設定でリンク/サムネになる）
+            if getattr(self._settings, "uploader_insert_to_comment", True):
+                _names = [r.get("name", "") for r in ok_list if r.get("name")]
+                if _names:
+                    cur = self._comment.toPlainText()
+                    sep = "" if (not cur or cur.endswith("\n")) else "\n"
+                    self._comment.setPlainText(cur + sep + "\n".join(_names))
+                    _c = self._comment.textCursor()
+                    _c.movePosition(_c.MoveOperation.End)
+                    self._comment.setTextCursor(_c)
+        # ── 結果表示 ──
+        lines = []
+        if ok_list:
+            lines.append(f"アップロード成功: {len(ok_list)}件")
+            lines += ["  " + r.get("name", "") for r in ok_list]
+        if ng_list:
+            lines.append(("\n" if ok_list else "") + f"失敗: {len(ng_list)}件")
+            for r in ng_list:
+                _n = os.path.basename(r.get("path", "")) or "?"
+                _m = (r.get("message", "") or "").replace("\n", " ")[:70]
+                lines.append(f"  {_n}: {_m}")
+        if ok_list and not (getattr(self._settings, "uploader_delete_key", "") or "").strip():
+            lines.append("\n※ 削除キーが未設定のため、上げたファイルは削除できません。\n"
+                         "　 設定 → うｐろだ で削除キーを決めておくと後から消せます。")
+        _txt = "\n".join(lines) or "何も行われませんでした"
+        if ng_list:
+            QMessageBox.warning(self, "うｐろだ", _txt)
+        else:
+            QMessageBox.information(self, "うｐろだ", _txt)
 
     def _open_upload_history(self):
         """アップロード履歴を開く（そこから削除できる）"""
