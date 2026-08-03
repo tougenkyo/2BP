@@ -860,3 +860,20 @@ body.show-deleted .qt-row.deleted { display: block; }
 .qt-row.ng-band { border-left: 4px solid #1f9d1f; padding-left: 4px; }
 .qt-row.new-res { border-left: 4px solid #cc1105; padding-left: 4px; }
 .qt-row.self-res { border-left: 4px solid #1a6fd4; padding-left: 4px; }
+
+/* 画像のぼかし */
+/* ── レス ───────────────────────────────────────────── */
+body.m-reply.blur-weak   { --blur-f: blur(3px)  grayscale(0.0); --blur-o: .55; --blur-oh: .8;  }
+body.m-reply.blur-mid    { --blur-f: blur(5px)  grayscale(0.3); --blur-o: .4;  --blur-oh: .65; }
+body.m-reply.blur-strong { --blur-f: blur(12px) grayscale(0.6);  --blur-o: .3;  --blur-oh: .5;  }
+
+/* ── 引用モード ───────────────────────────────────────────── */
+body.m-quote.blur-weak   { --blur-f: blur(1px)  grayscale(0.0); --blur-o: .55; --blur-oh: .8;  }
+body.m-quote.blur-mid    { --blur-f: blur(3px)  grayscale(0.0); --blur-o: .4;  --blur-oh: .65; }
+body.m-quote.blur-strong { --blur-f: blur(5px) grayscale(0.5);  --blur-o: .3;  --blur-oh: .5;  }
+
+/* ── 画像モード ───────────────────────────────────────────── */
+body.m-image.blur-weak   { --blur-f: blur(1px)  grayscale(0.0); --blur-o: .55; --blur-oh: .8;  }
+body.m-image.blur-mid    { --blur-f: blur(3px)  grayscale(0.0); --blur-o: .4;  --blur-oh: .65; }
+body.m-image.blur-strong { --blur-f: blur(5px) grayscale(0.5);  --blur-o: .3;  --blur-oh: .5;  }
+
