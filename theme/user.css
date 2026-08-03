@@ -451,6 +451,28 @@ a.fi-inline:hover { text-decoration: underline; color: #DD0000; }
 .res.reverse-ng .header { background: rgba(155, 89, 182, 0.08); }
 
 
+/* ─ サムネのぼかし（グロ画像対策） ─
+   ON/OFF は板設定 → カタログ → 「スレの画像」で、返信/引用モードと画像モードを
+   スレ内の画像・うｐろだの画像それぞれ切り替えられる。
+   強さの既定は本体(THREAD_CSS)にあり、ここで同じセレクタを書けば上書きできる
+   （user.css は本体CSSの後に注入されるので後勝ちになる）。
+   例: もっと強く伏せたい場合
+
+   body.blur-res .res:not(.op) .thumb img:not(.thumb-shown),
+   body.blur-ul .ul-thumb:not(.thumb-shown) {
+       opacity: 0.25;
+       filter: blur(24px) grayscale(1);
+   }
+*/
+/* ─ 抽出（スレ内絞り込み）で非表示にするレス ─ */
+.res._ext_hide { display: none !important; }
+.page-footer {
+    font-size: 8pt; color: var(--footer-color); padding: 4px 8px;
+    width: 100%; margin-top: 4px;
+    text-align: right;
+}
+
+
 /* [プログラム既定より追加] NGワード/NG画像レスの左緑帯 */
 .res.ng-band { border-left: 4px solid #1f9d1f; padding-left: 5px; }
 /* [プログラム既定より追加] del済みレスの目印 */

@@ -433,9 +433,11 @@ body.blur-ul .ul-thumb:not(.thumb-shown),
 body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
     /* 消してしまうとクリック先が分からないので「ぼんやり見えている」状態にする。
        中身が読み取れないのは blur とグレースケールで担保する。
-       グロ画像の判別は色（赤）に大きく依るため、彩度を落とすのが効く。 */
+       グロ画像の判別は色（赤）に大きく依るため、彩度を落とすのが効く。
+       強さを変えたい時は user.css で同じセレクタを書けば上書きできる
+       （user.css はこの後に注入されるので後勝ちになる）。 */
     opacity: 0.4;
-    filter: blur(18px) grayscale(1);
+    filter: blur(5px) grayscale(0.5);
     cursor: pointer;
     transition: opacity 0.15s, filter 0.15s;
 }
