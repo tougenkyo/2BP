@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTabBar, QScrollArea, QSpinBox, QCheckBox, QComboBox,
     QButtonGroup, QRadioButton, QListWidget, QListWidgetItem, QInputDialog,
     QApplication, QStyle, QStylePainter, QStyleOptionTab, QSizePolicy,
-    QListView,
+    QListView, QToolButton, QMenu,
 )
 
 from futaba2b_models   import BoardInfo
@@ -997,8 +997,142 @@ def jpeg_strip_thumbnail(data: bytes):
     return data[:a_start] + new_app1 + data[a_end:]
 
 
+class UploaderHistoryDialog(QDialog):
+    """うｐろだへ上げたファイルの一覧。ここから削除できる。
+
+    削除にはアップロード時に使った削除キーが要る。キーを入れずに上げたものは
+    2BPからは消せない（うｐろだ側の仕様）。"""
+
+    _del_done = Signal(int, bool, str)   # row, ok, message
+
+    def __init__(self, fetcher, settings, parent=None):
+        super().__init__(parent)
+        self._fetcher = fetcher
+        self._settings = settings
+        self.setWindowTitle("うｐろだ ─ アップロード履歴")
+        self.resize(720, 420)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel(
+            "2BPから上げたファイルの一覧です。削除にはアップロード時の削除キーが要ります。"))
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(
+            ["日時", "うｐろだ", "ファイル名", "削除キー", "状態"])
+        self._table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        lay.addWidget(self._table, 1)
+
+        btns = QHBoxLayout()
+        self._btn_del = QPushButton("選択したものをうｐろだから削除")
+        self._btn_del.clicked.connect(self._delete_selected)
+        btns.addWidget(self._btn_del)
+        _btn_open = QPushButton("ブラウザで開く")
+        _btn_open.clicked.connect(self._open_selected)
+        btns.addWidget(_btn_open)
+        _btn_forget = QPushButton("一覧から消す（うｐろだは触らない）")
+        _btn_forget.clicked.connect(self._forget_selected)
+        btns.addWidget(_btn_forget)
+        btns.addStretch()
+        _bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        _bb.rejected.connect(self.reject)
+        btns.addWidget(_bb)
+        lay.addLayout(btns)
+
+        self._del_done.connect(self._on_del_done)
+        self._reload()
+
+    def _rows(self) -> list:
+        return list(getattr(self._settings, "uploader_uploads", []) or [])
+
+    def _reload(self):
+        ups = self._rows()
+        self._table.setRowCount(0)
+        _names = {"up2": "あぷ小", "up": "あぷ"}
+        for u in ups:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            _key = u.get("key", "")
+            for c, v in enumerate([
+                    u.get("time", ""),
+                    _names.get(u.get("uploader", ""), u.get("uploader", "")),
+                    u.get("name", ""),
+                    ("あり" if _key else "なし（削除不可）"),
+                    u.get("state", "")]):
+                self._table.setItem(r, c, QTableWidgetItem(str(v)))
+
+    def _selected_rows(self) -> list:
+        return sorted({i.row() for i in self._table.selectedIndexes()})
+
+    def _open_selected(self):
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl as _QUrl
+        ups = self._rows()
+        for r in self._selected_rows():
+            if 0 <= r < len(ups) and ups[r].get("url"):
+                QDesktopServices.openUrl(_QUrl(ups[r]["url"]))
+
+    def _forget_selected(self):
+        ups = self._rows()
+        keep = [u for i, u in enumerate(ups) if i not in set(self._selected_rows())]
+        self._settings.uploader_uploads = keep
+        try:
+            self._settings.save()
+        except Exception:
+            pass
+        self._reload()
+
+    def _delete_selected(self):
+        import threading
+        rows = self._selected_rows()
+        if not rows:
+            return
+        ups = self._rows()
+        targets = [(r, ups[r]) for r in rows if 0 <= r < len(ups)]
+        _nokey = [u for _, u in targets if not u.get("key")]
+        if _nokey:
+            QMessageBox.warning(
+                self, "うｐろだ",
+                f"削除キーが記録されていないものが {len(_nokey)} 件あります。\n"
+                "うｐろだ側の仕様で、キーが無いものは削除できません。")
+        targets = [(r, u) for r, u in targets if u.get("key")]
+        if not targets:
+            return
+        if QMessageBox.question(
+                self, "うｐろだ",
+                f"{len(targets)} 件をうｐろだから削除します。よろしいですか？\n"
+                "（この操作は取り消せません）") != QMessageBox.StandardButton.Yes:
+            return
+        self._btn_del.setEnabled(False)
+
+        def _work():
+            for r, u in targets:
+                try:
+                    ok, msg = self._fetcher.delete_from_uploader(
+                        u.get("delno", ""), u.get("key", ""),
+                        u.get("uploader", "up2"))
+                except Exception as e:
+                    ok, msg = False, str(e)
+                self._del_done.emit(r, ok, msg)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_del_done(self, row: int, ok: bool, msg: str):
+        ups = self._rows()
+        if 0 <= row < len(ups):
+            ups[row]["state"] = ("削除済み" if ok else f"失敗: {msg[:40]}")
+            self._settings.uploader_uploads = ups
+            try:
+                self._settings.save()
+            except Exception:
+                pass
+        self._reload()
+        self._btn_del.setEnabled(True)
+
+
 class PostDialog(QDialog):
     _result_signal = Signal(bool, str, int)  # 投稿結果 thread-safe (ok, msg, new_thread_no)
+    _upload_done   = Signal(object)          # うｐろだ結果 thread-safe (dict)
     pin_after_post    = Signal()        # 投稿成功後にピン留め要求
     scroll_after_post = Signal()        # 投稿成功後に最下部スクロール要求
     activate_tab      = Signal(int)     # タイトルバークリック → 対応タブをアクティブ化
@@ -1038,6 +1172,8 @@ class PostDialog(QDialog):
         self._img_is_tmp = False
         self._clip_image = None      # クリップボード貼付時の元QImage（品質再適用用）
         self._post_inflight = False  # POST送信スレッドが動作中か（二重投稿防止）
+        self._upload_inflight = False  # うｐろだ送信中か（二重アップロード防止）
+        self._upload_done.connect(self._on_upload_done)
         self._on_success = on_success
         self._result_signal.connect(self._on_result)
         self.setAcceptDrops(True)  # D&Dを有効化
@@ -1180,6 +1316,27 @@ class PostDialog(QDialog):
         self._clear_btn.clicked.connect(self._clear_image)
         self._clear_btn.hide()   # 添付なし時は非表示
         img_lay.addWidget(self._clear_btn)
+        # うｐろだ（あぷ小→入らなければあぷ）へアップロードして本文へ貼る
+        self._up_btn = QToolButton()
+        self._up_btn.setText("あぷ")
+        self._up_btn.setToolTip(
+            "添付ファイルをふたばのうｐろだへアップロードします。\n"
+            "あぷ小(3MB)に収まればあぷ小、超えていればあぷ(10MB)を自動で選びます。\n"
+            "成功するとファイル名を本文に貼り付けます。")
+        self._up_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        _up_menu = QMenu(self._up_btn)
+        _up_menu.addAction("添付をアップロード（自動選択）",
+                           lambda: self._upload_to_uploader("auto"))
+        _up_menu.addAction("あぷ小に上げる", lambda: self._upload_to_uploader("up2"))
+        _up_menu.addAction("あぷに上げる",   lambda: self._upload_to_uploader("up"))
+        _up_menu.addSeparator()
+        _up_menu.addAction("別のファイルを選んで上げる…",
+                           lambda: self._upload_to_uploader("auto", browse=True))
+        _up_menu.addSeparator()
+        _up_menu.addAction("アップロード履歴／削除…", self._open_upload_history)
+        self._up_btn.setMenu(_up_menu)
+        self._up_btn.clicked.connect(lambda: self._upload_to_uploader("auto"))
+        img_lay.addWidget(self._up_btn)
         # 添付サイズ / 板の上限表示（超過時は赤字＋⚠）
         self._size_lbl = QLabel()
         self._size_lbl.setToolTip("添付ファイルのサイズと板の上限。上限を超えると投稿できません。")
@@ -1913,6 +2070,87 @@ document.addEventListener('keydown',function(e){{
             self._paste_clipboard_image(img)
         else:
             QMessageBox.information(self, "貼り付け", "クリップボードに画像がありません。")
+
+    # ── うｐろだ（あぷ / あぷ小） ──────────────────────────────────────────
+
+    def _upload_to_uploader(self, which: str = "auto", browse: bool = False):
+        """添付ファイルをふたばのうｐろだへ上げ、成功したら本文にファイル名を貼る。
+        送信はワーカースレッドで行い、失敗しても自動再送はしない。"""
+        import os, threading
+        path = self._img_path
+        if browse or not path:
+            start = os.path.dirname(path) if path else (
+                getattr(self._settings, "last_image_save_dir", "") or "")
+            path, _ = QFileDialog.getOpenFileName(
+                self, "アップロードするファイルを選択", start,
+                "すべてのファイル (*.*)")
+            if not path:
+                return
+        if not os.path.isfile(path):
+            QMessageBox.warning(self, "うｐろだ",
+                                f"ファイルが見つかりません:\n{path}")
+            return
+        if getattr(self, "_upload_inflight", False):
+            return                      # 二重アップロード防止
+        key = (getattr(self._settings, "uploader_delete_key", "") or "").strip()
+        self._upload_inflight = True
+        self._up_btn.setEnabled(False)
+        self._up_btn.setText("送信中")
+
+        def _work():
+            try:
+                res = self._fetcher.upload_to_uploader(
+                    path, comment="", delete_key=key, uploader=which)
+            except Exception as e:
+                res = {"ok": False, "message": f"アップロードに失敗しました:\n{e}"}
+            self._upload_done.emit(res)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_upload_done(self, res: dict):
+        """アップロード結果（メインスレッド）"""
+        import time as _t
+        self._upload_inflight = False
+        try:
+            self._up_btn.setEnabled(True)
+            self._up_btn.setText("あぷ")
+        except RuntimeError:
+            return
+        if not res.get("ok"):
+            QMessageBox.warning(self, "うｐろだ", res.get("message", "失敗しました"))
+            return
+        name = res.get("name", "")
+        # 削除できるように履歴へ残す（キーが無い場合も記録は残す）
+        try:
+            ups = list(getattr(self._settings, "uploader_uploads", []) or [])
+            ups.insert(0, {
+                "name": name, "url": res.get("url", ""),
+                "delno": res.get("delno", ""), "uploader": res.get("uploader", ""),
+                "key": (getattr(self._settings, "uploader_delete_key", "") or ""),
+                "time": _t.strftime("%Y/%m/%d %H:%M:%S"),
+            })
+            self._settings.uploader_uploads = ups[:200]
+            self._settings.save()
+        except Exception as e:
+            print(f"[UP] 履歴の保存に失敗: {e}")
+        # 本文へファイル名を貼る（2BPのうｐろだリンク設定でリンク/サムネになる）
+        if getattr(self._settings, "uploader_insert_to_comment", True) and name:
+            cur = self._comment.toPlainText()
+            sep = "" if (not cur or cur.endswith("\n")) else "\n"
+            self._comment.setPlainText(cur + sep + name)
+            _c = self._comment.textCursor()
+            _c.movePosition(_c.MoveOperation.End)
+            self._comment.setTextCursor(_c)
+        _msg = res.get("message", "")
+        if not (getattr(self._settings, "uploader_delete_key", "") or "").strip():
+            _msg += ("\n\n※ 削除キーが未設定のため、このファイルは削除できません。\n"
+                     "　 設定 → うｐろだ で削除キーを決めておくと後から消せます。")
+        QMessageBox.information(self, "うｐろだ", f"{_msg}\n\n{name}")
+
+    def _open_upload_history(self):
+        """アップロード履歴を開く（そこから削除できる）"""
+        dlg = UploaderHistoryDialog(self._fetcher, self._settings, self)
+        dlg.exec()
 
     # ── 添付サイズ表示 ──────────────────────────────────────────────────────
     def _max_file_bytes(self) -> int:
@@ -4526,6 +4764,28 @@ class AppSettingsDialog(QDialog):
         ul_up.clicked.connect(lambda: _ul_move(-1))
         ul_dn.clicked.connect(lambda: _ul_move(1))
 
+        # ── アップロード（あぷ / あぷ小） ──────────────────────────────
+        g_upsend = QGroupBox("アップロード（あぷ / あぷ小）"); f7.addWidget(g_upsend)
+        _upf = QFormLayout(g_upsend)
+        self._uploader_del_key = QLineEdit()
+        self._uploader_del_key.setMaxLength(10)
+        self._uploader_del_key.setFixedWidth(140)
+        self._uploader_del_key.setToolTip(
+            "うｐろだへ上げる時に一緒に送る削除キー（10文字以内）。\n"
+            "後から自分で消すために必要です。空のまま上げたファイルは削除できません。")
+        _upf.addRow("削除キー:", self._uploader_del_key)
+        self._uploader_insert = QCheckBox("アップロード後、ファイル名を本文に貼り付ける")
+        self._uploader_insert.setToolTip(
+            "上のうｐろだリンク設定によって、貼り付けたファイル名がリンク/サムネになります。")
+        _upf.addRow(self._uploader_insert)
+        _up_hint = QLabel(
+            "投稿ウインドウの「あぷ」ボタンから添付ファイルを上げられます。\n"
+            "あぷ小(3MB)に収まればあぷ小、超えていればあぷ(10MB)を自動で選びます。\n"
+            "上げたものは同ボタンの「アップロード履歴／削除…」から消せます。")
+        _up_hint.setStyleSheet("color: gray; font-size: 11px;")
+        _up_hint.setWordWrap(True)
+        _upf.addRow("", _up_hint)
+
         nb.addTab(w7, "うｐろだ")
 
         # ══════════════════════════════════════════════════════════════════
@@ -4947,6 +5207,9 @@ class AppSettingsDialog(QDialog):
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
         self._image_mode_include_ul.setChecked(
             getattr(s, "image_mode_include_uploader", False))
+        self._uploader_del_key.setText(getattr(s, "uploader_delete_key", "") or "")
+        self._uploader_insert.setChecked(
+            getattr(s, "uploader_insert_to_comment", True))
         self._image_open_actual.setChecked(getattr(s, "image_open_actual_size", False))
         self._recent_closed_max.setValue(getattr(s, "recent_closed_max", 30))
         self._recent_images_max.setValue(getattr(s, "recent_images_max", 30))
@@ -5107,6 +5370,8 @@ class AppSettingsDialog(QDialog):
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.image_mode_include_uploader = self._image_mode_include_ul.isChecked()
+        s.uploader_delete_key     = self._uploader_del_key.text().strip()[:10]
+        s.uploader_insert_to_comment = self._uploader_insert.isChecked()
         s.image_open_actual_size  = self._image_open_actual.isChecked()
         s.recent_closed_max       = self._recent_closed_max.value()
         s.recent_images_max       = self._recent_images_max.value()

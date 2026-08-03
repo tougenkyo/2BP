@@ -418,6 +418,10 @@ class AppSettings:
         # 画像モードにうｐろだの直リン画像も並べる。あぷはサムネが無く原寸を
         # 読むため通信量が増える → 既定OFF。
         self.image_mode_include_uploader: bool = False
+        # うｐろだ（あぷ/あぷ小）へのアップロード用
+        self.uploader_delete_key: str = ""      # 既定の削除キー（空=削除できない）
+        self.uploader_insert_to_comment: bool = True  # 成功時に本文へファイル名を入れる
+        self.uploader_uploads: list = []        # 自分のアップロード履歴（削除用）
         self.image_mode_cols: int = 6   # 画像モードの折り返し列数
         self.id_warn_count: int = 5   # ID出現回数がこの値以上ならIDを赤くする
         # スレオープンモード 0=通常 1=返信 2=画像 3=引用
@@ -875,6 +879,11 @@ class AppSettings:
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
             self.image_mode_include_uploader = bool(
                 raw.get("image_mode_include_uploader", False))
+            self.uploader_delete_key = str(raw.get("uploader_delete_key", "") or "")[:10]
+            self.uploader_insert_to_comment = bool(
+                raw.get("uploader_insert_to_comment", True))
+            _up = raw.get("uploader_uploads", [])
+            self.uploader_uploads = _up if isinstance(_up, list) else []
             self.id_warn_count = int(raw.get("id_warn_count", 5))
             self.theme = str(raw.get("theme", "dark"))
             self.toolbar_show_labels = bool(raw.get("toolbar_show_labels", True))
@@ -1079,6 +1088,9 @@ class AppSettings:
                         "tab_orange_quarantine": self.tab_orange_quarantine,
                         "image_mode_cols": self.image_mode_cols,
                         "image_mode_include_uploader": self.image_mode_include_uploader,
+                        "uploader_delete_key": self.uploader_delete_key,
+                        "uploader_insert_to_comment": self.uploader_insert_to_comment,
+                        "uploader_uploads": self.uploader_uploads[:200],
                         "id_warn_count": self.id_warn_count,
                         "theme": self.theme,
                         "toolbar_show_labels": self.toolbar_show_labels,

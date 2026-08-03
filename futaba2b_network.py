@@ -896,6 +896,197 @@ class FutabaFetcher:
             "Accept-Language": "ja,en;q=0.9",
         }
 
+    # ── ふたばのうｐろだ（あぷ / あぷ小） ────────────────────────────────
+    # フォーム仕様（2026-08 時点で実ページから確認）
+    #   POST {base}up.php  multipart/form-data
+    #     MAX_FILE_SIZE / mode=reg / up=ファイル / com=コメント / pass=削除キー
+    #   削除は POST {base}up.php  delno=<番号> / mode=del / pass=削除キー
+    #   保存名は「接頭辞+番号.拡張子」で、番号がそのまま削除番号になる
+    #   （例: fu7063448.jpg ↔ up.php?del=7063448）
+    UPLOADERS = {
+        "up2": {"name": "あぷ小", "base": "http://dec.2chan.net/up2/",
+                "max_bytes": 3_000_000,  "prefix": "fu"},
+        "up":  {"name": "あぷ",   "base": "http://dec.2chan.net/up/",
+                "max_bytes": 10_000_000, "prefix": "f"},
+    }
+
+    def _uploader_max_bytes(self, key: str) -> int:
+        """うｐろだの上限を実ページの MAX_FILE_SIZE から取得する（失敗時は既定値）。
+        サイト側で上限が変わっても追随できるよう、送信前に一度だけ見る。"""
+        info = self.UPLOADERS.get(key) or {}
+        default = int(info.get("max_bytes", 0) or 0)
+        try:
+            r = self.session.get(info["base"], headers={"User-Agent": UA},
+                                 timeout=self.timeout)
+            if not r.ok:
+                return default
+            m = re.search(r'name=["\']?MAX_FILE_SIZE["\']?\s+value=["\']?(\d+)',
+                          r.content.decode("cp932", errors="replace"), re.I)
+            if m:
+                return int(m.group(1))
+        except Exception as e:
+            print(f"[UP] 上限取得に失敗（既定値を使う）: {e}")
+        return default
+
+    def _uploader_index_ids(self, key: str) -> set:
+        """うｐろだ一覧に載っている記事番号の集合。アップ後の新規分を割り出すのに使う。"""
+        info = self.UPLOADERS.get(key) or {}
+        try:
+            r = self.session.get(info["base"], headers={"User-Agent": UA},
+                                 timeout=self.timeout)
+            if not r.ok:
+                return set()
+            html = r.content.decode("cp932", errors="replace")
+            return {int(x) for x in re.findall(r"up\.php\?del=(\d+)", html)}
+        except Exception as e:
+            print(f"[UP] 一覧取得に失敗: {e}")
+            return set()
+
+    def pick_uploader(self, path: str) -> tuple:
+        """ファイルサイズから使ううｐろだを選ぶ。
+        あぷ小に収まればあぷ小、収まらなければあぷ。どちらにも入らなければ None。
+        戻り値: (キー, 上限バイト数, ファイルサイズ)"""
+        try:
+            size = Path(path).stat().st_size
+        except OSError:
+            return (None, 0, 0)
+        for key in ("up2", "up"):
+            limit = self._uploader_max_bytes(key)
+            if limit and size <= limit:
+                return (key, limit, size)
+        return (None, self._uploader_max_bytes("up"), size)
+
+    def upload_to_uploader(self, path: str, comment: str = "",
+                           delete_key: str = "", uploader: str = "auto") -> dict:
+        """ふたばのうｐろだへファイルを上げる。
+
+        uploader: "auto"（あぷ小→入らなければあぷ）/ "up2" / "up"
+        戻り値 dict:
+          ok(bool) / message(str) / name(str: fu1234.jpg) / url(str) /
+          delno(str) / uploader(str: up2|up) / base(str)
+
+        POSTは失敗しても自動再送しない（二重アップロードを避けるため）。"""
+        p = Path(path)
+        if not p.exists():
+            return {"ok": False, "message": f"ファイルが見つかりません:\n{path}"}
+        size = p.stat().st_size
+        if uploader in ("auto", "", None):
+            key, limit, size = self.pick_uploader(str(p))
+            if not key:
+                return {"ok": False,
+                        "message": ("ファイルが大きすぎます。\n"
+                                    f"サイズ: {size:,} バイト / あぷの上限: {limit:,} バイト")}
+        else:
+            key = uploader
+            limit = self._uploader_max_bytes(key)
+            if limit and size > limit:
+                return {"ok": False,
+                        "message": (f"{self.UPLOADERS[key]['name']}の上限を超えています。\n"
+                                    f"サイズ: {size:,} バイト / 上限: {limit:,} バイト")}
+        info = self.UPLOADERS[key]
+        base = info["base"]
+        before = self._uploader_index_ids(key)
+
+        data = {"MAX_FILE_SIZE": str(limit or info["max_bytes"]),
+                "mode": "reg", "com": comment or ""}
+        if delete_key:
+            data["pass"] = delete_key[:10]
+        try:
+            with p.open("rb") as fp:
+                files = {"up": (p.name, fp, "application/octet-stream")}
+                # 自動再送しない（requests のリトライは GET のみ。POSTはここで確定）
+                r = self.session.post(base + "up.php", data=data, files=files,
+                                      headers={"User-Agent": UA, "Referer": base},
+                                      timeout=max(30, self.timeout))
+        except requests.exceptions.RequestException as e:
+            print(f"[UP] 送信エラー（再送しない）: {e}")
+            return {"ok": False,
+                    "message": ("アップロードに失敗しました（再送していません）。\n"
+                                f"{e}\n\n"
+                                "うｐろだ側に届いている可能性があるため、\n"
+                                "一覧を確認してから上げ直してください。")}
+        except OSError as e:
+            return {"ok": False, "message": f"ファイルを読めません:\n{e}"}
+
+        html = r.content.decode("cp932", errors="replace")
+        if not r.ok:
+            return {"ok": False, "message": f"アップロード失敗: {r.status_code} {r.reason}"}
+        # 応答に保存名が含まれていればそれを使う
+        _pat = re.compile(r"\b(" + info["prefix"] + r"(\d+)\.\w+)\b")
+        m = _pat.search(html)
+        name = delno = ""
+        if m:
+            name, delno = m.group(1), m.group(2)
+        else:
+            # 応答から取れない場合は一覧の差分で特定する
+            after = self._uploader_index_ids(key)
+            new = sorted(after - before, reverse=True)
+            if new:
+                delno = str(new[0])
+                name = f"{info['prefix']}{delno}{p.suffix.lower()}"
+        if not name:
+            _txt = re.sub(r"<[^>]+>", " ", html)
+            _txt = re.sub(r"\s+", " ", _txt).strip()[:200]
+            return {"ok": False,
+                    "message": ("アップロード結果を確認できませんでした。\n"
+                                "うｐろだの一覧を直接ご確認ください。\n\n"
+                                f"応答: {_txt}")}
+        print(f"[UP] 完了 {info['name']} {name} ({size:,}B)")
+        return {"ok": True, "message": f"{info['name']}にアップロードしました",
+                "name": name, "url": base + "src/" + name, "delno": delno,
+                "uploader": key, "base": base}
+
+    def delete_from_uploader(self, delno: str, delete_key: str,
+                             uploader: str = "up2") -> tuple[bool, str]:
+        """うｐろだに上げたファイルを削除する（POST mode=del）。
+        自動再送はしない。"""
+        info = self.UPLOADERS.get(uploader)
+        if not info:
+            return (False, f"不明なうｐろだです: {uploader}")
+        if not str(delno).isdigit():
+            return (False, f"削除番号が不正です: {delno}")
+        if not delete_key:
+            return (False, "削除キーが設定されていません。\n"
+                           "アップロード時に削除キーを入れていないと削除できません。")
+        try:
+            r = self.session.post(
+                info["base"] + "up.php",
+                data={"delno": str(delno), "mode": "del", "pass": delete_key},
+                headers={"User-Agent": UA, "Referer": info["base"]},
+                timeout=self.timeout)
+        except requests.exceptions.RequestException as e:
+            print(f"[UP] 削除の送信エラー（再送しない）: {e}")
+            return (False, f"削除に失敗しました（再送していません）:\n{e}")
+        if not r.ok:
+            return (False, f"削除失敗: {r.status_code} {r.reason}")
+        html = r.content.decode("cp932", errors="replace")
+        # 応答文言はサイト側の変更で当てにならないので、一覧から消えたかで確認する
+        if int(delno) in self._uploader_index_ids(uploader):
+            _txt = re.sub(r"<[^>]+>", " ", html)
+            _txt = re.sub(r"\s+", " ", _txt).strip()[:160]
+            return (False, f"削除できませんでした（キー違い等）。\n応答: {_txt}")
+        print(f"[UP] 削除完了 {info['name']} No.{delno}")
+        return (True, f"{info['name']}の記事{delno}番を削除しました")
+
+    @classmethod
+    def parse_uploader_url(cls, url: str) -> tuple:
+        """うｐろだのURL/ファイル名から (uploaderキー, 削除番号) を割り出す。
+        分からなければ (None, "")。"""
+        u = str(url or "")
+        for key, info in cls.UPLOADERS.items():
+            m = re.search(r"\b" + info["prefix"] + r"(\d+)\.\w+", u)
+            if not m:
+                continue
+            # 接頭辞が f と fu で被るので、URL にディレクトリがあればそちらを優先
+            if info["base"].rstrip("/").rsplit("/", 1)[-1] in u:
+                return (key, m.group(1))
+        for key in ("up2", "up"):      # ディレクトリが無い場合は接頭辞の長い方から
+            info = cls.UPLOADERS[key]
+            m = re.fullmatch(info["prefix"] + r"(\d+)\.\w+", u.rsplit("/", 1)[-1])
+            if m:
+                return (key, m.group(1))
+        return (None, "")
+
     def post_res(
         self,
         board: BoardInfo,
