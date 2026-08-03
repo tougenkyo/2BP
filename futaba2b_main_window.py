@@ -4737,6 +4737,11 @@ class MainWindow(QMainWindow):
         inner = self._active_inner()
         if not inner or inner._board.url != board.url:
             return
+        # サムネぼかしのON/OFFはこの板の開いているスレへ即時反映する（再読込不要）
+        for j in range(inner.count()):
+            w = inner.widget(j)
+            if hasattr(w, 'apply_blur_setting'):
+                w.apply_blur_setting()
         for j in range(inner.count()):
             w = inner.widget(j)
             if not isinstance(w, CatalogView):
@@ -4836,9 +4841,6 @@ class MainWindow(QMainWindow):
                     _v = pane._tabs.widget(_j)
                     if hasattr(_v, 'apply_mouse_gesture_setting'):
                         _v.apply_mouse_gesture_setting()
-                    # サムネぼかしのON/OFFも再読込なしで反映する
-                    if hasattr(_v, 'apply_blur_setting'):
-                        _v.apply_blur_setting()
         # テーマ変更をステータスバーへ再適用（個別styleSheetはアプリ全体スタイルより
         # 優先されるため、明示的に塗り直さないと色が変わらない）
         self._apply_statusbar_theme()

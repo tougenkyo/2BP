@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.328"
+APP_VER = "0.9.329"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5009,7 +5009,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
                                                    scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                                    footer_html=_make_thread_footer(thread),
                                                    my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-                                                   pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
+                                                   pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
+                blur_thumbs=self._blur_thumbs_on())
             self._last_html = _html
             self._last_html_dirty = False
             self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
@@ -5034,7 +5035,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
                                               scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                               footer_html=_make_thread_footer(thread),
                                               my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-                                              pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
+                                              pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
+                blur_thumbs=self._blur_thumbs_on())
         _t1 = _t.time()
         html_bytes = html.encode('utf-8')
 
@@ -6129,7 +6131,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
             hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal, scroll_bottom_count=_sbc,
             footer_html=_footer(thread),
             my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-            pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
+            pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
+                blur_thumbs=self._blur_thumbs_on())
         self._last_html = html
         self._last_html_dirty = False
 
@@ -6362,14 +6365,24 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return die if "消えます" in die else f"{die}頃消えます"
         return (getattr(thread, "expiry", "") or "").strip()
 
+    def _blur_thumbs_on(self) -> bool:
+        """この板でサムネぼかしが有効か（板ごとの設定）。"""
+        _b = getattr(self, "_board", None)
+        if _b is None:
+            return False
+        try:
+            from futaba2b_settings import get_board_settings as _gbs
+            return bool(getattr(_gbs(_b.base_url), "blur_thumbnails", False))
+        except Exception:
+            return False
+
     def _blur_body_class(self) -> str:
         """サムネぼかし用の body クラス（画像/引用モードのHTML生成で使う）"""
-        return (' class="blur-thumbs"'
-                if getattr(self._settings, "blur_thumbnails", False) else "")
+        return ' class="blur-thumbs"' if self._blur_thumbs_on() else ""
 
     def apply_blur_setting(self):
         """サムネぼかしの設定変更を表示中のページへ即時反映する（再読込不要）。"""
-        _on = "true" if getattr(self._settings, "blur_thumbnails", False) else "false"
+        _on = "true" if self._blur_thumbs_on() else "false"
         _safe_run_js(getattr(self, "_view", None),
                      f"if(window.setBlurThumbs)setBlurThumbs({_on});")
 
@@ -10362,7 +10375,8 @@ class AutoRefreshManager(QObject):
                                       footer_html=view._thread_footer_html(thread),
                                       my_nos=self._get_my_nos_for_view(view, thread),
                 id_warn_count=getattr(self._settings,'id_warn_count',5),
-                pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
+                pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
+                blur_thumbs=view._blur_thumbs_on())
             _cn = '' if 'キャッシュ表示' in (thread.error or '') else ' (キャッシュ表示)'
             banner = (f'<div style="background:#a00;color:#fff;padding:6px 8px;'
                       f'font-size:9pt;font-weight:bold;text-align:center;">'
@@ -10505,7 +10519,8 @@ class AutoRefreshManager(QObject):
                                   scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
                                   footer_html=view._thread_footer_html(thread),
                                   my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-                                  pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False))
+                                  pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
+                blur_thumbs=view._blur_thumbs_on())
         view._thread = thread
         view._known_res_count = len(thread.res_list)
         # _last_html を更新（モード切替・ログ保存で使われる）

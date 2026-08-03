@@ -2269,6 +2269,7 @@ def thread_to_html(thread, show_deleted: bool = False,
                    scroll_top_count: int = 0,
                    del_nos: set = None,
                    ng_reveal: bool = False,
+                   blur_thumbs: bool = False,
                    pseudo_expiring: bool = False,
                    sort_by_sodane: bool = False) -> tuple[str, list]:
     """ThreadData → (HTML文字列, 画像リスト)"""
@@ -2342,8 +2343,8 @@ def thread_to_html(thread, show_deleted: bool = False,
         body_class = ' class="op-no-id"'         # OP無IDなのにIDあり
     else:
         body_class = ''
-    # サムネぼかし（グロ画像対策）: body クラスで効かせる
-    if getattr(ng_settings, "blur_thumbnails", False):
+    # サムネぼかし（グロ画像対策・板ごとの設定）: body クラスで効かせる
+    if blur_thumbs:
         body_class = (body_class.replace('class="', 'class="blur-thumbs ')
                       if body_class else ' class="blur-thumbs"')
     _usr = f'<style id="__usercss">{user_css}</style>' if user_css else ''

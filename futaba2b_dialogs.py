@@ -4481,15 +4481,6 @@ class AppSettingsDialog(QDialog):
         self._id_warn_count = _spin(1, 9999, " 件", width=90,
             tip="同一IDの書き込み数がこの件数以上のレスはIDを赤く表示します（基本5）")
         tf.addRow("ID件数で赤字にする閾値:", self._id_warn_count)
-        self._blur_thumbs = QCheckBox("サムネイルをぼかす（クリックで1枚ずつ表示）")
-        self._blur_thumbs.setToolTip(
-            "スレに出る画像をぼかして表示します。クリックするとその1枚だけ出ます。\n"
-            "ふたばに貼られた画像（手書き投稿を含む）とうｐろだの直リン画像、\n"
-            "画像モードのサムネがまとめて対象です。\n\n"
-            "グロ画像対策向けの機能です。手書き投稿かどうかはHTML上で判別できない\n"
-            "ため、出所で分けずに全部伏せる方式にしています。\n"
-            "スレを開き直すとまた伏せた状態に戻ります。")
-        tf.addRow(self._blur_thumbs)
 
         # スレオープン時の表示モード
         _open_mode_items = ["返信", "画像", "引用"]
@@ -5290,7 +5281,6 @@ class AppSettingsDialog(QDialog):
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
         self._image_mode_include_ul.setChecked(
             getattr(s, "image_mode_include_uploader", False))
-        self._blur_thumbs.setChecked(getattr(s, "blur_thumbnails", False))
         self._uploader_del_key.setText(getattr(s, "uploader_delete_key", "") or "")
         self._uploader_insert.setChecked(
             getattr(s, "uploader_insert_to_comment", True))
@@ -5454,7 +5444,6 @@ class AppSettingsDialog(QDialog):
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.image_mode_include_uploader = self._image_mode_include_ul.isChecked()
-        s.blur_thumbnails         = self._blur_thumbs.isChecked()
         # 空にされたら削除できなくなるので、その時は新しくランダム生成する
         _uk = self._uploader_del_key.text().strip()[:10]
         if not _uk:
@@ -6091,6 +6080,20 @@ class BoardSettingsDialog(QDialog):
         self._bs_few_res_hide.toggled.connect(self._bs_few_res_count.setEnabled)
         self._bs_few_res_count.setEnabled(False)  # 初期状態（チェックOFF時）は無効
 
+        # ── サムネイルのぼかし（グロ画像対策・板ごと） ──
+        g_blur = QGroupBox("スレの画像"); f1.addWidget(g_blur)
+        _bl = QVBoxLayout(g_blur)
+        self._bs_blur_thumbs = QCheckBox(
+            "サムネイルをぼかす（クリックで1枚ずつ表示）")
+        self._bs_blur_thumbs.setToolTip(
+            "この板のスレに出る画像をぼかして表示します。\n"
+            "クリックするとその1枚だけ出ます。\n\n"
+            "ふたばに貼られた画像（手書き投稿を含む）とうｐろだの直リン画像、\n"
+            "画像モードのサムネがまとめて対象です。\n\n"
+            "グロ画像対策向けの機能です。手書き投稿かどうかはHTML上で判別\n"
+            "できないため、出所で分けずに全部伏せる方式にしています。\n"
+            "スレを開き直すとまた伏せた状態に戻ります。")
+        _bl.addWidget(self._bs_blur_thumbs)
         f1.addStretch(); nb.addTab(_scroll(w1), "カタログ")
 
         # ══════════════════════════════════════════════════════════════════
@@ -6211,6 +6214,7 @@ class BoardSettingsDialog(QDialog):
         self._bs_few_res_hide.setChecked(_hide)
         self._bs_few_res_count.setValue(getattr(bs, "catalog_few_res_count", 5))
         self._bs_few_res_count.setEnabled(_hide)
+        self._bs_blur_thumbs.setChecked(getattr(bs, "blur_thumbnails", False))
 
         # 自動更新
         use_t = bs.ar_use_default_thread
@@ -6256,6 +6260,7 @@ class BoardSettingsDialog(QDialog):
         bs.use_own_few_res       = True   # 板設定が常に有効
         bs.catalog_few_res_hide  = self._bs_few_res_hide.isChecked()
         bs.catalog_few_res_count = self._bs_few_res_count.value()
+        bs.blur_thumbnails       = self._bs_blur_thumbs.isChecked()
 
         # 自動更新
         bs.ar_use_default_thread       = self._ar_use_default_thread.isChecked()

@@ -55,6 +55,8 @@ class BoardSettings:
         # 過疎スレ非表示（use_own_few_res=TrueのときAppSettings値を無視して板設定を使う）
         self.use_own_few_res:        bool = False
         self.catalog_few_res_hide:   bool = False
+        # サムネイルをぼかす（グロ画像対策）。板ごとに切り替える。
+        self.blur_thumbnails:        bool = False
         self.catalog_few_res_count:  int  = 5
 
         self._load_from_file()
@@ -98,6 +100,7 @@ class BoardSettings:
         self.auto_add_catalog_to_ar  = _g("auto_add_catalog_to_ar", False)
         self.use_own_few_res         = bool(_g("use_own_few_res",       False))
         self.catalog_few_res_hide    = bool(_g("catalog_few_res_hide",  False))
+        self.blur_thumbnails         = bool(_g("blur_thumbnails",       False))
         self.catalog_few_res_count   = int( _g("catalog_few_res_count", 5))
 
     def _read_my_section(self) -> dict | None:
@@ -170,6 +173,7 @@ class BoardSettings:
                 "auto_add_catalog_to_ar":   self.auto_add_catalog_to_ar,
             "use_own_few_res":        self.use_own_few_res,
             "catalog_few_res_hide":   self.catalog_few_res_hide,
+            "blur_thumbnails":        self.blur_thumbnails,
             "catalog_few_res_count":  self.catalog_few_res_count,
             }
             _tmp_b = _BOARDS_FILE.with_suffix(".tmp")
@@ -418,9 +422,6 @@ class AppSettings:
         # 画像モードにうｐろだの直リン画像も並べる。あぷはサムネが無く原寸を
         # 読むため通信量が増える → 既定OFF。
         self.image_mode_include_uploader: bool = False
-        # サムネイルをぼかす（グロ画像対策）。クリックで1枚ずつ表示する。
-        # 手書き投稿は通常の添付画像と区別が付かないため出所では分けない。
-        self.blur_thumbnails: bool = False
         # うｐろだ（あぷ/あぷ小）へのアップロード用
         # うｐろだの削除キー。空のまま上げたファイルは消せなくなるので、
         # 板の削除キーと同じくランダム英数字8文字を初期値にしておく。
@@ -885,7 +886,6 @@ class AppSettings:
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
             self.image_mode_include_uploader = bool(
                 raw.get("image_mode_include_uploader", False))
-            self.blur_thumbnails = bool(raw.get("blur_thumbnails", False))
             # 保存されていない（旧バージョンからの移行）か空なら、
             # __init__ で作った初期値をそのまま使う
             _uk = str(raw.get("uploader_delete_key", "") or "").strip()[:10]
@@ -1099,7 +1099,6 @@ class AppSettings:
                         "tab_orange_quarantine": self.tab_orange_quarantine,
                         "image_mode_cols": self.image_mode_cols,
                         "image_mode_include_uploader": self.image_mode_include_uploader,
-                        "blur_thumbnails": self.blur_thumbnails,
                         "uploader_delete_key": self.uploader_delete_key,
                         "uploader_insert_to_comment": self.uploader_insert_to_comment,
                         "uploader_uploads": self.uploader_uploads[:200],
