@@ -55,8 +55,9 @@ class BoardSettings:
         # 過疎スレ非表示（use_own_few_res=TrueのときAppSettings値を無視して板設定を使う）
         self.use_own_few_res:        bool = False
         self.catalog_few_res_hide:   bool = False
-        # サムネイルをぼかす（グロ画像対策）。板ごとに切り替える。
-        self.blur_thumbnails:        bool = False
+        # サムネイルをぼかす（グロ画像対策）。板ごと・出所ごとに切り替える。
+        self.blur_thumbs_res:        bool = False   # スレ内に貼られた画像
+        self.blur_thumbs_ul:         bool = False   # うｐろだの直リン画像
         self.catalog_few_res_count:  int  = 5
 
         self._load_from_file()
@@ -100,7 +101,11 @@ class BoardSettings:
         self.auto_add_catalog_to_ar  = _g("auto_add_catalog_to_ar", False)
         self.use_own_few_res         = bool(_g("use_own_few_res",       False))
         self.catalog_few_res_hide    = bool(_g("catalog_few_res_hide",  False))
-        self.blur_thumbnails         = bool(_g("blur_thumbnails",       False))
+        # v0.9.328〜330 は出所をまとめた blur_thumbnails 1つだった。
+        # その値を両方の初期値として引き継ぐ。
+        _blur_old = bool(_g("blur_thumbnails", False))
+        self.blur_thumbs_res         = bool(_g("blur_thumbs_res", _blur_old))
+        self.blur_thumbs_ul          = bool(_g("blur_thumbs_ul",  _blur_old))
         self.catalog_few_res_count   = int( _g("catalog_few_res_count", 5))
 
     def _read_my_section(self) -> dict | None:
@@ -173,7 +178,8 @@ class BoardSettings:
                 "auto_add_catalog_to_ar":   self.auto_add_catalog_to_ar,
             "use_own_few_res":        self.use_own_few_res,
             "catalog_few_res_hide":   self.catalog_few_res_hide,
-            "blur_thumbnails":        self.blur_thumbnails,
+            "blur_thumbs_res":        self.blur_thumbs_res,
+            "blur_thumbs_ul":         self.blur_thumbs_ul,
             "catalog_few_res_count":  self.catalog_few_res_count,
             }
             _tmp_b = _BOARDS_FILE.with_suffix(".tmp")

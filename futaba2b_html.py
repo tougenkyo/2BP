@@ -424,10 +424,13 @@ body.op-no-id .post-id.post-id-warn {
    グリッドをまとめて伏せる。手書きかどうかはHTML上で判別できないため、
    出所で分けずに全部伏せてクリックで1枚ずつ出す方式にしている。
    NG画像と違い hover では出さない（クリックしに行くだけで見えてしまうため）。*/
-body.blur-thumbs .res:not(.op) .thumb img:not(.thumb-shown),
-body.blur-thumbs .ul-thumb:not(.thumb-shown),
-body.blur-thumbs .res:not(.op) .video-thumb img:not(.thumb-shown),
-body.blur-thumbs .gi:not(.gi-op) .gt img:not(.thumb-shown) {
+/* スレ内に貼られた画像（ふたばの添付・手書き投稿もここ）。スレ画(OP)は除く */
+body.blur-res .res:not(.op) .thumb img:not(.thumb-shown),
+body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown),
+body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown),
+/* うｐろだの直リン画像（別設定） */
+body.blur-ul .ul-thumb:not(.thumb-shown),
+body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
     /* 消してしまうとクリック先が分からないので「ぼんやり見えている」状態にする。
        中身が読み取れないのは blur とグレースケールで担保する。
        グロ画像の判別は色（赤）に大きく依るため、彩度を落とすのが効く。 */
@@ -438,10 +441,11 @@ body.blur-thumbs .gi:not(.gi-op) .gt img:not(.thumb-shown) {
 }
 /* ホバーで少し濃くする。ぼかしと彩度落としは維持するので中身は出ない。
    クリックできる場所だと分かるようにするためだけの変化。 */
-body.blur-thumbs .res:not(.op) .thumb img:not(.thumb-shown):hover,
-body.blur-thumbs .ul-thumb:not(.thumb-shown):hover,
-body.blur-thumbs .res:not(.op) .video-thumb img:not(.thumb-shown):hover,
-body.blur-thumbs .gi:not(.gi-op) .gt img:not(.thumb-shown):hover {
+body.blur-res .res:not(.op) .thumb img:not(.thumb-shown):hover,
+body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown):hover,
+body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown):hover,
+body.blur-ul .ul-thumb:not(.thumb-shown):hover,
+body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown):hover {
     opacity: 0.65;
 }
 /* スレ画（OPの添付画像）はぼかさない。カタログで既に見えているものであり、
@@ -734,25 +738,40 @@ function sodane(no)             { _b('sodane',         [no]); }
    2回目以降のクリックは従来どおり画像を開く。
    キャプチャ段階で拾って、レス側の onclick より先に止める。 */
 document.addEventListener('click', function(e) {
-    if (!document.body.classList.contains('blur-thumbs')) return;
     var img = e.target;
     if (!img || img.tagName !== 'IMG') return;
     if (img.classList.contains('thumb-shown')) return;
-    var ok = (img.closest && (img.closest('.thumb') || img.closest('.gi')
-                              || img.closest('.video-thumb')))
-             || img.classList.contains('ul-thumb');
-    if (!ok) return;
+    var cell = img.closest && img.closest('.gi');
+    var isUl = img.classList.contains('ul-thumb')
+               || !!(cell && cell.classList.contains('gi-ul'));
+    var inThread = (img.closest && (img.closest('.thumb')
+                                    || img.closest('.video-thumb'))) || cell;
+    if (!isUl && !inThread) return;
+    /* うｐろだ由来とスレ内の画像で設定が別なので、対応する方だけ見る */
+    if (!document.body.classList.contains(isUl ? 'blur-ul' : 'blur-res')) return;
+    if (!isUl) {   /* スレ画(OP)はぼかしの対象外 */
+        if ((img.closest && img.closest('.res.op'))
+            || (cell && cell.classList.contains('gi-op'))) return;
+    }
     e.preventDefault(); e.stopPropagation();
     img.classList.add('thumb-shown');
 }, true);
-/* ぼかしの ON/OFF を再読込なしで切り替える */
-function setBlurThumbs(on) {
-    document.body.classList.toggle('blur-thumbs', !!on);
-    if (on) {   /* 再度ONにした時は開いていたものも伏せ直す */
-        document.querySelectorAll('.thumb-shown').forEach(function(el) {
+/* ぼかしの ON/OFF を再読込なしで切り替える（スレ内 / うｐろだ を個別に） */
+function setBlurThumbs(onRes, onUl) {
+    var b = document.body;
+    var wasRes = b.classList.contains('blur-res');
+    var wasUl  = b.classList.contains('blur-ul');
+    b.classList.toggle('blur-res', !!onRes);
+    b.classList.toggle('blur-ul',  !!onUl);
+    /* 再度ONにした側は、開いていたものを伏せ直す */
+    document.querySelectorAll('.thumb-shown').forEach(function(el) {
+        var cell = el.closest('.gi');
+        var isUl = el.classList.contains('ul-thumb')
+                   || !!(cell && cell.classList.contains('gi-ul'));
+        if (isUl ? (onUl && !wasUl) : (onRes && !wasRes)) {
             el.classList.remove('thumb-shown');
-        });
-    }
+        }
+    });
 }
 /* NG画像をクリックすると reveal クラスを付けて表示 */
 document.addEventListener('click', function(e) {
@@ -2283,7 +2302,8 @@ def thread_to_html(thread, show_deleted: bool = False,
                    scroll_top_count: int = 0,
                    del_nos: set = None,
                    ng_reveal: bool = False,
-                   blur_thumbs: bool = False,
+                   blur_res: bool = False,
+                   blur_ul: bool = False,
                    pseudo_expiring: bool = False,
                    sort_by_sodane: bool = False) -> tuple[str, list]:
     """ThreadData → (HTML文字列, 画像リスト)"""
@@ -2358,9 +2378,11 @@ def thread_to_html(thread, show_deleted: bool = False,
     else:
         body_class = ''
     # サムネぼかし（グロ画像対策・板ごとの設定）: body クラスで効かせる
-    if blur_thumbs:
-        body_class = (body_class.replace('class="', 'class="blur-thumbs ')
-                      if body_class else ' class="blur-thumbs"')
+    _bc = ([" blur-res"] if blur_res else []) + ([" blur-ul"] if blur_ul else [])
+    if _bc:
+        _add = "".join(_bc).strip()
+        body_class = (body_class.replace('class="', f'class="{_add} ')
+                      if body_class else f' class="{_add}"')
     _usr = f'<style id="__usercss">{user_css}</style>' if user_css else ''
     _scroll_js = _make_scroll_bottom_js(scroll_bottom_count, scroll_top_count)
     # テーマCSS変数を注入（ThemeManagerが利用可能なら）

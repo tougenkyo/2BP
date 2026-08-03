@@ -6083,17 +6083,23 @@ class BoardSettingsDialog(QDialog):
         # ── サムネイルのぼかし（グロ画像対策・板ごと） ──
         g_blur = QGroupBox("スレの画像"); f1.addWidget(g_blur)
         _bl = QVBoxLayout(g_blur)
-        self._bs_blur_thumbs = QCheckBox(
-            "サムネイルをぼかす（クリックで1枚ずつ表示）")
-        self._bs_blur_thumbs.setToolTip(
-            "この板のスレに出る画像をぼかして表示します。\n"
-            "クリックするとその1枚だけ出ます。\n\n"
-            "ふたばに貼られた画像（手書き投稿を含む）とうｐろだの直リン画像、\n"
-            "画像モードのサムネがまとめて対象です。\n\n"
+        _TIP_COMMON = (
+            "\n\nクリックするとその1枚だけ出ます。\n"
             "グロ画像対策向けの機能です。手書き投稿かどうかはHTML上で判別\n"
             "できないため、出所で分けずに全部伏せる方式にしています。\n"
             "スレを開き直すとまた伏せた状態に戻ります。")
-        _bl.addWidget(self._bs_blur_thumbs)
+        self._bs_blur_res = QCheckBox("スレ内に貼られた画像をぼかす")
+        self._bs_blur_res.setToolTip(
+            "この板のスレに直接貼られた画像をぼかします（手書き投稿もこれ）。\n"
+            "スレ画（スレ主の1枚目）はカタログで既に見えているのでぼかしません。"
+            + _TIP_COMMON)
+        _bl.addWidget(self._bs_blur_res)
+        self._bs_blur_ul = QCheckBox("うｐろだに貼られた画像をぼかす")
+        self._bs_blur_ul.setToolTip(
+            "本文中のうｐろだ直リン画像をぼかします。\n"
+            "スレ主が貼ったものも対象です（外部の任意画像のため）。"
+            + _TIP_COMMON)
+        _bl.addWidget(self._bs_blur_ul)
         f1.addStretch(); nb.addTab(_scroll(w1), "カタログ")
 
         # ══════════════════════════════════════════════════════════════════
@@ -6214,7 +6220,8 @@ class BoardSettingsDialog(QDialog):
         self._bs_few_res_hide.setChecked(_hide)
         self._bs_few_res_count.setValue(getattr(bs, "catalog_few_res_count", 5))
         self._bs_few_res_count.setEnabled(_hide)
-        self._bs_blur_thumbs.setChecked(getattr(bs, "blur_thumbnails", False))
+        self._bs_blur_res.setChecked(getattr(bs, "blur_thumbs_res", False))
+        self._bs_blur_ul.setChecked(getattr(bs, "blur_thumbs_ul", False))
 
         # 自動更新
         use_t = bs.ar_use_default_thread
@@ -6260,7 +6267,8 @@ class BoardSettingsDialog(QDialog):
         bs.use_own_few_res       = True   # 板設定が常に有効
         bs.catalog_few_res_hide  = self._bs_few_res_hide.isChecked()
         bs.catalog_few_res_count = self._bs_few_res_count.value()
-        bs.blur_thumbnails       = self._bs_blur_thumbs.isChecked()
+        bs.blur_thumbs_res       = self._bs_blur_res.isChecked()
+        bs.blur_thumbs_ul        = self._bs_blur_ul.isChecked()
 
         # 自動更新
         bs.ar_use_default_thread       = self._ar_use_default_thread.isChecked()
