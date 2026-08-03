@@ -6120,7 +6120,7 @@ class BoardSettingsDialog(QDialog):
         _gr.addWidget(QLabel("ぼかしの強さ"), 0, 3)
         self._bs_blur = {}
         for _row, (_key, _label) in enumerate(
-                (("reply", "返信モード:"), ("quote", "引用モード:"),
+                (("reply", "レス:"), ("quote", "引用モード:"),
                  ("image", "画像モード:")), start=1):
             _gr.addWidget(QLabel(_label), _row, 0)
             _res = QCheckBox("スレ内の画像")
@@ -6151,7 +6151,7 @@ class BoardSettingsDialog(QDialog):
             "（ツリー行には出ず、▼のポップアップにも描画されません）")
         _gr.setColumnStretch(4, 1)
         _note = QLabel("※ ホバーで出るレスのポップアップは、表示中のモードに関わらず"
-                       "「返信モード」の設定でぼかします。")
+                       "上の「レス」の設定でぼかします。")
         _note.setWordWrap(True)
         _note.setStyleSheet("color: gray; font-size: 8pt;")
         _bl.addWidget(_note)
