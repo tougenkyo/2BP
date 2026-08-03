@@ -55,9 +55,12 @@ class BoardSettings:
         # 過疎スレ非表示（use_own_few_res=TrueのときAppSettings値を無視して板設定を使う）
         self.use_own_few_res:        bool = False
         self.catalog_few_res_hide:   bool = False
-        # サムネイルをぼかす（グロ画像対策）。板ごと・出所ごとに切り替える。
-        self.blur_thumbs_res:        bool = False   # スレ内に貼られた画像
-        self.blur_thumbs_ul:         bool = False   # うｐろだの直リン画像
+        # サムネイルをぼかす（グロ画像対策）。板ごと・表示モードごと・出所ごと。
+        # 返信モードと引用モードは同じレス一覧の表示なのでまとめて扱う。
+        self.blur_reply_res:         bool = False   # 返信/引用: スレ内の画像
+        self.blur_reply_ul:          bool = False   # 返信/引用: うｐろだの画像
+        self.blur_image_res:         bool = False   # 画像モード: スレ内の画像
+        self.blur_image_ul:          bool = False   # 画像モード: うｐろだの画像
         self.catalog_few_res_count:  int  = 5
 
         self._load_from_file()
@@ -101,11 +104,17 @@ class BoardSettings:
         self.auto_add_catalog_to_ar  = _g("auto_add_catalog_to_ar", False)
         self.use_own_few_res         = bool(_g("use_own_few_res",       False))
         self.catalog_few_res_hide    = bool(_g("catalog_few_res_hide",  False))
-        # v0.9.328〜330 は出所をまとめた blur_thumbnails 1つだった。
-        # その値を両方の初期値として引き継ぐ。
+        # 設定の移行:
+        #   v0.9.328〜330 blur_thumbnails（出所もモードもまとめて1つ）
+        #   v0.9.331      blur_thumbs_res / blur_thumbs_ul（出所だけ分離）
+        #   v0.9.333〜    モードも分離。上位の値をそのまま引き継ぐ。
         _blur_old = bool(_g("blur_thumbnails", False))
-        self.blur_thumbs_res         = bool(_g("blur_thumbs_res", _blur_old))
-        self.blur_thumbs_ul          = bool(_g("blur_thumbs_ul",  _blur_old))
+        _old_res = bool(_g("blur_thumbs_res", _blur_old))
+        _old_ul  = bool(_g("blur_thumbs_ul",  _blur_old))
+        self.blur_reply_res          = bool(_g("blur_reply_res", _old_res))
+        self.blur_reply_ul           = bool(_g("blur_reply_ul",  _old_ul))
+        self.blur_image_res          = bool(_g("blur_image_res", _old_res))
+        self.blur_image_ul           = bool(_g("blur_image_ul",  _old_ul))
         self.catalog_few_res_count   = int( _g("catalog_few_res_count", 5))
 
     def _read_my_section(self) -> dict | None:
@@ -178,8 +187,10 @@ class BoardSettings:
                 "auto_add_catalog_to_ar":   self.auto_add_catalog_to_ar,
             "use_own_few_res":        self.use_own_few_res,
             "catalog_few_res_hide":   self.catalog_few_res_hide,
-            "blur_thumbs_res":        self.blur_thumbs_res,
-            "blur_thumbs_ul":         self.blur_thumbs_ul,
+            "blur_reply_res":         self.blur_reply_res,
+            "blur_reply_ul":          self.blur_reply_ul,
+            "blur_image_res":         self.blur_image_res,
+            "blur_image_ul":          self.blur_image_ul,
             "catalog_few_res_count":  self.catalog_few_res_count,
             }
             _tmp_b = _BOARDS_FILE.with_suffix(".tmp")

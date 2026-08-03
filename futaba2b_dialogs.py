@@ -6088,18 +6088,27 @@ class BoardSettingsDialog(QDialog):
             "グロ画像対策向けの機能です。手書き投稿かどうかはHTML上で判別\n"
             "できないため、出所で分けずに全部伏せる方式にしています。\n"
             "スレを開き直すとまた伏せた状態に戻ります。")
-        self._bs_blur_res = QCheckBox("スレ内に貼られた画像をぼかす")
-        self._bs_blur_res.setToolTip(
-            "この板のスレに直接貼られた画像をぼかします（手書き投稿もこれ）。\n"
-            "スレ画（スレ主の1枚目）はカタログで既に見えているのでぼかしません。"
-            + _TIP_COMMON)
-        _bl.addWidget(self._bs_blur_res)
-        self._bs_blur_ul = QCheckBox("うｐろだに貼られた画像をぼかす")
-        self._bs_blur_ul.setToolTip(
-            "本文中のうｐろだ直リン画像をぼかします。\n"
-            "スレ主が貼ったものも対象です（外部の任意画像のため）。"
-            + _TIP_COMMON)
-        _bl.addWidget(self._bs_blur_ul)
+        _TIP_RES = ("スレに直接貼られた画像をぼかします（手書き投稿もこれ）。\n"
+                    "スレ画（スレ主の1枚目）はカタログで既に見えているので"
+                    "ぼかしません。")
+        _TIP_UL  = ("本文中のうｐろだ直リン画像をぼかします。\n"
+                    "スレ主が貼ったものも対象です（外部の任意画像のため）。")
+        _gr = QGridLayout(); _bl.addLayout(_gr)
+        _gr.addWidget(QLabel("返信・引用モード:"), 0, 0)
+        self._bs_blur_reply_res = QCheckBox("スレ内の画像")
+        self._bs_blur_reply_res.setToolTip(_TIP_RES + _TIP_COMMON)
+        _gr.addWidget(self._bs_blur_reply_res, 0, 1)
+        self._bs_blur_reply_ul = QCheckBox("うｐろだの画像")
+        self._bs_blur_reply_ul.setToolTip(_TIP_UL + _TIP_COMMON)
+        _gr.addWidget(self._bs_blur_reply_ul, 0, 2)
+        _gr.addWidget(QLabel("画像モード:"), 1, 0)
+        self._bs_blur_image_res = QCheckBox("スレ内の画像")
+        self._bs_blur_image_res.setToolTip(_TIP_RES + _TIP_COMMON)
+        _gr.addWidget(self._bs_blur_image_res, 1, 1)
+        self._bs_blur_image_ul = QCheckBox("うｐろだの画像")
+        self._bs_blur_image_ul.setToolTip(_TIP_UL + _TIP_COMMON)
+        _gr.addWidget(self._bs_blur_image_ul, 1, 2)
+        _gr.setColumnStretch(3, 1)
         f1.addStretch(); nb.addTab(_scroll(w1), "カタログ")
 
         # ══════════════════════════════════════════════════════════════════
@@ -6220,8 +6229,10 @@ class BoardSettingsDialog(QDialog):
         self._bs_few_res_hide.setChecked(_hide)
         self._bs_few_res_count.setValue(getattr(bs, "catalog_few_res_count", 5))
         self._bs_few_res_count.setEnabled(_hide)
-        self._bs_blur_res.setChecked(getattr(bs, "blur_thumbs_res", False))
-        self._bs_blur_ul.setChecked(getattr(bs, "blur_thumbs_ul", False))
+        self._bs_blur_reply_res.setChecked(getattr(bs, "blur_reply_res", False))
+        self._bs_blur_reply_ul.setChecked(getattr(bs, "blur_reply_ul", False))
+        self._bs_blur_image_res.setChecked(getattr(bs, "blur_image_res", False))
+        self._bs_blur_image_ul.setChecked(getattr(bs, "blur_image_ul", False))
 
         # 自動更新
         use_t = bs.ar_use_default_thread
@@ -6267,8 +6278,10 @@ class BoardSettingsDialog(QDialog):
         bs.use_own_few_res       = True   # 板設定が常に有効
         bs.catalog_few_res_hide  = self._bs_few_res_hide.isChecked()
         bs.catalog_few_res_count = self._bs_few_res_count.value()
-        bs.blur_thumbs_res       = self._bs_blur_res.isChecked()
-        bs.blur_thumbs_ul        = self._bs_blur_ul.isChecked()
+        bs.blur_reply_res        = self._bs_blur_reply_res.isChecked()
+        bs.blur_reply_ul         = self._bs_blur_reply_ul.isChecked()
+        bs.blur_image_res        = self._bs_blur_image_res.isChecked()
+        bs.blur_image_ul         = self._bs_blur_image_ul.isChecked()
 
         # 自動更新
         bs.ar_use_default_thread       = self._ar_use_default_thread.isChecked()

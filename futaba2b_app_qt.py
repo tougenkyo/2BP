@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.332"
+APP_VER = "0.9.333"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5010,7 +5010,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                                                    footer_html=_make_thread_footer(thread),
                                                    my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
                                                    pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=self._blur_flags()[0], blur_ul=self._blur_flags()[1])
+                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1])
             self._last_html = _html
             self._last_html_dirty = False
             self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
@@ -5036,7 +5036,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                                               footer_html=_make_thread_footer(thread),
                                               my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
                                               pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=self._blur_flags()[0], blur_ul=self._blur_flags()[1])
+                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1])
         _t1 = _t.time()
         html_bytes = html.encode('utf-8')
 
@@ -6132,7 +6132,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             footer_html=_footer(thread),
             my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
             pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=self._blur_flags()[0], blur_ul=self._blur_flags()[1])
+                blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1])
         self._last_html = html
         self._last_html_dirty = False
 
@@ -6365,27 +6365,35 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return die if "消えます" in die else f"{die}頃消えます"
         return (getattr(thread, "expiry", "") or "").strip()
 
-    def _blur_flags(self) -> tuple:
-        """この板のサムネぼかし設定 (スレ内の画像, うｐろだの画像)。板ごとの設定。"""
+    def _blur_flags(self, mode: str = "") -> tuple:
+        """この板・この表示モードのぼかし設定 (スレ内の画像, うｐろだの画像)。
+
+        mode: "image" = 画像モード / それ以外 = 返信・引用モード。
+        返信と引用は同じレス一覧の表示なので同じ設定を使う。
+        省略時は現在表示しているモードを見る。"""
         _b = getattr(self, "_board", None)
         if _b is None:
             return (False, False)
+        if not mode:
+            mode = getattr(self, "_loaded_page_mode", "") or ""
+        _pre = "blur_image_" if mode == "image" else "blur_reply_"
         try:
             from futaba2b_settings import get_board_settings as _gbs
             _bs = _gbs(_b.base_url)
-            return (bool(getattr(_bs, "blur_thumbs_res", False)),
-                    bool(getattr(_bs, "blur_thumbs_ul", False)))
+            return (bool(getattr(_bs, _pre + "res", False)),
+                    bool(getattr(_bs, _pre + "ul", False)))
         except Exception:
             return (False, False)
 
-    def _blur_body_class(self) -> str:
+    def _blur_body_class(self, mode: str = "") -> str:
         """サムネぼかし用の body クラス（画像/引用モードのHTML生成で使う）"""
-        _res, _ul = self._blur_flags()
+        _res, _ul = self._blur_flags(mode)
         _c = (["blur-res"] if _res else []) + (["blur-ul"] if _ul else [])
         return f' class="{" ".join(_c)}"' if _c else ""
 
     def apply_blur_setting(self):
-        """サムネぼかしの設定変更を表示中のページへ即時反映する（再読込不要）。"""
+        """サムネぼかしの設定変更を表示中のページへ即時反映する（再読込不要）。
+        今表示しているモードの設定を使う。"""
         _res, _ul = self._blur_flags()
         _safe_run_js(getattr(self, "_view", None),
                      "if(window.setBlurThumbs)setBlurThumbs(%s,%s);"
@@ -6636,7 +6644,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             f"{_usr_q}"
             f"{WEBCHANNEL_JS}"
             f"{_scroll_js}"
-            f"</head><body{self._blur_body_class()}>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}"
+            f"</head><body{self._blur_body_class('quote')}>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}"
             f"{self._expiry_banner_html(self._thread)}{res_pool}{self._thread_footer_html(self._thread)}"
             f"{getattr(self,'_error_banner_html','')}</body></html>"   # 返信モード同様、下にも表示
         )
@@ -6931,7 +6939,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
               f'{WEBCHANNEL_JS}'
               '<script>'+_img_js+'</script>'
               f'{_scroll_js_img}'
-              f'</head><body{self._blur_body_class()}>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
+              f'</head><body{self._blur_body_class("image")}>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
               f'{self._gal_sel_ui_html()}'
               f'{self._expiry_banner_html(self._thread)}'
               f'{res_pool}{self._thread_footer_html(self._thread)}'
@@ -10389,7 +10397,7 @@ class AutoRefreshManager(QObject):
                                       my_nos=self._get_my_nos_for_view(view, thread),
                 id_warn_count=getattr(self._settings,'id_warn_count',5),
                 pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=view._blur_flags()[0], blur_ul=view._blur_flags()[1])
+                blur_res=view._blur_flags('reply')[0], blur_ul=view._blur_flags('reply')[1])
             _cn = '' if 'キャッシュ表示' in (thread.error or '') else ' (キャッシュ表示)'
             banner = (f'<div style="background:#a00;color:#fff;padding:6px 8px;'
                       f'font-size:9pt;font-weight:bold;text-align:center;">'
@@ -10533,7 +10541,7 @@ class AutoRefreshManager(QObject):
                                   footer_html=view._thread_footer_html(thread),
                                   my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
                                   pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
-                blur_res=view._blur_flags()[0], blur_ul=view._blur_flags()[1])
+                blur_res=view._blur_flags('reply')[0], blur_ul=view._blur_flags('reply')[1])
         view._thread = thread
         view._known_res_count = len(thread.res_list)
         # _last_html を更新（モード切替・ログ保存で使われる）
