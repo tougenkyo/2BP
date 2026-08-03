@@ -1343,6 +1343,13 @@ class PostDialog(QDialog):
                            lambda: self._upload_to_uploader("up", browse=True))
         _up_menu.addSeparator()
         _up_menu.addAction("アップロード履歴／削除…", self._open_upload_history)
+        # QMenu は項目名ぴったりの幅になり窮屈なので、一番長い項目を基準にゆとりを持たせる。
+        # 固定pxにするとフォントサイズ・DPIで足りなくなるため実測から出す。
+        from PySide6.QtGui import QFontMetrics as _QFM
+        _fm = _QFM(_up_menu.font())
+        _w = max((_fm.horizontalAdvance(a.text()) for a in _up_menu.actions()
+                  if a.text()), default=0)
+        _up_menu.setMinimumWidth(_w + 110)
         self._up_btn.setMenu(_up_menu)
         self._up_btn.clicked.connect(lambda: self._upload_to_uploader("auto"))
         img_lay.addWidget(self._up_btn)
