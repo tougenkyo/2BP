@@ -1224,11 +1224,12 @@ class PostDialog(QDialog):
             b.setAutoDefault(False)
             b.clicked.connect(lambda _=None, t=text: self._mail.setText(t))
             return b
-        self._mail_btns = [_mail_btn("sage", "メール欄に sage を入力", 44)]
-        # id表示 / ip表示 / ・3・ はスレ主のメール欄でのみ意味がある指定なので
-        # スレ立て時だけ出す（返信のメール欄に入れても効果が無い）
+        # メール欄の指定は返信とスレ立てで意味のあるものが違うので出し分ける。
+        #   返信    … sage（スレを上げない）
+        #   スレ立て … id表示 / ip表示 / ・3・（スレ主のメール欄でのみ効く）
+        # スレ立てに sage を入れても意味が無いので出さない。
         if is_new_thread:
-            self._mail_btns += [
+            self._mail_btns = [
                 _mail_btn("id表示", "メール欄に id表示 を入力\n"
                                     "（スレ内の投稿にIDを表示する）", 52),
                 _mail_btn("ip表示", "メール欄に ip表示 を入力\n"
@@ -1236,6 +1237,8 @@ class PostDialog(QDialog):
                 _mail_btn("・3・",  "メール欄に ・3・ を入力\n"
                                     "（スレ主のIPをスレタイに表示する）", 46),
             ]
+        else:
+            self._mail_btns = [_mail_btn("sage", "メール欄に sage を入力", 44)]
         mail_lay.addWidget(self._mail)
         mail_lay.addWidget(self._chk_save_mail)
         for _b in self._mail_btns:
