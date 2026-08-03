@@ -1323,7 +1323,7 @@ class PostDialog(QDialog):
         img_lay.addWidget(self._clear_btn)
         # うｐろだ（あぷ小→入らなければあぷ）へアップロードして本文へ貼る
         self._up_btn = QToolButton()
-        self._up_btn.setText("あぷ")
+        self._up_btn.setText("あぷにアップロード")
         self._up_btn.setToolTip(
             "添付ファイルをふたばのうｐろだへアップロードします。\n"
             "あぷ小(3MB)に収まればあぷ小、超えていればあぷ(10MB)を自動で選びます。\n"
@@ -1349,7 +1349,7 @@ class PostDialog(QDialog):
         _fm = _QFM(_up_menu.font())
         _w = max((_fm.horizontalAdvance(a.text()) for a in _up_menu.actions()
                   if a.text()), default=0)
-        _up_menu.setMinimumWidth(_w + 110)
+        _up_menu.setMinimumWidth(_w )
         self._up_btn.setMenu(_up_menu)
         self._up_btn.clicked.connect(lambda: self._upload_to_uploader("auto"))
         img_lay.addWidget(self._up_btn)
@@ -4844,7 +4844,9 @@ class AppSettingsDialog(QDialog):
         self._uploader_del_key.setFixedWidth(140)
         self._uploader_del_key.setToolTip(
             "うｐろだへ上げる時に一緒に送る削除キー（10文字以内）。\n"
-            "後から自分で消すために必要です。空のまま上げたファイルは削除できません。")
+            "後から自分で消すために必要です。\n"
+            "初回はランダムな英数字8文字が入っています。好きな値に変えても構いません。\n"
+            "空にしてOKを押すと、新しいランダムな値を入れ直します。")
         _upf.addRow("削除キー:", self._uploader_del_key)
         self._uploader_insert = QCheckBox("アップロード後、ファイル名を本文に貼り付ける")
         self._uploader_insert.setToolTip(
@@ -5442,7 +5444,13 @@ class AppSettingsDialog(QDialog):
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.image_mode_include_uploader = self._image_mode_include_ul.isChecked()
-        s.uploader_delete_key     = self._uploader_del_key.text().strip()[:10]
+        # 空にされたら削除できなくなるので、その時は新しくランダム生成する
+        _uk = self._uploader_del_key.text().strip()[:10]
+        if not _uk:
+            import random as _rnd, string as _str
+            _uk = "".join(_rnd.choices(_str.ascii_lowercase + _str.digits, k=8))
+            self._uploader_del_key.setText(_uk)
+        s.uploader_delete_key     = _uk
         s.uploader_insert_to_comment = self._uploader_insert.isChecked()
         s.image_open_actual_size  = self._image_open_actual.isChecked()
         s.recent_closed_max       = self._recent_closed_max.value()

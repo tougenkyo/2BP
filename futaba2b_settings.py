@@ -419,7 +419,10 @@ class AppSettings:
         # 読むため通信量が増える → 既定OFF。
         self.image_mode_include_uploader: bool = False
         # うｐろだ（あぷ/あぷ小）へのアップロード用
-        self.uploader_delete_key: str = ""      # 既定の削除キー（空=削除できない）
+        # うｐろだの削除キー。空のまま上げたファイルは消せなくなるので、
+        # 板の削除キーと同じくランダム英数字8文字を初期値にしておく。
+        self.uploader_delete_key: str = "".join(
+            random.choices(string.ascii_lowercase + string.digits, k=8))
         self.uploader_insert_to_comment: bool = True  # 成功時に本文へファイル名を入れる
         self.uploader_uploads: list = []        # 自分のアップロード履歴（削除用）
         self.image_mode_cols: int = 6   # 画像モードの折り返し列数
@@ -879,7 +882,11 @@ class AppSettings:
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
             self.image_mode_include_uploader = bool(
                 raw.get("image_mode_include_uploader", False))
-            self.uploader_delete_key = str(raw.get("uploader_delete_key", "") or "")[:10]
+            # 保存されていない（旧バージョンからの移行）か空なら、
+            # __init__ で作った初期値をそのまま使う
+            _uk = str(raw.get("uploader_delete_key", "") or "").strip()[:10]
+            if _uk:
+                self.uploader_delete_key = _uk
             self.uploader_insert_to_comment = bool(
                 raw.get("uploader_insert_to_comment", True))
             _up = raw.get("uploader_uploads", [])
