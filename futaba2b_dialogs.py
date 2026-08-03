@@ -4196,6 +4196,14 @@ class AppSettingsDialog(QDialog):
             "ONにするとサムネ画像のホバーでもレス内容をポップアップ表示します。\n"
             "OFFでも左上の連番（OP/番号）のホバーでは常に表示されます")
         imf.addRow(self._image_mode_hover_popup)
+        self._image_mode_include_ul = QCheckBox("うｐろだに貼られた画像も並べる")
+        self._image_mode_include_ul.setToolTip(
+            "本文中のうｐろだ直リン画像（「うｐろだ」タブに登録したパターン）を\n"
+            "画像モードのグリッドに一緒に並べます。\n\n"
+            "うｐろだの画像にはサムネイルが無いため原寸を読み込みます。\n"
+            "画面に入ったぶんだけ読む（遅延読み込み）ようにしていますが、\n"
+            "スクロールすると通信量が増える点にご注意ください。")
+        imf.addRow(self._image_mode_include_ul)
 
         # 画像表示方法（タブ / ウインドウ / 外部ブラウザ / 隣タブ）
         g_imgview = QGroupBox("画像表示方法"); f1.addWidget(g_imgview)
@@ -4937,6 +4945,8 @@ class AppSettingsDialog(QDialog):
         self._tab_pink_op_no_id.setChecked(getattr(s, "tab_pink_op_no_id", False))
         self._tab_orange_quarantine.setChecked(getattr(s, "tab_orange_quarantine", True))
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
+        self._image_mode_include_ul.setChecked(
+            getattr(s, "image_mode_include_uploader", False))
         self._image_open_actual.setChecked(getattr(s, "image_open_actual_size", False))
         self._recent_closed_max.setValue(getattr(s, "recent_closed_max", 30))
         self._recent_images_max.setValue(getattr(s, "recent_images_max", 30))
@@ -5096,6 +5106,7 @@ class AppSettingsDialog(QDialog):
         s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
+        s.image_mode_include_uploader = self._image_mode_include_ul.isChecked()
         s.image_open_actual_size  = self._image_open_actual.isChecked()
         s.recent_closed_max       = self._recent_closed_max.value()
         s.recent_images_max       = self._recent_images_max.value()

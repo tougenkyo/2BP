@@ -415,6 +415,9 @@ class AppSettings:
         self.tab_pink_op_no_id: bool = False
         # 隔離されたスレ(json∖cat)のタブをオレンジ、ID+隔離同時は #FF0099 にする
         self.tab_orange_quarantine: bool = True
+        # 画像モードにうｐろだの直リン画像も並べる。あぷはサムネが無く原寸を
+        # 読むため通信量が増える → 既定OFF。
+        self.image_mode_include_uploader: bool = False
         self.image_mode_cols: int = 6   # 画像モードの折り返し列数
         self.id_warn_count: int = 5   # ID出現回数がこの値以上ならIDを赤くする
         # スレオープンモード 0=通常 1=返信 2=画像 3=引用
@@ -870,6 +873,8 @@ class AppSettings:
             self.tab_pink_op_no_id = bool(raw.get("tab_pink_op_no_id", False))
             self.tab_orange_quarantine = bool(raw.get("tab_orange_quarantine", True))
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
+            self.image_mode_include_uploader = bool(
+                raw.get("image_mode_include_uploader", False))
             self.id_warn_count = int(raw.get("id_warn_count", 5))
             self.theme = str(raw.get("theme", "dark"))
             self.toolbar_show_labels = bool(raw.get("toolbar_show_labels", True))
@@ -1073,6 +1078,7 @@ class AppSettings:
                         "tab_pink_op_no_id": self.tab_pink_op_no_id,
                         "tab_orange_quarantine": self.tab_orange_quarantine,
                         "image_mode_cols": self.image_mode_cols,
+                        "image_mode_include_uploader": self.image_mode_include_uploader,
                         "id_warn_count": self.id_warn_count,
                         "theme": self.theme,
                         "toolbar_show_labels": self.toolbar_show_labels,

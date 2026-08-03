@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.321"
+APP_VER = "0.9.322"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6789,36 +6789,57 @@ class ThreadView(_MouseGestureMixin, QWidget):
             _safe_run_js(self._view, _pool_js, _after_pool)
         _safe_run_js(self._view, js, _after_swap)
 
-    def _render_image_mode(self):
-        if not self._thread: return
-        img_res = [(s+1,r) for s,r in enumerate(r for r in self._thread.res_list if r.image_url)]
-        if getattr(self._settings, 'sort_by_sodane', False):
-            # そうだね降順（同数は元の投稿順=安定）。seqを振り直し、ギャラリー/前後移動も同順にする
-            _srt = sorted((r for _, r in img_res), key=lambda r: r.sodane, reverse=True)
-            img_res = [(i + 1, r) for i, r in enumerate(_srt)]
-        self._gallery_list = [{'url':r.image_url,'thumb':r.thumb_url,'res_no':r.no,'name':r.image_name}
-                               for _,r in img_res]
+    def _image_mode_entries(self) -> list:
+        """画像モードに並べる項目を作る（返信モードと同じ順＝投稿順）。
+
+        戻り値: [{res, url, thumb, name, info, is_ul}]
+          is_ul=True はうｐろだの直リン画像。ふたばと違いサムネが無いので
+          thumb には実画像URLがそのまま入る（読み込みは loading=lazy 任せ）。
+        設定 image_mode_include_uploader が OFF（既定）なら従来どおり
+        ふたばに貼られた画像だけを返す。"""
+        from futaba2b_html import uploader_image_urls
         def _fmt(b):
-            if b>=1048576: return f'{b/1048576:.1f}MB'
-            if b>=1024: return f'{b//1024}KB'
+            if b >= 1048576: return f'{b/1048576:.1f}MB'
+            if b >= 1024:    return f'{b//1024}KB'
             return f'{b}B' if b else '?'
-        items=[]
+        _inc_ul = bool(getattr(self._settings, 'image_mode_include_uploader', False))
+        _uls = getattr(self._settings, 'uploader_links', []) if _inc_ul else []
+        out = []
+        for r in (self._thread.res_list if self._thread else []):
+            if r.image_url:
+                _ext = (r.image_name.rsplit('.', 1)[-1].upper()
+                        if '.' in r.image_name else '?')
+                out.append({'res': r, 'url': r.image_url, 'thumb': r.thumb_url,
+                            'name': r.image_name,
+                            'info': _ext + ' / ' + _fmt(r.file_size_bytes),
+                            'is_ul': False})
+            if not _uls:
+                continue
+            # 本文からうｐろだの直リン画像を拾う。サイズは分からないので「あぷ」と出す。
+            for _u in uploader_image_urls(r.comment_text or r.comment_html or "", _uls):
+                _nm = _u['name']
+                _ext = (_nm.rsplit('.', 1)[-1].upper() if '.' in _nm else '?')
+                out.append({'res': r, 'url': _u['url'], 'thumb': _u['url'],
+                            'name': _nm, 'info': _ext + ' / あぷ', 'is_ul': True})
+        if getattr(self._settings, 'sort_by_sodane', False):
+            # そうだね降順（同数は元の並び=投稿順で安定）
+            out.sort(key=lambda it: it['res'].sodane, reverse=True)
+        return out
+
+    def _image_mode_cells(self, entries: list) -> list:
+        """画像モードのセルHTMLを作る（フルレンダーと差分再描画で共用）。
+        帯・NG・del済の判定はレス単位なので、同じレスから出たあぷ画像にも
+        ふたば画像と同じ扱いが付く。"""
+        from html import escape as _esc
         _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
         _my_nos = self._get_my_nos(self._thread)   # 自分のレス（青帯）用
-        # ポップアップ用に全レスを隠しプールへ（▼被引用の引用元が画像なしレスでも
-        # ポップアップ表示・引用マップ計算ができるよう全件入れる）
-        # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
-        _id_counts = {}
-        for _r in self._thread.res_list:
-            if _r.id_str:
-                _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
-        _id_warn = getattr(self._settings, 'id_warn_count', 5)
-        _respool_inner=self._build_respool_html(self._thread.res_list, _id_counts, _id_warn)
         _hover_pop = getattr(self._settings, 'image_mode_hover_popup', True)
-        for seq,r in img_res:
-            ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
-            info=ext+' / '+_fmt(r.file_size_bytes)
-            idx=seq-1
+        items = []
+        for idx, it in enumerate(entries):
+            r = it['res']
+            _url = it['url']
+            _ua = _esc(_url, quote=True)                       # 属性用
+            _uj = _url.replace("\\", "\\\\").replace("'", "\\'")   # JS文字列用
             # 左上の番号: スレ内通し番号（OP=0 → "OP"、返信は res_idx）
             display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
             _gi_cls = "gi"
@@ -6829,17 +6850,37 @@ class ThreadView(_MouseGestureMixin, QWidget):
             if _ngm:             _gi_cls += " ng-band"      # → 緑帯
             if _ngm and not _reveal:                        # NG使う時は非表示、解除時は帯付き表示
                 _gi_cls += " ng-hidden"
+            if it.get('is_ul'):  _gi_cls += " gi-ul"        # あぷ由来（user.css用の目印）
             _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
             items.append(
-                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'" data-img-url="'+r.image_url+'"'
+                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'" data-img-url="'+_ua+'"'
                 ' onclick="_giClick(event,'+str(idx)+',this)"'
-                ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
+                ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+_uj+'\','+str(idx)+');}">'
                 + _gi_del +
                 '<div class="gn" data-popup-no="'+str(r.no)+'">'+display_no+'</div>'
-                '<div class="gt"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')+'><img src="'+r.thumb_url+'" loading="lazy"></div>'
-                '<div class="gs">'+info+'</div>'
+                '<div class="gt"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')
+                + '><img src="'+_esc(it['thumb'], quote=True)+'" loading="lazy"></div>'
+                '<div class="gs">'+_esc(it['info'])+'</div>'
                 '</div>'
             )
+        return items
+
+    def _render_image_mode(self):
+        if not self._thread: return
+        _entries = self._image_mode_entries()
+        self._gallery_list = [{'url': it['url'], 'thumb': it['thumb'],
+                               'res_no': it['res'].no, 'name': it['name']}
+                              for it in _entries]
+        items = self._image_mode_cells(_entries)
+        # ポップアップ用に全レスを隠しプールへ（▼被引用の引用元が画像なしレスでも
+        # ポップアップ表示・引用マップ計算ができるよう全件入れる）
+        # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
+        _id_counts = {}
+        for _r in self._thread.res_list:
+            if _r.id_str:
+                _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
+        _id_warn = getattr(self._settings, 'id_warn_count', 5)
+        _respool_inner=self._build_respool_html(self._thread.res_list, _id_counts, _id_warn)
         _cols = max(1, int(getattr(self._settings, "image_mode_cols", 6)))
         _img_add = _img_mode_css(_cols)
         # 画像モード固有関数のみ追加定義（_b/openImgBg/sodane/openUrl等はWEBCHANNEL_JSで共通定義）
@@ -6877,20 +6918,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._render_image_mode()
             return
         # ── ギャラリーHTML断片を生成（body内コンテンツのみ） ──
-        img_res = [(s+1,r) for s,r in enumerate(r for r in self._thread.res_list if r.image_url)]
-        if getattr(self._settings, 'sort_by_sodane', False):
-            # そうだね降順（同数は元の投稿順=安定）。seqを振り直し、ギャラリー/前後移動も同順にする
-            _srt = sorted((r for _, r in img_res), key=lambda r: r.sodane, reverse=True)
-            img_res = [(i + 1, r) for i, r in enumerate(_srt)]
-        self._gallery_list = [{'url':r.image_url,'thumb':r.thumb_url,'res_no':r.no,'name':r.image_name}
-                               for _,r in img_res]
-        def _fmt(b):
-            if b>=1048576: return f'{b/1048576:.1f}MB'
-            if b>=1024: return f'{b//1024}KB'
-            return f'{b}B' if b else '?'
-        items=[]
-        _hidden, _delnos, _is_ng, _reveal = self._mode_marker_sets()
-        _my_nos = self._get_my_nos(self._thread)   # 自分のレス（青帯）用
+        _entries = self._image_mode_entries()
+        self._gallery_list = [{'url': it['url'], 'thumb': it['thumb'],
+                               'res_no': it['res'].no, 'name': it['name']}
+                              for it in _entries]
+        items = self._image_mode_cells(_entries)
         # ポップアップ用に全レスを隠しプールへ（▼被引用対応のため全件）。
         # ID横の書き込み件数[N]を表示するため id_counts / id_warn_count を渡す。
         _id_counts = {}
@@ -6899,31 +6931,6 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 _id_counts[_r.id_str] = _id_counts.get(_r.id_str, 0) + 1
         _id_warn = getattr(self._settings, 'id_warn_count', 5)
         _respool_inner=self._build_respool_html(self._thread.res_list, _id_counts, _id_warn)
-        _hover_pop = getattr(self._settings, 'image_mode_hover_popup', True)
-        for seq,r in img_res:
-            ext=(r.image_name.rsplit('.',1)[-1].upper() if '.' in r.image_name else '?')
-            info=ext+' / '+_fmt(r.file_size_bytes)
-            idx=seq-1
-            display_no = "OP" if r.res_idx == 0 else str(r.res_idx)
-            _gi_cls = "gi"
-            if r.is_deleted:     _gi_cls += " deleted"
-            if r.no in _my_nos:  _gi_cls += " self-res"   # 自分のレス→青帯
-            elif r.is_new:       _gi_cls += " new-res"    # 新着レス→赤帯
-            _ngm = _is_ng(r) or (r.no in _hidden)   # NG対象(NGワード/画像 or 手動NG/del登録)
-            if _ngm:             _gi_cls += " ng-band"      # → 緑帯
-            if _ngm and not _reveal:                        # NG使う時は非表示、解除時は帯付き表示
-                _gi_cls += " ng-hidden"
-            _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
-            items.append(
-                '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'" data-img-url="'+r.image_url+'"'
-                ' onclick="_giClick(event,'+str(idx)+',this)"'
-                ' onmousedown="if(event.button===1){event.preventDefault();openImgBg(\''+r.image_url+'\','+str(idx)+');}">'
-                + _gi_del +
-                '<div class="gn" data-popup-no="'+str(r.no)+'">'+display_no+'</div>'
-                '<div class="gt"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')+'><img src="'+r.thumb_url+'" loading="lazy"></div>'
-                '<div class="gs">'+info+'</div>'
-                '</div>'
-            )
         # 切替を速くするため、body入替には空のプレースホルダのみ入れ、重い全レス
         # プールHTMLのDOMパースは初回ペイント後に後注入する（_respool_inject_js）。
         res_pool = ('<div id="_respool" style="position:absolute;left:-9999px;width:520px;'

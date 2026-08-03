@@ -1434,6 +1434,42 @@ def _elapsed(datetime_str: str) -> str:
         return ""
 
 
+_UL_IMG_EXTS = re.compile(r'\.(jpe?g|png|gif|webp|bmp)$', re.IGNORECASE)
+
+
+def uploader_image_urls(text: str, uploaders: list) -> list:
+    """テキストからうｐろだの直リン画像を抽出して [{url, name}] で返す。
+
+    画像モードで「あぷの画像も読み込む」ために使う。_apply_uploaders と同じ
+    パターン・同じ画像判定を使うので、返信モードでサムネが出るものと一致する。
+    重複URLは1つにまとめる（同じ画像を複数回貼った場合）。"""
+    if not uploaders or not text or not text.strip():
+        return []
+    matches = []
+    for ul in uploaders:
+        try:
+            for m in re.finditer(ul["pattern"], text, re.IGNORECASE):
+                matches.append((m.start(), m.end(), m.group(0), ul))
+        except Exception:
+            pass
+    if not matches:
+        return []
+    matches.sort(key=lambda x: x[0])
+    out, seen, pos = [], set(), 0
+    for start, end, match_str, ul in matches:
+        if start < pos:
+            continue                      # _apply_uploaders と同じ重なり除去
+        pos = end
+        url = ul["url"].replace("$MATCH", match_str)
+        if not _UL_IMG_EXTS.search(url.split('?')[0]):
+            continue                      # 画像以外のリンクは対象外
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append({"url": url, "name": match_str})
+    return out
+
+
 def _apply_uploaders(text: str, uploaders: list,
                      img_list: list = None, res_no: int = 0) -> list:
     """テキスト中のアップローダーパターンをリンク（または画像サムネイル）に変換する。
