@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.331"
+APP_VER = "0.9.332"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8357,16 +8357,21 @@ class CatalogView(_MouseGestureMixin, QWidget):
             self._do_cat_hover_enter(url, thumb_url, comment)
             return
         if _t is None:
+            # 毎回 connect/disconnect すると PySide が「接続が無い」と
+            # RuntimeWarning を出すので、接続は1回だけにして
+            # 表示する内容は属性で差し替える。
             _t = QTimer(self)
             _t.setSingleShot(True)
+            _t.timeout.connect(self._fire_cat_hover)
             self._hover_timer = _t
-        try:
-            _t.timeout.disconnect()
-        except (RuntimeError, TypeError):
-            pass
-        _t.timeout.connect(
-            lambda u=url, th=thumb_url, c=comment: self._do_cat_hover_enter(u, th, c))
+        self._hover_pending = (url, thumb_url, comment)
         _t.start(_delay)
+
+    def _fire_cat_hover(self):
+        """待ち時間が来た → 最後にホバーしたセルの内容で表示する。"""
+        _p = getattr(self, "_hover_pending", None)
+        if _p:
+            self._do_cat_hover_enter(*_p)
 
     def _do_cat_hover_enter(self, url: str, thumb_url: str, comment: str):
         """待ち時間経過後の実処理：画像拡大・本文ポップアップ"""

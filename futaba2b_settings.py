@@ -1190,15 +1190,41 @@ class AppSettings:
                 )
                 f.flush()
                 _os2.fsync(f.fileno())   # 置き換え前に確実にディスクへ
-            # 直前の内容を1世代だけ .bak に残してから置き換える。
-            # 本体が壊れた場合は load() がこちらから復帰する。
+            # ── .bak の更新 ───────────────────────────────────────────────
+            # 「移動」ではなく「コピー」で作る。移動にすると、この後の置き換えが
+            # 失敗した時に本体が消えてしまう（実際に WinError 32 で頻発した）。
+            # 毎回コピーすると保存のたびに 800KB の余計な書き込みが出るので、
+            # 無い時と古くなった時だけ更新する。復旧用の控えなので1世代で足りる。
             _bak = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".bak")
             if SETTINGS_FILE.exists():
                 try:
-                    _os2.replace(SETTINGS_FILE, _bak)
+                    _need_bak = True
+                    if _bak.exists():
+                        _need_bak = (time.time() - _bak.stat().st_mtime) > 600
+                    if _need_bak:
+                        import shutil as _sh
+                        _sh.copy2(SETTINGS_FILE, _bak)
                 except OSError as e:
                     print(f"[Settings] バックアップ作成に失敗: {e}")
-            _os2.replace(_tmp, SETTINGS_FILE)
+            # ── 本体の置き換え ───────────────────────────────────────────
+            # 書いたばかりの .tmp をウイルス対策ソフト等が一時的に掴んでいると
+            # WinError 32 で失敗する。少し待って数回やり直す。
+            # 最後まで失敗した場合も本体には触っていないので、内容は無事。
+            _err = None
+            for _i in range(6):
+                try:
+                    _os2.replace(_tmp, SETTINGS_FILE)
+                    _err = None
+                    break
+                except OSError as e:
+                    _err = e
+                    time.sleep(0.05 * (_i + 1))
+            if _err is not None:
+                print(f"[Settings] 保存できませんでした（6回試行・本体は変更なし）: {_err}")
+                try:
+                    _tmp.unlink()
+                except OSError:
+                    pass
         except Exception as e:
             print(f"[Settings] 保存エラー: {e}")
             try:
