@@ -425,17 +425,33 @@ body.op-no-id .post-id.post-id-warn {
    出所で分けずに全部伏せてクリックで1枚ずつ出す方式にしている。
    NG画像と違い hover では出さない（クリックしに行くだけで見えてしまうため）。*/
 /* ぼかしの強さ（板設定の 弱/中/強）。表示中のモードの分だけ body に付く。
-   値を変数にしてあるので、セレクタを並べ直さずに強さだけ差し替えられる。 */
-body                { --blur-o: 0.4;  --blur-f: blur(5px) grayscale(0.5);  --blur-oh: 0.65; }
-body.blur-weak      { --blur-o: 0.55; --blur-f: blur(3px) grayscale(0.3);  --blur-oh: 0.8;  }
-body.blur-mid       { --blur-o: 0.4;  --blur-f: blur(5px) grayscale(0.5);  --blur-oh: 0.65; }
-body.blur-strong    { --blur-o: 0.3;  --blur-f: blur(12px) grayscale(1);   --blur-oh: 0.5;  }
+   値を変数にしてあるので、セレクタを並べ直さずに強さだけ差し替えられる。
+   濃さ（--blur-o / --blur-oh）はモード共通。 */
+body             { --blur-o: 0.4;  --blur-oh: 0.65; --blur-f: blur(5px) grayscale(0.3); }
+body.blur-weak   { --blur-o: 0.55; --blur-oh: 0.8;  }
+body.blur-mid    { --blur-o: 0.4;  --blur-oh: 0.65; }
+body.blur-strong { --blur-o: 0.3;  --blur-oh: 0.5;  }
+/* ぼかし具合はモードごとに変える。サムネの大きさが違い、小さいものは弱い
+   ぼかしでも中身が分からなくなるため（実際に表示して決めた値）。 */
+/* レス（返信モード）: サムネが大きいので強めに */
+body.m-reply.blur-weak   { --blur-f: blur(3px)  grayscale(0);   }
+body.m-reply.blur-mid    { --blur-f: blur(5px)  grayscale(0.3); }
+body.m-reply.blur-strong { --blur-f: blur(12px) grayscale(0.6); }
+/* 引用モード: ツリー行のサムネは小さい（高さ60pxまで）ので控えめに */
+body.m-quote.blur-weak   { --blur-f: blur(1px)  grayscale(0);   }
+body.m-quote.blur-mid    { --blur-f: blur(3px)  grayscale(0);   }
+body.m-quote.blur-strong { --blur-f: blur(5px)  grayscale(0.5); }
+/* 画像モード: グリッドのセルも小さい（80px）ので引用モードと同じ */
+body.m-image.blur-weak   { --blur-f: blur(1px)  grayscale(0);   }
+body.m-image.blur-mid    { --blur-f: blur(3px)  grayscale(0);   }
+body.m-image.blur-strong { --blur-f: blur(5px)  grayscale(0.5); }
 /* ホバーで出るレスのポップアップ(._rp)は、表示中のモードではなく返信モードの
    設定に従う（中身はレスそのものなので、どのモードから開いても同じ見え方に
-   なるようにする）。body には返信モードの分も rp-* として付けてある。 */
-body.rp-weak   ._rp { --blur-o: 0.55; --blur-f: blur(3px) grayscale(0.3);  --blur-oh: 0.8;  }
-body.rp-mid    ._rp { --blur-o: 0.4;  --blur-f: blur(5px) grayscale(0.5);  --blur-oh: 0.65; }
-body.rp-strong ._rp { --blur-o: 0.3;  --blur-f: blur(12px) grayscale(1);   --blur-oh: 0.5;  }
+   なるようにする）。body には返信モードの分も rp-* として付けてある。
+   値はレス（返信モード）と同じ。 */
+body.rp-weak   ._rp { --blur-o: 0.55; --blur-f: blur(3px)  grayscale(0);   --blur-oh: 0.8;  }
+body.rp-mid    ._rp { --blur-o: 0.4;  --blur-f: blur(5px)  grayscale(0.3); --blur-oh: 0.65; }
+body.rp-strong ._rp { --blur-o: 0.3;  --blur-f: blur(12px) grayscale(0.6); --blur-oh: 0.5;  }
 /* スレ内に貼られた画像（ふたばの添付・手書き投稿もここ）。スレ画(OP)は除く。
    :not(._rp *) でポップアップの中身を外す（そちらは下の rp-* 側で扱う） */
 body.blur-res .res:not(.op) .thumb img:not(.thumb-shown):not(._rp *),
@@ -447,12 +463,12 @@ body.blur-res img.qt-thumb:not(.qt-thumb-op):not(.thumb-shown),
 body.blur-ul .ul-thumb:not(.thumb-shown):not(._rp *),
 body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
     /* 消してしまうとクリック先が分からないので「ぼんやり見えている」状態にする。
-       中身が読み取れないのは blur とグレースケールで担保する。
-       グロ画像の判別は色（赤）に大きく依るため、彩度を落とすのが効く。
+       中身が読み取れないのは主に blur で担保し、彩度落としは強い段階で足す
+       （グロ画像の判別は色＝赤に大きく依るため、強では効かせる）。
        板設定の 弱/中/強 で足りない時は user.css で変数を書き換える。
-       body には表示モードの目印（m-reply / m-quote / m-image）が付くので、
-       モードごとに別の強さにもできる（user.css はこの後に注入されて後勝ち）:
-         body.m-image { --blur-f: blur(20px) grayscale(1); --blur-o: .2; } */
+       上と同じ「モード＋強さ」の2クラスで書けば後勝ちで上書きできる:
+         body.m-image.blur-mid { --blur-f: blur(8px) grayscale(1); --blur-o: .2; }
+       モードだけ（body.m-image）だと上のモード別指定に負けるので注意。 */
     opacity: var(--blur-o);
     filter: var(--blur-f);
     cursor: pointer;
