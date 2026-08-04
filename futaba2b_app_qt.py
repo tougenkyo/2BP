@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.348"
+APP_VER = "0.9.349"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4167,6 +4167,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._bridge.url_open_requested.connect(_open_url)
         self._bridge.futaba_thread_open_requested.connect(self.open_thread_url_requested.emit)
         self._bridge.ng_requested.connect(self._on_ng)
+        self._bridge.ng_id_requested.connect(self._on_ng_id)
         self._bridge.del_requested.connect(self._on_del)
         self._bridge.report_del_requested.connect(self._on_report_del_with_hide)
         self._bridge.delete_res_requested.connect(self._on_delete_res_with_hide)
@@ -7861,6 +7862,39 @@ class ThreadView(_MouseGestureMixin, QWidget):
             f'}})()'
         )
 
+    def _on_ng_id(self, id_str: str):
+        """IDの右クリック→NG追加: そのIDをNGワード（ID欄のみ）として登録する。
+        NGワードは常に正規表現として扱われるため、ID内の + / 等を
+        エスケープしてから入れる（そのままだと別のIDに当たる/壊れる）。"""
+        import re as _re
+        id_str = (id_str or "").strip()
+        if not id_str:
+            return
+        _pat = _re.escape(id_str)
+        for w in self._settings.ng_words:
+            if w.get("pattern") == _pat and w.get("scope_id"):
+                break            # 既に登録済み
+        else:
+            self._settings.ng_words.append({
+                "pattern": _pat, "is_regex": True, "enabled": True,
+                "ng_type": "ng",
+                "scope_body": False, "scope_name": False, "scope_subject": False,
+                "scope_mail": False, "scope_id": True, "scope_ip": False,
+                "scope_catalog": False,
+                "replace_str": "", "expires": "無制限", "expires_at": "",
+                "notify": False, "notify_type": "sound",
+            })
+            self._settings.invalidate_ng_cache()
+            self._settings.save()
+        # 開いている全スレへ反映（IDは板をまたいで同じ人なので他タブも消したい）
+        _p = self
+        while _p is not None and not hasattr(_p, "_redraw_all_threads_with_ng"):
+            _p = _p.parent()
+        if _p is not None:
+            _p._redraw_all_threads_with_ng()
+        else:
+            self.redraw_with_ng()
+
     # ── del ──────────────────────────────────────────────────────────────
     def _update_deleted_res_dom(self, thread, newly_deleted: list, _ng, _ul, _hidden_nos, _del_nos=None, _ng_reveal=False):
         """削除されたレスのDIVをページリロードなしでDOM書き換え"""
@@ -9362,6 +9396,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
             if self._local_sort_grp.checkedId() == 2:      # 50音
                 entries.sort(key=lambda e: (e.title or ""))
             # 「無し」はスレッド履歴の並び順のまま（並べ替えない）
+        # 2.5 履歴表示: 自書スレの扱い（2=自書のみ表示。1=上部にまとめるは描画側）
+        if _hist and getattr(self._settings, "history_self_mode", 0) == 2:
+            entries = [e for e in entries if getattr(e, 'has_posted', False)]
         # 3. 掲示板NGフィルタ（ng_board_hide_ng_thread）
         # 履歴表示は「自分が開いたスレの一覧」なので、NGで欠けると用を成さない。
         # NG非表示・字スレNG・ID非表示はいずれも適用しない。
@@ -9892,7 +9929,10 @@ class CatalogView(_MouseGestureMixin, QWidget):
                                 getattr(self._settings, "catalog_quarantine_bottom", True)),
                             common_id_section=(False if _hist_render else
                                 getattr(self._settings, "catalog_common_id_bottom", True)),
-                            history_mode=_hist_render)
+                            history_mode=_hist_render,
+                            # 履歴表示のみ: 自書スレを上部にまとめる（1のとき）
+                            self_post_section=(_hist_render and
+                                getattr(self._settings, "history_self_mode", 0) == 1))
         # マージ再描画（_re_render_light 経由）はフルリロードせず body のみ入替える。
         # 通常描画（カタログ取得・ソート・検索等）は従来どおりフルロード（先頭に戻る挙動を維持）。
         _light = self._light_render_once

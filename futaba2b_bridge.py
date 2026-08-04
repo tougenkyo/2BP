@@ -34,6 +34,7 @@ class ThreadBridge(QObject):
     play_video_requested  = Signal(str)          # ネイティブ動画再生
     quote_text_requested  = Signal(str)          # テキスト選択引用
     ng_text_requested     = Signal(str)          # テキスト選択NG
+    ng_id_requested       = Signal(str)          # IDを右クリック → そのIDをNGワードへ
     extract_text_requested = Signal(str)         # テキスト選択抽出（ステータスバーへ転送）
     extract_clear_requested = Signal()           # 抽出ポップアップの×で抽出フィールドをクリア
     copy_text_requested   = Signal(str)          # テキスト選択コピー
@@ -75,6 +76,11 @@ class ThreadBridge(QObject):
     @Slot(int)
     def ngRes(self, no: int):
         self.ng_requested.emit(no)
+
+    @Slot(str)
+    def ngId(self, id_str: str):
+        """IDの右クリック → そのIDをNGワード(ID欄)へ追加する"""
+        self.ng_id_requested.emit(id_str)
 
     @Slot(int)
     def sodane(self, no: int):

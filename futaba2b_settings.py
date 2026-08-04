@@ -422,6 +422,8 @@ class AppSettings:
         self.catalog_show_mail_badge:  bool = True  # サムネ右上にメール欄/IDバッジ表示
         self.catalog_quarantine_bottom: bool = True  # 隔離スレ(json非存在)を最下部表示
         self.catalog_common_id_bottom:  bool = True  # IDが出た(共通ID)スレを最下部に表示(OFFで非表示)
+        # 履歴表示で「自書」スレをどう扱うか 0=そのまま / 1=上部にまとめる / 2=自書のみ
+        self.history_self_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
         self.recent_closed_max: int = 30     # 最近閉じたスレの保持件数
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
@@ -898,6 +900,7 @@ class AppSettings:
             self.catalog_show_mail_badge  = bool(raw.get("catalog_show_mail_badge",  True))
             self.catalog_quarantine_bottom = bool(raw.get("catalog_quarantine_bottom", True))
             self.catalog_common_id_bottom = bool(raw.get("catalog_common_id_bottom", True))
+            self.history_self_mode = int(raw.get("history_self_mode", 0))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
             self.recent_images_max = min(100, max(1, int(raw.get("recent_images_max", 30))))
@@ -1112,6 +1115,7 @@ class AppSettings:
                         "catalog_show_mail_badge":  self.catalog_show_mail_badge,
                         "catalog_quarantine_bottom": self.catalog_quarantine_bottom,
                         "catalog_common_id_bottom":  self.catalog_common_id_bottom,
+                        "history_self_mode":         self.history_self_mode,
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
                         "recent_images_max": self.recent_images_max,

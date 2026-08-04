@@ -4445,6 +4445,21 @@ class AppSettingsDialog(QDialog):
         cat_hover_lay.addWidget(self._cat_mail_badge)
         cat_hover_lay.addWidget(self._cat_common_id_bottom)
         cat_hover_lay.addWidget(self._cat_quarantine)
+        # 並び替え=履歴 のときの「自書」スレの扱い
+        _hs_lay = QHBoxLayout(); _hs_lay.setContentsMargins(0, 0, 0, 0)
+        self._hist_self_mode = _NoWheelComboBox()
+        for _t in ("そのまま", "上部にまとめる", "自書のみ表示"):
+            self._hist_self_mode.addItem(_t)
+        self._hist_self_mode.setToolTip(
+            "並び替えを「履歴」にした時、自分が書き込んだスレ（自書バッジ）の出し方。\n"
+            "  そのまま     … 従来どおり履歴の並び順\n"
+            "  上部にまとめる … 自書スレを見出し付きで先頭にまとめる\n"
+            "  自書のみ表示 … 自書スレ以外を出さない\n"
+            "履歴表示以外には影響しません。")
+        _hs_lay.addWidget(QLabel("履歴表示の「自書」スレ:"))
+        _hs_lay.addWidget(self._hist_self_mode)
+        _hs_lay.addStretch()
+        cat_hover_lay.addLayout(_hs_lay)
 
         # スレ落ち時のタブ自動クローズ
         g_close = QGroupBox("スレ落ち時のタブ自動クローズ"); f0.addWidget(g_close); clf2 = QVBoxLayout(g_close)
@@ -5361,6 +5376,8 @@ class AppSettingsDialog(QDialog):
         self._cat_mail_badge.setChecked(getattr(s, "catalog_show_mail_badge", True))
         self._cat_quarantine.setChecked(getattr(s, "catalog_quarantine_bottom", True))
         self._cat_common_id_bottom.setChecked(getattr(s, "catalog_common_id_bottom", True))
+        self._hist_self_mode.setCurrentIndex(
+            max(0, min(2, int(getattr(s, "history_self_mode", 0) or 0))))
 
         # 外観
         _theme_idx = self._theme_combo.findText(_TM.name())
@@ -5527,6 +5544,7 @@ class AppSettingsDialog(QDialog):
         s.catalog_show_mail_badge  = self._cat_mail_badge.isChecked()
         s.catalog_quarantine_bottom = self._cat_quarantine.isChecked()
         s.catalog_common_id_bottom = self._cat_common_id_bottom.isChecked()
+        s.history_self_mode        = self._hist_self_mode.currentIndex()
         s.catalog_show_email      = False  # メール欄バッジは常にOFF
 
         # 外観

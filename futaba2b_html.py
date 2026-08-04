@@ -628,6 +628,11 @@ body {
     color: #8b0000; background: #FFEBEE;
     border-bottom: 2px solid #cc1105;
 }
+/* 自書スレ（履歴表示）まとめセクション見出し。バッジと同じ青系で揃える */
+.sec-hdr.self-hdr {
+    color: #10457f; background: #E7F0FB;
+    border-bottom: 2px solid #1a6fd4;
+}
 /* ─ 逆NGエントリハイライト ─ */
 .entry.reverse-ng {
     border: 2px solid #9B59B6;
@@ -784,6 +789,48 @@ function quoteNo(no)            { _b('quoteNo',       [no]); }
 function quoteComment(no)       { _b('quoteComment',  [no]); }
 function quoteImg(no)           { _b('quoteImg',       [no]); }
 function ngRes(no)              { _b('ngRes',          [no]); }
+function ngId(id)               { _b('ngId',           [id]); }
+/* IDを右クリック → 小さいメニューを出す（左クリックは従来どおり抽出表示）。
+   ポップアップの中のレスでも効くよう document 側で拾う。 */
+document.addEventListener('contextmenu', function(e) {
+    var el = e.target && e.target.closest && e.target.closest('.post-id');
+    if (!el) return;
+    var id = el.getAttribute('data-id') || '';
+    if (!id) return;
+    e.preventDefault(); e.stopPropagation();
+    var old = document.getElementById('__id_ctx');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var menu = document.createElement('div');
+    menu.id = '__id_ctx';
+    menu.style.cssText = 'position:fixed;z-index:100000;background:#fff;'
+        + 'border:1px solid #888;box-shadow:2px 2px 6px rgba(0,0,0,.3);'
+        + 'font-size:9pt;color:#000;padding:2px 0;';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top  = e.clientY + 'px';
+    function add(label, fn, color) {
+        var it = document.createElement('div');
+        it.textContent = label;
+        it.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;'
+            + (color ? 'color:' + color + ';' : '');
+        it.onmouseenter = function(){ this.style.background='#0078d7'; this.style.color='#fff'; };
+        it.onmouseleave = function(){ this.style.background=''; this.style.color=color||''; };
+        it.onclick = function(){ fn(); if (menu.parentNode) menu.parentNode.removeChild(menu); };
+        menu.appendChild(it);
+    }
+    add('ID:' + id + ' のレスを抽出', function(){ showIdExtraction(id); });
+    add('ID:' + id + ' をNGに追加', function(){ ngId(id); }, '#a00');
+    document.body.appendChild(menu);
+    /* 画面外にはみ出したら内側へ寄せる */
+    var r = menu.getBoundingClientRect();
+    if (r.right  > window.innerWidth)  menu.style.left = (window.innerWidth  - r.width  - 4) + 'px';
+    if (r.bottom > window.innerHeight) menu.style.top  = (window.innerHeight - r.height - 4) + 'px';
+    setTimeout(function(){
+        document.addEventListener('click', function cleanup(){
+            var m = document.getElementById('__id_ctx');
+            if (m && m.parentNode) m.parentNode.removeChild(m);
+        }, {once: true});
+    }, 0);
+});
 function quoteIdIp(no)          { _b('quoteIdIp',      [no]); }
 function sodane(no)             { _b('sodane',         [no]); }
 /* サムネぼかし: 1枚目のクリックで伏せを解除する（画像は開かない）。
@@ -2593,7 +2640,8 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                      show_badge: bool = False,
                      quarantine_section: bool = False,
                      common_id_section: bool = False,
-                     history_mode: bool = False) -> str:
+                     history_mode: bool = False,
+                     self_post_section: bool = False) -> str:
     """
     search_sections: None | (matched_list, unmatched_list)
     指定された場合、matched を上にセクション表示する
@@ -2800,6 +2848,27 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                 rest.append(e)
         return rest, idres
 
+    def _pull_self_post(elist):
+        """self_post_section=True のとき「自書」スレを分離して上部送りにする。
+        履歴表示では「キャ有」バッジ等に埋もれて見分けにくいため。
+        戻り値: (rest, [自書entries...])（元の並び順を維持）"""
+        if not self_post_section:
+            return elist, []
+        rest, mine = [], []
+        for e in elist:
+            (mine if getattr(e, 'has_posted', False) else rest).append(e)
+        return rest, mine
+
+    def _self_post_section(mine):
+        """自書スレを最上部にまとめて表示する"""
+        if not mine:
+            return ""
+        parts = [f'<div class="sec-hdr self-hdr">'
+                 f'↓ 自分が書き込んだスレ ({len(mine)}件)</div>']
+        parts.extend(_make_entry(e) for e in mine)
+        parts.append('<div class="sec-div"></div>')
+        return "".join(parts)
+
     def _common_id_section(idres):
         """IDが出たスレを最下部に一括表示（ID別に分けず下にまとめるだけ）"""
         if not idres:
@@ -2834,7 +2903,9 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         # 共通IDを隔離より優先で抽出（隔離かつ共通IDのスレは共通ID側へ）
         filtered, cid_groups = _pull_common_id(filtered)
         filtered, quar = _pull_quar(filtered)
-        inner = ("".join(_make_entry(e) for e in filtered)
+        filtered, mine = _pull_self_post(filtered)   # 自書は最上部へ
+        inner = (_self_post_section(mine)
+                 + "".join(_make_entry(e) for e in filtered)
                  + _common_id_section(cid_groups)
                  + _quar_section(quar))
 
