@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTabBar, QScrollArea, QSpinBox, QCheckBox, QComboBox,
     QButtonGroup, QRadioButton, QListWidget, QListWidgetItem, QInputDialog,
     QApplication, QStyle, QStylePainter, QStyleOptionTab, QSizePolicy,
-    QListView, QToolButton, QMenu,
+    QListView, QToolButton, QMenu, QStyledItemDelegate,
 )
 
 from futaba2b_models   import BoardInfo
@@ -76,6 +76,11 @@ class _TegakiBridge(QObject):
             self._timer.stop()
         self._flush()
 
+
+
+# 貼付け形式（クリップボード画像）の色分け。一覧と表示部の両方で使う。
+# lightテーマの一覧(#e0e0e0)・darkテーマの一覧(#333333)のどちらでも読める明るさ。
+_CLIP_FMT_COLOR = {"jpg": "#d64430", "png": "#229a48"}
 
 
 class _NoWheelSpinBox(QSpinBox):
@@ -1364,8 +1369,14 @@ class PostDialog(QDialog):
         self._clip_fmt = QComboBox()
         self._clip_fmt.addItems(["jpg", "png"])
         # ② リストの文字色: jpg=赤 / png=緑
-        self._clip_fmt.setItemData(0, QColor("#c0392b"), Qt.ItemDataRole.ForegroundRole)
-        self._clip_fmt.setItemData(1, QColor("#1e8e3e"), Qt.ItemDataRole.ForegroundRole)
+        self._clip_fmt.setItemData(0, QColor(_CLIP_FMT_COLOR["jpg"]),
+                                   Qt.ItemDataRole.ForegroundRole)
+        self._clip_fmt.setItemData(1, QColor(_CLIP_FMT_COLOR["png"]),
+                                   Qt.ItemDataRole.ForegroundRole)
+        # 表示部の色をスタイルシートで付けている（_update_clip_ui）と、Fusion では
+        # 一覧の項目までその色で描かれ、jpg/png の色分けが消えてしまう。
+        # 項目ごとの色を見て描く QStyledItemDelegate に戻して色分けを保つ。
+        self._clip_fmt.setItemDelegate(QStyledItemDelegate(self._clip_fmt))
         self._clip_fmt.setCurrentText(getattr(settings, "post_img_format", "jpg"))
         self._clip_fmt.setFixedWidth(60)
         self._clip_fmt.currentTextChanged.connect(self._on_fmt_changed)
@@ -2028,7 +2039,8 @@ document.addEventListener('keydown',function(e){{
         self._spin_quality.setVisible(has_clip and is_jpg)
         # 現在選択の表示色（リストは setItemData、表示部はスタイルシートで色付け）
         self._clip_fmt.setStyleSheet(
-            "QComboBox{color:%s;font-weight:bold;}" % ("#c0392b" if is_jpg else "#1e8e3e"))
+            "QComboBox{color:%s;font-weight:bold;}"
+            % _CLIP_FMT_COLOR["jpg" if is_jpg else "png"])
 
     def _on_strip_thumb_toggled(self, on: bool):
         """③ 埋め込みサムネ削除チェックの状態を記憶する。"""
