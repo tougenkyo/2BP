@@ -6086,9 +6086,15 @@ class BoardSettingsDialog(QDialog):
         w1 = QWidget(); f1 = QVBoxLayout(w1)
 
         g_cat = QGroupBox("カタログ表示"); f1.addWidget(g_cat); cf = QFormLayout(g_cat)
-        self._cat_cols  = _spin(1, 100); cf.addRow("横スレ数 (初期値:14):", self._cat_cols)
-        self._cat_rows  = _spin(1, 100); cf.addRow("縦スレ数 (初期値:6):",  self._cat_rows)
-        self._cat_chars = _spin(0, 150); cf.addRow("文字数 (初期値:4):",    self._cat_chars)
+
+        def _cat_row(label: str, default: int, spin):
+            """見出しに初期値と最大値を出す。最大値はスピンの設定から取るので、
+            範囲を変えても表示がずれない。"""
+            cf.addRow(f"{label} (初期値:{default} / 最大:{spin.maximum()}):", spin)
+
+        self._cat_cols  = _spin(1, 100); _cat_row("横スレ数", 14, self._cat_cols)
+        self._cat_rows  = _spin(1, 100); _cat_row("縦スレ数",  6, self._cat_rows)
+        self._cat_chars = _spin(0, 150); _cat_row("文字数",    4, self._cat_chars)
 
         pos_w = QWidget(); pos_lay = QHBoxLayout(pos_w); pos_lay.setContentsMargins(0,0,0,0)
         self._pos_group = QButtonGroup(self)
