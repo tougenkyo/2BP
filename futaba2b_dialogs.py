@@ -737,11 +737,50 @@ class _FolderThumbDialog(QDialog):
             subprocess.Popen(['xdg-open', folder])
 
 
+# ── アニメーション画像（GIF / APNG / アニメWebP）の展開 ──────────────────────
+# Qt は GIF しか動かせず APNG は1コマ目しか読めないため、Pillow でコマに展開して
+# 自前で送る。フレームは実寸のまま持つので、大きすぎるものは途中で打ち切る。
+_ANIM_MAX_FRAMES = 500
+_ANIM_MAX_BYTES  = 192 * 1024 * 1024
+
+
+def _decode_animation(path: str):
+    """アニメーション画像を [(QPixmap, 表示ms), ...] と ループ回数(0=無限) に展開する。
+    静止画・非対応・失敗時は ([], 0) を返す（呼び出し側は従来どおり静止画で表示）。"""
+    if not path:
+        return [], 0
+    try:
+        from PIL import Image as _PILImage, ImageSequence as _PILSeq
+    except Exception:
+        return [], 0
+    try:
+        with _PILImage.open(path) as im:
+            if not getattr(im, "is_animated", False):
+                return [], 0
+            loop = int(im.info.get("loop", 0) or 0)
+            frames, total = [], 0
+            for fr in _PILSeq.Iterator(im):
+                w, h = fr.size
+                total += w * h * 4
+                if total > _ANIM_MAX_BYTES or len(frames) >= _ANIM_MAX_FRAMES:
+                    break
+                buf = fr.convert("RGBA").tobytes("raw", "RGBA")
+                qi = QImage(buf, w, h, w * 4,
+                            QImage.Format.Format_RGBA8888).copy()
+                # 0ms や極端に短い指定はブラウザ同様 100ms に丸める
+                d = int(fr.info.get("duration", 0) or 0)
+                frames.append((QPixmap.fromImage(qi), d if d >= 10 else 100))
+            return (frames, loop) if len(frames) >= 2 else ([], 0)
+    except Exception:
+        return [], 0
+
+
 class _SampleImageWindow(QDialog):
     """返信ウインドウのプレビュー（サンプル）クリックで開く画像ビューア。
     クリックで「フィット ↔ 等倍」切替。等倍中はドラッグで表示位置を移動できる。
+    GIF / APNG / アニメWebP はここでアニメーション再生する。
     サイズ・位置を設定に記憶し、次回の初期サイズ・位置に反映する。既定 600x400。"""
-    def __init__(self, pix: QPixmap, settings, parent=None):
+    def __init__(self, pix: QPixmap, settings, parent=None, path: str = ""):
         super().__init__(parent)
         self._settings = settings
         self._orig_pix = pix
@@ -749,6 +788,12 @@ class _SampleImageWindow(QDialog):
         self._dragging = False
         self._drag_moved = False
         self._drag_pos = None
+        self._frames = []              # [(QPixmap, ms)] アニメ時のみ
+        self._frame_idx = 0
+        self._loops_left = 0           # 0=無限
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setSingleShot(True)
+        self._anim_timer.timeout.connect(self._next_frame)
         self.setWindowTitle("プレビュー")
         self.setWindowFlags(Qt.WindowType.Window)
         self.setSizeGripEnabled(True)
@@ -771,6 +816,7 @@ class _SampleImageWindow(QDialog):
         self._scroll.setWidget(self._lbl)
         lay.addWidget(self._scroll)
 
+        self._load_source(pix, path)
         self._apply_fit()
         self.resize(600, 400)
         _sz = getattr(settings, "post_sample_view_size", [])
@@ -782,11 +828,46 @@ class _SampleImageWindow(QDialog):
             try: self.move(int(_pos[0]), int(_pos[1]))
             except Exception: pass
 
-    def set_image(self, pix: QPixmap):
-        self._orig_pix = pix
+    def set_image(self, pix: QPixmap, path: str = ""):
+        self._load_source(pix, path)
         self._fit_mode = True
         self._apply_fit()
         QTimer.singleShot(0, self._apply_fit)
+
+    # ── アニメーション ────────────────────────────────────────────────────
+    def _load_source(self, pix: QPixmap, path: str):
+        """表示する絵を差し替える。アニメーションなら再生を始める。"""
+        self._anim_timer.stop()
+        self._orig_pix = pix
+        self._frames = []
+        self._frame_idx = 0
+        frames, loop = _decode_animation(path)
+        if frames:
+            self._frames = frames
+            self._loops_left = loop
+            self._orig_pix = frames[0][0]
+            self._anim_timer.start(frames[0][1])
+
+    def _next_frame(self):
+        if not self._frames:
+            return
+        nxt = self._frame_idx + 1
+        if nxt >= len(self._frames):
+            if self._loops_left > 0:             # 回数指定つき
+                self._loops_left -= 1
+                if self._loops_left <= 0:
+                    self._loops_left = -1        # 再生し終わり（最終コマで停止）
+                    return
+            nxt = 0
+        self._frame_idx = nxt
+        self._orig_pix = self._frames[nxt][0]
+        if self._fit_mode:
+            self._apply_fit()
+        else:
+            # 等倍中はスクロール位置を保ったまま絵だけ差し替える
+            self._lbl.setPixmap(self._orig_pix)
+            self._lbl.resize(self._orig_pix.size())
+        self._anim_timer.start(self._frames[nxt][1])
 
     # ── 表示モード ────────────────────────────────────────────────────────
     def _apply_fit(self):
@@ -895,6 +976,14 @@ class _SampleImageWindow(QDialog):
         # 表示直後はレイアウトが確定してから全体フィットさせる
         if self._fit_mode:
             QTimer.singleShot(0, self._apply_fit)
+        if (self._frames and self._loops_left >= 0
+                and not self._anim_timer.isActive()):
+            self._anim_timer.start(self._frames[self._frame_idx][1])
+
+    def hideEvent(self, event):
+        # 見えていない間は動かさない（閉じた後も止まる）
+        self._anim_timer.stop()
+        super().hideEvent(event)
 
     def _save_geometry(self):
         self._settings.post_sample_view_size = [self.width(), self.height()]
@@ -2774,12 +2863,13 @@ document.addEventListener('keydown',function(e){{
         pix = getattr(self._preview_lbl, "_orig_pix", None)
         if not pix or pix.isNull():
             return
+        _path = getattr(self, "_img_path", "") or ""
         w = getattr(self, "_sample_win", None)
         if w is not None and w.isVisible():
-            w.set_image(pix)
+            w.set_image(pix, _path)
             w.raise_(); w.activateWindow()
             return
-        self._sample_win = _SampleImageWindow(pix, self._settings, self)
+        self._sample_win = _SampleImageWindow(pix, self._settings, self, _path)
         self._sample_win.show()
 
     def _save_geometry(self):
