@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.344"
+APP_VER = "0.9.345"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3136,14 +3136,26 @@ class BoardPane(QWidget):
 
     # ── スクロール ────────────────────────────────────────────────────────────
     def _run_js(self, js: str):
+        """スレのページへJSを流す（スレ専用の操作用）"""
         tv = self._current_thread()
         if tv: tv._view.page().runJavaScript(js)
 
+    def _run_js_any(self, js: str):
+        """今のタブのページへJSを流す。スレでもカタログでも動く操作用。
+        （先頭/末尾へ移動は表示中のページに対する操作なのでこちらを使う。
+        画像タブは先頭/末尾の概念が薄いので対象外）"""
+        w = self._tabs.currentWidget()
+        if not isinstance(w, (ThreadView, CatalogView)):
+            return
+        _v = self._get_webview(w)
+        if _v is not None:
+            _v.page().runJavaScript(js)
+
     def _scroll_top(self):
-        self._run_js("window.scrollTo(0,0);")
+        self._run_js_any("window.scrollTo(0,0);")
 
     def _scroll_bottom(self):
-        self._run_js("window.scrollTo(0,document.body.scrollHeight);")
+        self._run_js_any("window.scrollTo(0,document.body.scrollHeight);")
 
     def _scroll_new(self):
         self._run_js(
