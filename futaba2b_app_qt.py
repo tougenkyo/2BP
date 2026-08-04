@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.351"
+APP_VER = "0.9.352"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4433,22 +4433,47 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._ng_image_apply.emit(img_url, hide_mode)
 
     def _apply_ng_image_dom(self, img_url: str, hide_mode: str):
-        """メインスレッド: NG画像登録後にDOMへ即時反映"""
+        """メインスレッド: NG画像登録後にDOMへ即時反映（返信/引用/画像モード）。
+
+        再描画すれば is_ng_image の判定で反映されるが、登録した瞬間に消えて
+        ほしいので、その場のDOMにもクラスを付ける。
+        ・返信モード … .res（動画レスはサムネの src が動画URLではないので
+          .video-thumb[data-video] も見る）
+        ・引用モード … .qt-row（サムネは img.qt-thumb[data-full]）
+        ・画像モード … .gi[data-img-url]（セル自体が画像なので hide_mode に
+          よらずセルごと隠す）"""
         ng_class = "ng-hidden" if hide_mode == "res" else "ng-image"
         escaped = img_url.replace("\\", "\\\\").replace("'", "\\'")
         self._view.page().runJavaScript(
             f"(function(){{"
             f"  var u='{escaped}';"
+            f"  function hit(el){{"
+            f"    if(!el||!el.getAttribute) return false;"
+            f"    var v=el.getAttribute('data-video')||'';"
+            f"    if(v&&(v===u||v.indexOf(u)>=0)) return true;"
+            f"    var s=el.src||'';"
+            f"    var d=el.getAttribute('data-full')||'';"
+            f"    return s===u||d===u||s.indexOf(u)>=0||d.indexOf(u)>=0;"
+            f"  }}"
             f"  document.querySelectorAll('.res').forEach(function(r){{"
             f"    if(r.classList.contains('ng-hidden')||r.classList.contains('ng-image')) return;"
-            f"    var imgs=r.querySelectorAll('img');"
-            f"    for(var i=0;i<imgs.length;i++){{"
-            f"      var s=imgs[i].src||'';"
-            f"      var d=imgs[i].getAttribute('data-full')||'';"
-            f"      if(s===u||d===u||s.indexOf(u)>=0||d.indexOf(u)>=0){{"
-            f"        r.classList.add('{ng_class}'); break;"
-            f"      }}"
-            f"    }}"
+            f"    var found=false;"
+            f"    r.querySelectorAll('img,.video-thumb').forEach(function(el){{"
+            f"      if(hit(el)) found=true;"
+            f"    }});"
+            f"    if(found) r.classList.add('{ng_class}');"
+            f"  }});"
+            f"  document.querySelectorAll('.qt-row').forEach(function(r){{"
+            f"    if(r.classList.contains('ng-hidden')) return;"
+            f"    var found=false;"
+            f"    r.querySelectorAll('img.qt-thumb').forEach(function(el){{"
+            f"      if(hit(el)) found=true;"
+            f"    }});"
+            f"    if(found){{ r.classList.add('ng-band'); r.classList.add('ng-hidden'); }}"
+            f"  }});"
+            f"  document.querySelectorAll('.gi[data-img-url]').forEach(function(g){{"
+            f"    if(g.getAttribute('data-img-url')!==u) return;"
+            f"    g.classList.add('ng-band'); g.classList.add('ng-hidden');"
             f"  }});"
             f"}})();"
         )
