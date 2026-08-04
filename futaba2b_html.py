@@ -2693,6 +2693,13 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         url = getattr(e, "thread_url", "")
         if url and ng_settings and url in getattr(ng_settings, "ng_thread_urls", []):
             return True
+        # スレ画がNG画像なら、ng_catalog_empty モードに関わらず常にNG
+        # （画像を指定して消したいのに設定次第で出るのは分かりにくいため）
+        try:
+            if ng_filter.classify_catalog_image(e) == "ng":
+                return True
+        except Exception:
+            pass
         # ng_catalog_empty: 0=空タイトルのみNG, 1=NGワードに一致, 2=何もしない
         if _ng_empty_mode == 0:
             return not (e.title or "").strip()
@@ -2731,6 +2738,12 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         _extra_style = ""
         if ng_filter is not None:
             is_rev_ng = ng_filter.is_reverse_ng_catalog(e, title_chars=char_limit)
+            if not is_rev_ng:
+                # スレ画が逆NG画像でもピックアップする（件名と同じ扱い）
+                try:
+                    is_rev_ng = (ng_filter.classify_catalog_image(e) == "reverse_ng")
+                except Exception:
+                    pass
             if is_rev_ng:
                 ecls += " reverse-ng"
                 if not _use_default:

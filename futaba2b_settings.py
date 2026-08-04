@@ -1766,6 +1766,53 @@ class NgFilter:
         """逆NG画像にマッチした最初のエントリを返す（ピックアップの通知判定用）"""
         return self._find_matched_ng_image(res, is_reverse=True)
 
+    # ── カタログのNG画像 ──────────────────────────────────────────────────
+    @staticmethod
+    def _futaba_img_no(url: str) -> str:
+        """ふたばの画像URLからファイル名の数字を取り出す。
+        カタログのサムネ /thumb/1754000000123s.jpg と
+        本画像 /src/1754000000123.jpg は同じ数字を共有するので、
+        これを突き合わせれば同じ画像かどうかが分かる。"""
+        import re as _re
+        m = _re.search(r"/(\d{8,})s?\.[A-Za-z0-9]+(?:\?|$)", url or "")
+        return m.group(1) if m else ""
+
+    def _find_matched_ng_image_catalog(self, entry, is_reverse: bool) -> "dict | None":
+        """カタログエントリ（サムネしか無い）に対するNG画像の照合。
+
+        カタログには本画像URL・ファイルサイズ・寸法が無いため、MD5や
+        「種類/サイズ指定」では判定できない。登録時に控えている本画像URL
+        (known_urls) とサムネのファイル名の数字を突き合わせる。
+        ディスクI/Oを伴わないので、カタログ150件×エントリ数でも軽い。"""
+        _no = self._futaba_img_no(getattr(entry, "thumb_url", "") or "")
+        if not _no:
+            return None
+        for img_ng in self._settings.ng_images:
+            if not img_ng.get("enabled", True):
+                continue
+            if bool(img_ng.get("is_reverse_ng", False)) != is_reverse:
+                continue
+            if img_ng.get("method", "md5") == "type_size":
+                continue          # 寸法・サイズはカタログでは分からない
+            if self._is_expired(img_ng):
+                continue
+            for u in img_ng.get("known_urls", []) or []:
+                if self._futaba_img_no(u) == _no:
+                    return img_ng
+        return None
+
+    def classify_catalog_image(self, entry) -> str:
+        """カタログエントリのスレ画のNG分類: 'ng' / 'reverse_ng' / 'none'"""
+        _ng  = self._find_matched_ng_image_catalog(entry, is_reverse=False)
+        _rev = self._find_matched_ng_image_catalog(entry, is_reverse=True)
+        if _ng and _rev:
+            # レスの画像と同じ優先度設定に従う
+            return "ng" if getattr(self._settings,
+                                   "ng_priority_image_idx", 0) == 0 else "reverse_ng"
+        if _ng:  return "ng"
+        if _rev: return "reverse_ng"
+        return "none"
+
     def _find_matched_ng_image(self, res: "ResData",
                                is_reverse: bool = False) -> "dict | None":
         """マッチした最初のNG画像エントリを返す（hide_mode/NG理由表示用）。
