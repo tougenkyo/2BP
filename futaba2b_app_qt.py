@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.343"
+APP_VER = "0.9.344"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3457,22 +3457,6 @@ _VIDEO_CACHE_DIR = Path(
 _VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ── 動画キャッシュディレクトリ ─────────────────────────────────────────────
-import os as _os
-_VIDEO_CACHE_DIR = Path(
-    _os.environ.get("LOCALAPPDATA", _os.path.expanduser("~"))
-) / "2BP" / "video_cache"
-_VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# ── 動画キャッシュディレクトリ ─────────────────────────────────────────────
-import os as _os
-_VIDEO_CACHE_DIR = Path(
-    _os.environ.get("LOCALAPPDATA", _os.path.expanduser("~"))
-) / "2BP" / "video_cache"
-_VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
 class VideoPlayerWindow(QWidget):
     """QMediaPlayer を使ったネイティブ動画再生ウィンドウ。
     fetcher が渡された場合はキャッシュ確認後にダウンロードして再生
@@ -3482,6 +3466,7 @@ class VideoPlayerWindow(QWidget):
     _sig_local    = Signal(str)       # ダウンロード完了 → ローカルパス
     _sig_url      = Signal(str)       # フォールバック   → URL 直接再生
     _sig_progress = Signal(str)       # 進捗テキスト（スレッドセーフ）
+    _sig_toast    = Signal(str)       # 保存結果の一時表示（BGスレッド→UI）
 
     @staticmethod
     def _cache_path(url: str) -> Path:
@@ -3576,6 +3561,44 @@ class VideoPlayerWindow(QWidget):
         bl.addWidget(vol)
         self._vol_slider = vol
 
+        # 保存先パネルの開閉ボタン
+        self._panel_btn = QPushButton("💾", bar)
+        self._panel_btn.setFixedWidth(34)
+        self._panel_btn.setToolTip("保存先パネルの開閉")
+        self._panel_btn.clicked.connect(self._toggle_folder_panel)
+        bl.addWidget(self._panel_btn)
+
+        # ── 保存先パネル（設定「画像保存」の登録フォルダへワンクリック保存） ──
+        self._save_src_url = url
+        self._fetcher_ref  = fetcher
+        self._folder_btns: list = []
+        self._folder_panel = QWidget(self)
+        self._folder_panel.setFixedHeight(28)
+        self._folder_panel.setStyleSheet(
+            "QWidget{background:#1e1e1e;color:#ddd;}"
+            "QPushButton{background:#333;border:none;color:#ddd;"
+            "padding:0 6px;font-size:8pt;}"
+            "QPushButton:hover{background:#555;}"
+            "QPushButton:disabled{color:#666;background:#2a2a2a;}")
+        self._folder_lay = QHBoxLayout(self._folder_panel)
+        self._folder_lay.setContentsMargins(6, 2, 6, 2)
+        self._folder_lay.setSpacing(3)
+        lay.addWidget(self._folder_panel)
+        self._rebuild_folder_panel()
+        self._folder_panel.setVisible(
+            bool(getattr(self._settings, "video_save_panel_open", False)))
+
+        # 保存結果などの一時表示（映像の上に数秒だけ出す）
+        self._toast_lbl = QLabel("", self)
+        self._toast_lbl.setStyleSheet(
+            "background:rgba(0,0,0,0.78);color:#fff;font-size:9pt;"
+            "padding:4px 10px;border-radius:4px;")
+        self._toast_lbl.hide()
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._toast_lbl.hide)
+        self._sig_toast.connect(self._toast)
+
         lay.addWidget(bar)
 
         # ── プレーヤー設定 ────────────────────────────────────────────────
@@ -3662,12 +3685,140 @@ class VideoPlayerWindow(QWidget):
 
     # ── 再生開始ヘルパー ───────────────────────────────────────────────────
 
+    # ── 保存先パネル ────────────────────────────────────────────────────────
+    def _rebuild_folder_panel(self):
+        """設定「画像保存」の登録フォルダをボタンで並べる（画像タブのバーと同じ一覧）。"""
+        import os
+        while self._folder_lay.count():
+            _it = self._folder_lay.takeAt(0)
+            _w = _it.widget()
+            if _w is not None:
+                _w.deleteLater()
+        self._folder_btns = []
+        folders = [f for f in (getattr(self._settings, "image_save_folders", []) or [])
+                   if (f or "").strip()] if self._settings else []
+        _len = int(getattr(self._settings, "image_save_label_len", 0) or 0) \
+            if self._settings else 0
+        def _add(btn, tip, w=0):
+            btn.setFixedHeight(22)
+            if w:
+                btn.setFixedWidth(w)
+            self._folder_lay.addWidget(btn)
+            # 無効中は理由をツールチップに出すため、本来の説明を控えておく
+            self._folder_btns.append((btn, tip))
+
+        if not folders:
+            _msg = QLabel("保存先が未登録です（設定 → 画像保存 で追加）")
+            _msg.setStyleSheet("color:#888;font-size:8pt;")
+            self._folder_lay.addWidget(_msg)
+        for folder in folders:
+            base = os.path.basename(folder.rstrip("\\/")) or folder
+            btn = QPushButton(base[:_len] if _len > 0 else base)
+            btn.clicked.connect(lambda _=None, f=folder: self._save_video_to(f))
+            _add(btn, f"ここへ保存: {folder}")
+            if _has_subdir(folder):
+                dd = QPushButton("▼")
+                dd.clicked.connect(
+                    lambda _=None, f=folder, b=dd: self._folder_dd_menu(f, b))
+                _add(dd, "サブフォルダを選んで保存", w=20)
+        self._folder_lay.addStretch()
+        dots = QPushButton("…")
+        dots.clicked.connect(self._save_video_browse)
+        _add(dots, "保存先フォルダを選んで保存", w=24)
+        self._update_save_enabled()
+
+    def _update_save_enabled(self):
+        """ダウンロードが終わるまで保存できないのでボタンを無効にしておく。
+        無効中は理由を、有効なら本来の説明をツールチップに出す。"""
+        _ok = bool(getattr(self, "_tmp_path", None))
+        for b, tip in getattr(self, "_folder_btns", []):
+            b.setEnabled(_ok)
+            b.setToolTip(tip if _ok else "ダウンロードの完了後に保存できます")
+
+    def _toggle_folder_panel(self):
+        _open = not self._folder_panel.isVisible()
+        self._folder_panel.setVisible(_open)
+        if self._settings is not None:
+            try:
+                self._settings.video_save_panel_open = _open
+                self._settings.save()
+            except Exception:
+                pass
+
+    def _folder_dd_menu(self, folder: str, btn):
+        """「▼」: サブフォルダを選んで保存（画像タブと同じ作り）。"""
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtCore import QPoint
+        menu = QMenu(self)
+        _populate_subfolder_menu(menu, folder, self._save_video_to)
+        menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
+
+    def _save_video_browse(self):
+        """「…」: フォルダを選んで保存。"""
+        import os
+        from PySide6.QtWidgets import QFileDialog
+        _folders = (getattr(self._settings, "image_save_folders", []) or []) \
+            if self._settings else []
+        start = _folders[0] if _folders and os.path.isdir(_folders[0]) else ""
+        d = QFileDialog.getExistingDirectory(self, "保存先フォルダを選択", start)
+        if d:
+            self._save_video_to(d)
+
+    def _save_video_to(self, folder: str):
+        """再生中の動画（キャッシュ済みファイル）を指定フォルダへコピーする。
+        同名があれば上書きせずスキップし、結果は映像の上に数秒だけ出す。"""
+        import os, shutil, threading
+        src = getattr(self, "_tmp_path", None)
+        if not src or not os.path.exists(src):
+            self._toast("⚠ ダウンロードの完了後に保存できます")
+            return
+        name = (self._save_src_url or "").rstrip("/").split("/")[-1].split("?")[0] \
+            or os.path.basename(src)
+        dest = os.path.join(folder, name)
+        if os.path.exists(dest):
+            self._toast(f"既にあります: {name}")
+            return
+
+        def _do():
+            try:
+                os.makedirs(folder, exist_ok=True)
+                shutil.copyfile(src, dest)
+                self._sig_toast.emit(f"✅ 保存しました: {name}")
+            except Exception as e:
+                self._sig_toast.emit(f"⚠ 保存失敗: {e}")
+
+        self._toast(f"保存中... {name}", 60000)
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _toast(self, text: str, msec: int = 3000):
+        """映像の上にテキストを msec ミリ秒だけ出す。"""
+        lbl = getattr(self, "_toast_lbl", None)
+        if lbl is None:
+            return
+        lbl.setText(text)
+        lbl.adjustSize()
+        self._place_toast()
+        lbl.show(); lbl.raise_()
+        self._toast_timer.start(msec)
+
+    def _place_toast(self):
+        lbl = getattr(self, "_toast_lbl", None)
+        if lbl is None or not lbl.text():
+            return
+        lbl.move(max(6, (self.width() - lbl.width()) // 2), 10)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place_toast()
+
     def _start_local(self, path: str):
         """ダウンロード完了後にローカルファイルを再生"""
         import os as _os
         print(f"[VID] win_start path={path} size={_os.path.getsize(path) if _os.path.exists(path) else -1}", flush=True)
         self._lbl_load.hide()
         self._video.show()
+        self._tmp_path = path          # 保存元（キャッシュ済みファイル）
+        self._update_save_enabled()    # ここで保存ボタンが押せるようになる
         print("[VID] win: setVideoOutput", flush=True)
         self._player.setVideoOutput(self._video)
         print("[VID] win: setSource", flush=True)

@@ -554,6 +554,7 @@ class AppSettings:
         self.img_overlay_res: bool         = False   # 画像タブ「レス」オーバーレイ
         self.img_overlay_info: bool        = False   # 画像タブ「情報」オーバーレイ
         self.video_volume: int             = 80      # 動画音量 (0-100)
+        self.video_save_panel_open: bool   = False   # 動画プレーヤーの保存先パネルを開いておく
         # [表示]
         self.image_resize_use: bool     = True
         self.image_resize_size: int     = 200
@@ -1005,7 +1006,7 @@ class AppSettings:
                 ("catalog_few_res_hide", False), ("catalog_few_res_count", 5), ("catalog_sort_type", 0),
                 ("catalog_sort_desc", False),
                 ("img_overlay_res", False), ("img_overlay_info", False),
-                ("video_volume", 80),
+                ("video_volume", 80), ("video_save_panel_open", False),
                 ("image_resize_use", True), ("image_resize_size", 200),
                 ("show_image_external", False), ("disp_ikioi", False),
                 ("show_self_res_mark", True), ("delete_key", None),
@@ -1279,7 +1280,7 @@ class AppSettings:
             "catalog_read_mark", "catalog_image_size", "catalog_image_turn",
             "catalog_turn_enabled", "catalog_turn_count",
             "catalog_few_res_hide", "catalog_few_res_count", "catalog_sort_type", "catalog_sort_desc",
-            "video_volume",
+            "video_volume", "video_save_panel_open",
             "image_resize_use", "image_resize_size", "show_image_external",
             "disp_ikioi", "show_self_res_mark", "delete_key", "board_start_action", "url_count",
             "cat_cols", "cat_rows", "cat_chars", "cat_text_pos", "cat_img_size_str",
