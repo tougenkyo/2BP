@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.347"
+APP_VER = "0.9.348"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5001,7 +5001,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 _cached = self._last_valid_thread
                 _cached.error     = thread.error  # エラー情報を引き継ぐ
                 _cached.is_cached = True
-                self._show_impl(_cached)
+                # 更新は通常なら差分追記でスクロールが動かないため戻り先を控えて
+                # いない。スレが落ちているとここでキャッシュのフルレンダーに
+                # 切り替わり、そのままだと先頭へ飛ぶ。見ていたレスを目印に戻す
+                # （エラーバナーが増える分ズレるのでピクセルではなくレス基準）。
+                self._capture_scroll_anchor(lambda: self._show_impl(_cached))
             else:
                 self._show_error(thread)
             return
@@ -6233,7 +6237,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
             if not _no:                       # レスが1つも無い＝素の位置で戻す
                 self._pending_scroll = max(0, _off)
             then()
-        _safe_run_js(getattr(self, "_view", None), self._SCROLL_ANCHOR_JS, _cb)
+        if not _safe_run_js(getattr(self, "_view", None),
+                            self._SCROLL_ANCHOR_JS, _cb):
+            # ページがまだ無い/破棄済み → 目印は取れないがthenは必ず実行する
+            self._pending_anchor = None
+            then()
 
     def _restore_scroll_anchor(self):
         """控えた目印のレスが画面の同じ位置に来るよう戻す。
@@ -8389,7 +8397,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
     _board_info_ready = Signal()   # board情報バックグラウンド取得完了
     _email_data_ready = Signal(object)  # board topから取得したemail情報 {no: email}
     _catalog_json_ready = Signal(object)  # mode=json取得結果 {"map":{no:{email,id}}, "nos":set} or None
-    _catalog_del_result = Signal(bool, str)  # 削除依頼(del)の結果（ok, msg）
+    _catalog_del_result = Signal(bool, str, str)  # 削除依頼(del)の結果（ok, msg, url）
     _entries_ready = Signal(list)   # スレッド→UI の安全な橋渡し
     _hover_img_ready  = Signal(bytes, object, int)  # (img_data, cursor_pos, hover_seq) BG→UI
     error_band_changed = Signal(str)  # 通信エラー赤帯（text=詳細, ""=解除）をスレタブへ伝播
@@ -8850,15 +8858,15 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._re_render()
 
     def _on_catalog_del(self, url: str):
-        """右クリック→削除依頼(del): /del.php に削除依頼を送り、
-        当該スレをカタログから除外する（セッション中保持）。
+        """右クリック→削除依頼(del): /del.php に削除依頼を送る。
+        受理されたら当該スレをカタログから除外する（セッション中保持）。
+        ふたばが「操作が早すぎます」等で受け付けないことがあるため、
+        送信しただけでは除外しない（画面では薄く出して結果を待つ）。
         結果メッセージ（例「登録しました」）をカタログ下部にトースト表示する。"""
         if not url or not self._board:
             return
-        # セッション用ハイド集合に追加（再描画・自動更新でも除外を維持）
         if not hasattr(self, "_del_hidden_urls"):
             self._del_hidden_urls = set()
-        self._del_hidden_urls.add(url)
         # スレ番号を URL から抽出
         m = re.search(r'res/(\d+)\.htm', url)
         if not m:
@@ -8873,7 +8881,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             except Exception as e:
                 print(f"[CATALOG_DEL] error: {e}")
                 ok, msg = False, str(e)
-            self._catalog_del_result.emit(bool(ok), msg or "")
+            self._catalog_del_result.emit(bool(ok), msg or "", url)
         threading.Thread(target=_do, daemon=True).start()
 
     def _inject_error_band(self, text: str):
@@ -8893,8 +8901,21 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._inject_error_band(text)
         self.error_band_changed.emit(text)
 
-    def _on_catalog_del_result(self, ok: bool, msg: str):
-        """カタログ削除依頼の結果をWebView下部にトースト表示する（レスdelと同等）"""
+    def _on_catalog_del_result(self, ok: bool, msg: str, url: str = ""):
+        """カタログ削除依頼の結果を反映する。
+        受理されたらカタログから除く。断られたら（「操作が早すぎます」等）
+        薄くしていた表示を元に戻し、除外もしない。
+        結果はWebView下部にトースト表示する（レスdelと同等）。"""
+        if url:
+            if ok:
+                # セッション用ハイド集合（再描画・自動更新でも除外を維持）
+                if not hasattr(self, "_del_hidden_urls"):
+                    self._del_hidden_urls = set()
+                self._del_hidden_urls.add(url)
+            _u = url.replace("\\", "\\\\").replace('"', '\\"')
+            _safe_run_js(self._view,
+                         'if(window.catalogDelDone)catalogDelDone("%s",%s);'
+                         % (_u, "true" if ok else "false"))
         text = (msg or ("登録しました" if ok else "削除依頼に失敗しました")).strip()
         safe = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
         js = (

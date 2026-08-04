@@ -533,6 +533,8 @@ body {
     flex-shrink: 0;
 }
 .entry:hover { border-color: #DD0000; box-shadow: 1px 1px 3px #aaa; }
+/* 削除依頼を送信中（ふたばの応答待ち）。受理されたら消え、断られたら元に戻る */
+.entry.del-pending { opacity: 0.35; pointer-events: none; }
 .entry-img {
     flex: 1; display: flex; align-items: center; justify-content: center;
     overflow: hidden; min-height: 30px; background: #eeeee0;
@@ -928,6 +930,18 @@ function handleCatMouseDown(url, e) {
 }
 function addThreadNg(url) { _b('addThreadNg', [url]); }
 function catalogDel(url)   { _b('catalogDel',  [url]); }
+/* 削除依頼の結果を受けてカタログの見た目を確定する。
+   受理された(ok)ならカタログから除く。断られたら元に戻す（消さない）。 */
+function catalogDelDone(url, ok) {
+    var els = document.querySelectorAll('.entry[data-url="' + url + '"]');
+    for (var i = 0; i < els.length; i++) {
+        if (ok) {
+            if (els[i].parentNode) els[i].parentNode.removeChild(els[i]);
+        } else {
+            els[i].classList.remove('del-pending');
+        }
+    }
+}
 document.addEventListener('contextmenu', function(e) {
     var el = e.target.closest('.entry');
     if (!el) return;
@@ -976,7 +990,9 @@ document.addEventListener('contextmenu', function(e) {
     itemDel.onmouseleave = function(){ this.style.background='';this.style.color='#a00'; };
     itemDel.onclick = function(){
         catalogDel(url);
-        if (el && el.parentNode) el.parentNode.removeChild(el);  /* カタログから即除去 */
+        /* 送信中は薄く出しておく。ふたばが「操作が早すぎます」等で受け付けない
+           ことがあるため、ここでは消さずに結果(catalogDelDone)を待つ。 */
+        if (el) el.classList.add('del-pending');
         document.body.removeChild(menu);
     };
     menu.appendChild(itemDel);
@@ -2732,7 +2748,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             )
 
         return (
-            f'<div class="{ecls}"{style_attr} '
+            f'<div class="{ecls}"{style_attr} data-url="{url}" '
             f'onclick="handleCatClick(\'{url}\',event)" '
             f'onmousedown="handleCatMouseDown(\'{url}\',event)"'
             f'{_hover_attrs}>' +
