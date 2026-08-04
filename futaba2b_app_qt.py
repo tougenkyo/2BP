@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.349"
+APP_VER = "0.9.350"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5069,6 +5069,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # ng_reveal で切り替える。
         _ng   = self._settings.ng_filter
         _ng_reveal = not self._ng_enabled
+        self._notify_reverse_ng_images(thread, _ng)
         # 手動NG登録レスNo。緑帯/非表示判定に常に必要なので常時フルで渡し、
         # 表示/非表示の切替は ng_reveal 側で行う（NG解除時は隠さず緑帯のみ）。
         _thread_url = thread.url or ""
@@ -7861,6 +7862,34 @@ class ThreadView(_MouseGestureMixin, QWidget):
             f'  if (el) el.style.display = "none";'
             f'}})()'
         )
+
+    def _notify_reverse_ng_images(self, thread, ng_filter) -> int:
+        """逆NG画像を含む新着レスが来たら効果音で知らせる（notify を入れた分だけ）。
+        再描画やモード切替で鳴り直さないよう、鳴らしたレスNoを覚えておく。
+        戻り値は今回鳴らす対象になったレス数（検証用）。"""
+        if ng_filter is None or thread is None or not thread.res_list:
+            return 0
+        _done = getattr(self, "_rev_img_notified", None)
+        if _done is None:
+            _done = self._rev_img_notified = set()
+        _hit = 0
+        for res in thread.res_list:
+            if not getattr(res, "is_new", False) or not res.image_url:
+                continue
+            if res.no in _done:
+                continue
+            try:
+                if ng_filter.classify_image(res) != "reverse_ng":
+                    continue
+                _e = ng_filter.get_matched_reverse_ng_image(res)
+            except Exception:
+                continue
+            _done.add(res.no)
+            if _e and _e.get("notify"):
+                _hit += 1
+        if _hit:
+            _play_ng_se()
+        return _hit
 
     def _on_ng_id(self, id_str: str):
         """IDの右クリック→NG追加: そのIDをNGワード（ID欄のみ）として登録する。

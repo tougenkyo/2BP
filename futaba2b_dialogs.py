@@ -3446,6 +3446,16 @@ class NgImageEditDialog(QDialog):
         rev_link.setOpenExternalLinks(False)
         rev_row.addWidget(rev_link); rev_row.addStretch()
         lay.addLayout(rev_row)
+        # 逆NG画像は隠さず目立たせる（ピックアップ）。届いた時に音でも知らせられる。
+        self._chk_img_notify = QCheckBox("逆NGにマッチした画像が届いたら効果音で知らせる")
+        self._chk_img_notify.setChecked(bool(d.get("notify", False)))
+        self._chk_img_notify.setToolTip(
+            "逆NGの画像を含む新着レスが来た時に theme/ng_se.wav を鳴らします。\n"
+            "同じレスで繰り返し鳴らないよう、1レスにつき1回だけです。\n"
+            "逆NGのときだけ使います。")
+        self._chk_img_notify.setEnabled(self._chk_reverse.isChecked())
+        self._chk_reverse.toggled.connect(self._chk_img_notify.setEnabled)
+        lay.addWidget(self._chk_img_notify)
 
         # ── 表示モード ────────────────────────────────────────────
         hide_box = QGroupBox("NGにマッチした場合の表示")
@@ -3517,6 +3527,8 @@ class NgImageEditDialog(QDialog):
             "expires":       exp_text,
             "expires_at":    expires_at,
             "is_reverse_ng": self._chk_reverse.isChecked(),
+            "notify":        (self._chk_reverse.isChecked()
+                              and self._chk_img_notify.isChecked()),
             "hide_mode":     "res" if self._rb_hide_res.isChecked() else "image",
             "description":   self._description.text().strip(),
         }

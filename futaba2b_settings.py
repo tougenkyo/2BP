@@ -1762,8 +1762,14 @@ class NgFilter:
             return name + (f" (MD5 {md5[:10]}…)" if md5 else "")
         return f"MD5 {md5[:16]}…" if md5 else "MD5指定"
 
-    def _find_matched_ng_image(self, res: "ResData") -> "dict | None":
-        """NG画像(非逆NG)にマッチした最初のエントリを返す（hide_mode/NG理由表示用）"""
+    def get_matched_reverse_ng_image(self, res: "ResData") -> "dict | None":
+        """逆NG画像にマッチした最初のエントリを返す（ピックアップの通知判定用）"""
+        return self._find_matched_ng_image(res, is_reverse=True)
+
+    def _find_matched_ng_image(self, res: "ResData",
+                               is_reverse: bool = False) -> "dict | None":
+        """マッチした最初のNG画像エントリを返す（hide_mode/NG理由表示用）。
+        is_reverse=False なら通常のNG画像、True なら逆NG画像だけを見る。"""
         if not res.image_url:
             return None
         url = res.image_url
@@ -1771,7 +1777,7 @@ class NgFilter:
         for img_ng in self._settings.ng_images:
             if not img_ng.get("enabled", True):
                 continue
-            if img_ng.get("is_reverse_ng", False):
+            if bool(img_ng.get("is_reverse_ng", False)) != is_reverse:
                 continue
             if self._is_expired(img_ng):
                 continue

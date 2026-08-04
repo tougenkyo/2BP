@@ -419,6 +419,19 @@ body.op-no-id .post-id.post-id-warn {
     opacity: 1 !important;
     filter: none !important;
 }
+/* ─ 逆NG画像（ピックアップ）: 隠さず目立たせる ─
+   カタログの逆NGエントリ(.entry.reverse-ng)と同じ紫系で揃える。
+   ぼかしの対象からも外す（拾いたい画像を伏せないため）。 */
+.res.rev-ng-image {
+    border-left: 4px solid #9B59B6;
+    background: rgba(155, 89, 182, 0.08);
+}
+.res.rev-ng-image .thumb img {
+    outline: 2px solid #9B59B6;
+    outline-offset: 1px;
+    opacity: 1 !important;
+    filter: none !important;
+}
 /* ─ サムネのぼかし（グロ画像対策・body.blur-res / body.blur-ul で有効） ─
    ふたばの添付画像（手書き投稿もこれ）とうｐろだの直リン画像、画像モードの
    グリッドをまとめて伏せる。手書きかどうかはHTML上で判別できないため、
@@ -2059,6 +2072,18 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
             else:
                 ng_class = " ng-image"
             _is_ng_match = True
+    # 逆NG画像（ピックアップ）: 隠すのではなく目立たせる。
+    # NGとの優先度は classify_image 側（ng_priority_image_idx）で決まっているので、
+    # ここまで来て reverse_ng ならNGには当たっていない（＝隠されない）。
+    _is_rev_ng_image = False
+    if (ng_filter is not None and not res.is_deleted and res.image_url
+            and not ng_class.strip()):
+        try:
+            _is_rev_ng_image = (ng_filter.classify_image(res) == "reverse_ng")
+        except Exception:
+            _is_rev_ng_image = False
+        if _is_rev_ng_image:
+            ng_class += " rev-ng-image"
     # 緑帯/非表示の対象 = NG[使う/解除]の対象レス:
     #   NGワード/NG画像マッチ or 手動NG登録(ng_hidden_res_nos: フッタNGボタン・del登録)。
     # これらに緑帯(ng-band)を付け、NG解除(ng_reveal)時は隠さず緑帯のみで表示する。
