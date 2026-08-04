@@ -1795,6 +1795,20 @@ class MainWindow(QMainWindow):
                 pass
         return None
 
+    def _set_image_src_view(self, view, inner):
+        """画像タブに「開いた元のタブ」を覚えさせる。
+
+        閉じた時にそこへ戻るため、および img_list の更新追跡に使う。
+        ・スレでもカタログでも覚える（カタログから開いた画像も戻れるように）
+        ・画像タブから開いた時は、その画像タブが覚えている元のタブを引き継ぐ
+          （前へ/次へや中クリックで画像を渡り歩いても元のタブへ戻れる）
+        参照する側は ThreadView かどうかを都度確かめている。"""
+        src = inner.currentWidget() if inner is not None else None
+        if isinstance(src, ImageTabView):
+            view._src_thread_view = getattr(src, "_src_thread_view", None)
+        elif isinstance(src, (ThreadView, CatalogView)):
+            view._src_thread_view = src
+
     def _active_inner(self) -> "BoardPane | None":
         w = self._outer_tabs.currentWidget()
         return w if isinstance(w, BoardPane) else None
@@ -2332,6 +2346,7 @@ class MainWindow(QMainWindow):
         name = url.split("/")[-1][:14]
         img_list = [{"url": url, "name": url.split("/")[-1]}]
         view = ImageTabView(url, img_list, 0, self._fetcher, inner, self._settings)
+        self._set_image_src_view(view, inner)
         view.set_settings(self._settings)
         view.open_settings.connect(lambda: self._open_settings("画像保存"))
         view.image_navigated.connect(self._record_recent_image)
@@ -2367,22 +2382,17 @@ class MainWindow(QMainWindow):
         self._step_tab(+1)
 
     def _close_current_tab(self):
+        """Ctrl+W / メニュー / マウスジェスチャーで今のタブを閉じる。
+
+        以前はここで直接 removeTab していたため、×ボタン・中クリック
+        （BoardPane._on_close_tab）にある保護と後処理が全て抜けていた。
+        具体的には、カタログタブとピン留めしたタブが閉じられてしまい、
+        画像タブを閉じても元のタブへ戻らず、タブ履歴の補正も
+        「最近閉じたスレ」への記録も行われていなかった。
+        同じ経路へ通して挙動を揃える。"""
         inner = self._active_inner()
         if inner:
-            cur = inner.currentIndex()
-            if inner.count() > 1:
-                w = inner.widget(cur)
-                if w is None or getattr(w, '_disposed', False):
-                    return          # 連打で破棄処理中のビューには触らない
-                # ×ボタン・中クリックと同じく閉じる前に通知する。
-                # これが無いと Ctrl+W / メニュー / マウスジェスチャーで閉じた分が
-                # 「最近閉じたスレ」に積まれず Ctrl+Shift+T で開き直せない。
-                # 併せて自動更新からの登録解除（_ar_mgr.remove_by_view）も
-                # このシグナル経由で行われる。
-                inner.tab_closing.emit(w)
-                inner.removeTab(cur)
-                if not isinstance(w, CatalogView):
-                    _dispose_tab_view(w)
+            inner._on_close_tab(inner.currentIndex())
         else:
             idx = self._outer_tabs.currentIndex()
             if idx > 0:
@@ -2723,12 +2733,7 @@ class MainWindow(QMainWindow):
                 if w._img_list[w._idx].get("url") == url:
                     inner.setCurrentIndex(i); return
         view = ImageTabView(url, img_list, idx, self._fetcher, inner, self._settings)
-        # 元のThreadViewを記録（img_list更新追跡用）
-        src = inner.currentWidget()
-        if isinstance(src, ThreadView):
-            view._src_thread_view = src
-        else:
-            pass
+        self._set_image_src_view(view, inner)
         view.set_settings(self._settings)
         view.open_settings.connect(lambda: self._open_settings("画像保存"))
         view.image_navigated.connect(self._record_recent_image)
@@ -2761,10 +2766,7 @@ class MainWindow(QMainWindow):
                 if w._img_list[w._idx].get("url") == url:
                     return
         view = ImageTabView(url, img_list, idx, self._fetcher, inner, self._settings)
-        # 元のThreadViewを記録（img_list更新追跡用）
-        src = inner.currentWidget()
-        if isinstance(src, ThreadView):
-            view._src_thread_view = src
+        self._set_image_src_view(view, inner)
         view.set_settings(self._settings)
         view.open_settings.connect(lambda: self._open_settings("画像保存"))
         view.image_navigated.connect(self._record_recent_image)

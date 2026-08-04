@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.345"
+APP_VER = "0.9.346"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2798,10 +2798,12 @@ class BoardPane(QWidget):
         if w in self._pinned: return
         self.tab_closing.emit(w)     # 閉じる前にビューを通知
 
-        # 履歴から戻り先を決定（画像タブを閉じた時のみ前のタブに戻る）
+        # 履歴から戻り先を決定（表示中の画像タブを閉じた時のみ前のタブに戻る）。
+        # 裏の画像タブを×で閉じただけで画面が動くのは不自然なので、
+        # 閉じたのが今見ているタブのときに限る。
         target = -1
-        if isinstance(w, ImageTabView):
-            # 元スレ（_src_thread_view）が同じinner内にあればそこへ戻る
+        if isinstance(w, ImageTabView) and idx == self._tabs.currentIndex():
+            # 開いた元のタブ（_src_thread_view）が同じinner内にあればそこへ戻る
             src_view = getattr(w, '_src_thread_view', None)
             if src_view is not None:
                 for i in range(self._tabs.count()):
@@ -3108,18 +3110,10 @@ class BoardPane(QWidget):
         if self._main: self._main._new_thread()
 
     def _on_close_current(self):
-        idx = self._tabs.currentIndex()
-        if not (0 <= idx < self._tabs.count()): return
-        w = self._tabs.widget(idx)
-        if w is None or getattr(w, '_disposed', False): return
-        if w in self._pinned: return
-        if isinstance(w, CatalogView): return
-        self.tab_closing.emit(w)
-        self._tabs.removeTab(idx)
-        _dispose_tab_view(w)
-        if self._tabs.count() == 0:
-            self._tab_stack.setCurrentIndex(1)
-            self._title_lbl.setFullText("")
+        """今のタブを閉じる（ツールバーの閉じるボタン）。
+        ×ボタン・中クリックと同じ経路に通す（カタログ/ピンの保護、履歴の補正、
+        画像タブを閉じた時に元のタブへ戻る、が全て _on_close_tab 側にあるため）。"""
+        self._on_close_tab(self._tabs.currentIndex())
 
     def _on_open_ng_settings(self):
         """NG設定ダイアログを開く"""
