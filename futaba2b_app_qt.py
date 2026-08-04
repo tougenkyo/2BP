@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.342"
+APP_VER = "0.9.343"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3848,6 +3848,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._sodane_signal.connect(self._apply_sodane_js)
         self._del_result.connect(self._on_del_result)
         self._pending_scroll  = 0
+        # 再描画をまたいで位置を戻すための目印 (レスNo, そのレス上端からのズレpx)
+        self._pending_anchor: "tuple | None" = None
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
         self._error_banner_html = ""   # エラー(キャッシュ表示)時の赤帯バナーHTML（画像/引用モードでも使用）
         self._pending_redraw  = False  # 非表示時にAR更新が来た→アクティブ化時に再描画する
@@ -4535,13 +4537,18 @@ class ThreadView(_MouseGestureMixin, QWidget):
             p = p.parent()
 
     def _on_ng_toggle(self):
-        """NG:使う/わない トグル → 全体再描画"""
+        """NG:使う/わない トグル → 全体再描画。
+        再描画で先頭へ飛ばないよう、画面最上部のレスを目印にして位置を戻す
+        （NGレスの出入りで件数が変わるため、ピクセル位置ではなくレス基準）。"""
         self._ng_enabled = not self._ng_enabled
         self._btn_ng_toggle.setText("NG解除" if self._ng_enabled else "NG使う")
-        if self._thread:
+        if not self._thread:
+            return
+        def _go():
             self._known_res_count = 0
             self._del_showing = False
             self._show_impl(self._thread)
+        self._capture_scroll_anchor(_go)
 
     def _on_del_toggle(self):
         """削除:見る/隠す トグル"""
@@ -6046,6 +6053,51 @@ class ThreadView(_MouseGestureMixin, QWidget):
             dlg.exec()
         self._view.page().toHtml(_cb)
 
+    # ── スクロール位置の目印（NG切替などの再描画をまたいで位置を保つ） ────────
+    # 画面最上部に見えているレスNoと、そのレスの上端からのズレ(px)を覚える。
+    # NG切替では表示されるレス数が変わるためピクセル位置だけでは合わない。
+    _SCROLL_ANCHOR_JS = (
+        "(function(){var es=document.querySelectorAll('.res');"
+        "for(var i=0;i<es.length;i++){var r=es[i].getBoundingClientRect();"
+        "if(r.bottom>0){var m=(es[i].id||'').match(/^r(\\d+)$/);"
+        "if(m)return m[1]+','+Math.round(r.top);}}"
+        "return ','+Math.round(window.scrollY);})()")
+
+    def _capture_scroll_anchor(self, then):
+        """画面最上部のレスを目印として控え、取れたら then() を呼ぶ。"""
+        def _cb(v):
+            _no, _off = "", 0
+            try:
+                _a, _b = str(v or ",0").split(",", 1)
+                _no, _off = _a.strip(), int(float(_b or 0))
+            except Exception:
+                pass
+            self._pending_anchor = (_no, _off) if _no else None
+            if not _no:                       # レスが1つも無い＝素の位置で戻す
+                self._pending_scroll = max(0, _off)
+            then()
+        _safe_run_js(getattr(self, "_view", None), self._SCROLL_ANCHOR_JS, _cb)
+
+    def _restore_scroll_anchor(self):
+        """控えた目印のレスが画面の同じ位置に来るよう戻す。
+        そのレスが消えている（NGで隠れた等）場合は何もしない。"""
+        _a = getattr(self, "_pending_anchor", None)
+        if not _a:
+            return False
+        self._pending_anchor = None
+        _no, _off = _a
+        # 画像の読み込みで高さが変わるため、位置が落ち着くまで数回やり直す
+        self._view.page().runJavaScript(
+            "(function(){var id='r%s',off=%d,tries=0;"
+            "function go(){var e=document.getElementById(id);if(!e)return;"
+            "var y=e.getBoundingClientRect().top+window.scrollY-off;"
+            "window.scrollTo(0,y);"
+            "if(Math.abs(e.getBoundingClientRect().top-off)>2&&tries++<50)"
+            "{setTimeout(go,33);}}"
+            "requestAnimationFrame(function(){requestAnimationFrame(go);});"
+            "})();" % (_no, int(_off)))
+        return True
+
     def _on_load_finished_scroll(self, _ok: bool):
         """ページ読込完了後にスクロール位置を復元"""
         # スレッドページのDOMがロード完了 → モード切替をDOM入替で行える
@@ -6053,6 +6105,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 板設定を変えた後に返信モードへ戻ると、生成済みHTML(_last_html)に
         # 焼かれた古いぼかし設定のまま表示されるため、読込完了時に合わせ直す
         self.apply_blur_setting()
+        if self._restore_scroll_anchor():
+            self._pending_scroll = 0
+            return
         if self._pending_scroll > 0:
             y = self._pending_scroll
             self._pending_scroll = 0
