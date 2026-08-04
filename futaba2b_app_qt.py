@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.341"
+APP_VER = "0.9.342"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -476,6 +476,11 @@ class _CatalogWebView(QWebEngineView):
             menu.exec(event.globalPos())
 
 
+# 「タブ最大幅」で指定できる下限。0 は「無制限」なので 1 が最小の指定値。
+# 設定側もこの値で丸めるため、変えるならここ1か所。
+TAB_MIN_WIDTH = 1
+
+
 class WrapTabBar(QTabBar):
     """右端でタブを折り返す多段タブバー。"""
 
@@ -585,9 +590,9 @@ class WrapTabBar(QTabBar):
         text_w = fm.horizontalAdvance(text)
         left_pad = 21 if has_icon else 5
         w = max(left_pad + text_w + 20, 80)
-        # 設定で最大幅が指定されていればクリップ
+        # 設定で最大幅が指定されていればクリップ（0=無制限。指定時は下限まで許す）
         _max_w = getattr(getattr(self, '_settings', None), 'tab_max_width', 0)
-        if _max_w and _max_w > 80:
+        if _max_w and _max_w >= TAB_MIN_WIDTH:
             w = min(w, _max_w)
         self._tab_width_cache[i] = (cache_key, w)
         return w

@@ -78,6 +78,15 @@ class _TegakiBridge(QObject):
 
 
 
+def _TAB_MIN_WIDTH() -> int:
+    """「タブ最大幅」に指定できる下限。定義は WrapTabBar 側（循環importを避けて遅延取得）。"""
+    try:
+        from futaba2b_app_qt import TAB_MIN_WIDTH
+        return int(TAB_MIN_WIDTH)
+    except Exception:
+        return 1
+
+
 # 貼付け形式（クリップボード画像）の色分け。一覧と表示部の両方で使う。
 # lightテーマの一覧(#e0e0e0)・darkテーマの一覧(#333333)のどちらでも読める明るさ。
 _CLIP_FMT_COLOR = {"jpg": "#d64430", "png": "#229a48"}
@@ -4450,7 +4459,8 @@ class AppSettingsDialog(QDialog):
         # タブ表示設定
         g_tab = QGroupBox("タブ"); f0.addWidget(g_tab); taf = QFormLayout(g_tab)
         self._tab_max_width = _spin(0, 1000, " px",
-            tip="タブの最大幅を指定します（0=無制限・テキスト長に合わせて自動調整）",
+            tip="タブの最大幅を指定します（0=無制限・テキスト長に合わせて自動調整）\n"
+                "1px から指定できます。極端に細くするとタブ名も×も見えなくなります。",
             width=80)
         taf.addRow("タブ最大幅:", self._tab_max_width)
         _tab_hint = QLabel("0=無制限（テキスト幅に自動調整）　数値を指定すると長いタブ名が切れます")
@@ -5466,7 +5476,9 @@ class AppSettingsDialog(QDialog):
         s.scroll_top_count        = self._scroll_top_count.value()
         s.parse_sem_kb            = self._parse_sem_kb.value()
         s.show_console            = self._show_console.isChecked()
-        s.tab_max_width           = self._tab_max_width.value()
+        # 0=無制限。1未満は下限へ丸める（丸めた値は次に開いた時に表示される）
+        _tw = self._tab_max_width.value()
+        s.tab_max_width           = 0 if _tw <= 0 else max(_TAB_MIN_WIDTH(), _tw)
         s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
