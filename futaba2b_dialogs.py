@@ -4620,6 +4620,21 @@ class AppSettingsDialog(QDialog):
         _scroll_hint.setStyleSheet("color: gray; font-size: 11px;")
         scf.addRow("", _scroll_hint)
 
+        # アップデート
+        g_upd = QGroupBox("アップデート"); f0.addWidget(g_upd)
+        udf = QVBoxLayout(g_upd)
+        self._update_skip_css = QCheckBox("CSS（theme/user.css）は更新しない")
+        self._update_skip_css.setToolTip(
+            "自分で編集した user.css をそのまま残してバージョンアップします。\n"
+            "アップデート確認ダイアログのチェックと同じ設定です。\n"
+            "（チェックを外しても、更新前のCSSは old/ に退避されます）")
+        udf.addWidget(self._update_skip_css)
+        _upd_hint = QLabel(
+            "本体の表示が変わった版では、古い user.css が新しい既定値を上書きして\n"
+            "見た目が崩れることがあります。おかしいと感じたら一度外して更新してください。")
+        _upd_hint.setStyleSheet("color: gray; font-size: 11px;")
+        udf.addWidget(_upd_hint)
+
         f0.addStretch(); nb.addTab(_scroll(w0), "全般")
 
         # ══════════════════════════════════════════════════════════════════
@@ -5427,6 +5442,7 @@ class AppSettingsDialog(QDialog):
         self._near_limit_chk.setChecked(getattr(s, "treat_near_limit_as_expiring", False))
         self._scroll_bottom_count.setValue(getattr(s, "scroll_bottom_count", 30))
         self._scroll_top_count.setValue(getattr(s, "scroll_top_count", 0))
+        self._update_skip_css.setChecked(getattr(s, "update_skip_css", True))
         self._parse_sem_kb.setValue(getattr(s, "parse_sem_kb", 50))
         self._show_console.setChecked(getattr(s, "show_console", False))
         self._tab_max_width.setValue(getattr(s, "tab_max_width", 0))
@@ -5593,6 +5609,7 @@ class AppSettingsDialog(QDialog):
         s.treat_near_limit_as_expiring = self._near_limit_chk.isChecked()
         s.scroll_bottom_count     = self._scroll_bottom_count.value()
         s.scroll_top_count        = self._scroll_top_count.value()
+        s.update_skip_css         = self._update_skip_css.isChecked()
         s.parse_sem_kb            = self._parse_sem_kb.value()
         s.show_console            = self._show_console.isChecked()
         # 0=無制限。1未満は下限へ丸める（丸めた値は次に開いた時に表示される）
