@@ -66,6 +66,48 @@ _UPDATE_VERSION_URL   = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/{_UPD
 _UPDATE_ZIP_URL       = f"https://codeload.github.com/{_UPDATE_REPO}/zip/refs/heads/{_UPDATE_BRANCH}"
 
 
+def _update_rel(info, prefix: str) -> str:
+    """zip内のパスから「リポジトリ名-ブランチ名/」を除いた相対パスを返す。
+    プレフィックス外・フォルダ自身なら空文字。"""
+    name = info.filename
+    if not name.startswith(prefix) or info.is_dir():
+        return ""
+    return name[len(prefix):]
+
+
+def _update_backup(src, prefix: str, base: Path, bak: Path):
+    """更新前の状態を bak(zip) に退避する。
+    現行の futaba2b_* に加え、上書き対象のCSSも入れる（元へ戻せるように）。"""
+    import zipfile
+    with zipfile.ZipFile(bak, "w", zipfile.ZIP_DEFLATED) as bz:
+        for f in sorted(base.glob("futaba2b_*")):
+            if f.is_file():
+                bz.write(f, f.name)
+        for info in src.infolist():
+            rel = _update_rel(info, prefix)
+            if rel.lower().endswith(".css") and (base / rel).is_file():
+                bz.write(base / rel, rel)
+
+
+def _update_extract(src, prefix: str, base: Path, skip_css: bool) -> list:
+    """zipの中身を base 直下へ展開する。書き出した相対パスの一覧を返す。
+    skip_css=True のときは、既にある .css を残す（無ければ配置する）。"""
+    written = []
+    for info in src.infolist():
+        rel = _update_rel(info, prefix)
+        if not rel:
+            continue
+        target = base / rel
+        # 「CSSは更新しない」: 手を入れた .css を残す
+        if skip_css and rel.lower().endswith(".css") and target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "wb") as wf:
+            wf.write(src.read(info.filename))
+        written.append(rel)
+    return written
+
+
 class _RegionSelectOverlay(QWidget):
     """スクリーンショットの範囲選択オーバーレイ。
     対象ビュー(tview)の上にWebビュー(web)と同じ領域で重ね、ドラッグで矩形選択する。
@@ -4987,21 +5029,40 @@ class MainWindow(QMainWindow):
             return
 
         self._st_log.setText(f"新しいバージョン v{remote_ver} が利用可能です")
-        ret = QMessageBox.question(self, "アップデート",
+        box = QMessageBox(self)
+        box.setWindowTitle("アップデート")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(
             "新しいバージョンが公開されています。\n\n"
             f"現在のバージョン: v{local_ver}\n"
             f"最新バージョン　: v{remote_ver}\n\n"
             "ダウンロードして適用します。\n"
             "適用後、2BPは自動的に再起動します。\n\n"
-            "バージョンアップしますか？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if ret == QMessageBox.StandardButton.Yes:
-            self._start_update(remote_ver)
+            "バージョンアップしますか？")
+        box.setStandardButtons(QMessageBox.StandardButton.Yes
+                               | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        chk = QCheckBox("CSS（theme/user.css）は更新しない")
+        chk.setChecked(bool(getattr(self._settings, "update_skip_css", True)))
+        chk.setToolTip(
+            "自分で編集した user.css をそのまま残します。\n"
+            "本体側の表示が変わったバージョンでは、新しいCSSと食い違って\n"
+            "見た目が崩れることがあります。その時は old/ 内のバックアップと\n"
+            "見比べて調整してください。\n"
+            "（チェックを外しても、更新前のCSSは old/ に退避されます）")
+        box.setCheckBox(chk)
+        if box.exec() == QMessageBox.StandardButton.Yes:
+            skip_css = chk.isChecked()
+            self._settings.update_skip_css = skip_css
+            try:
+                self._settings.save()
+            except Exception:
+                pass
+            self._start_update(remote_ver, skip_css)
         else:
             self._st_log.setText("")
 
-    def _start_update(self, remote_ver: str):
+    def _start_update(self, remote_ver: str, skip_css: bool = True):
         """GitHubリポジトリのzipをダウンロードする（適用はPython側で行う・update.bat不要）。"""
         self._st_log.setText("アップデートをダウンロード中...")
 
@@ -5013,24 +5074,27 @@ class MainWindow(QMainWindow):
                 content = r.content
                 if not content:
                     raise ValueError("ダウンロードしたデータが空です")
-                self._main_thread_call.emit(lambda c=content: self._on_update_downloaded(c, None))
+                self._main_thread_call.emit(
+                    lambda c=content: self._on_update_downloaded(c, None, skip_css))
             except Exception as e:
-                self._main_thread_call.emit(lambda e=e: self._on_update_downloaded(None, e))
+                self._main_thread_call.emit(
+                    lambda e=e: self._on_update_downloaded(None, e, skip_css))
 
         threading.Thread(target=_job, daemon=True).start()
 
-    def _on_update_downloaded(self, content, error):
+    def _on_update_downloaded(self, content, error, skip_css: bool = True):
         if error is not None or not content:
             self._st_log.setText("アップデートのダウンロードに失敗しました")
             QMessageBox.warning(self, "アップデート",
                 f"アップデートのダウンロードに失敗しました。\n\n{error or 'データが空です'}")
             return
-        self._apply_update(content)
+        self._apply_update(content, skip_css)
 
-    def _apply_update(self, content: bytes):
+    def _apply_update(self, content: bytes, skip_css: bool = True):
         """ダウンロードしたzipをPythonで直接展開・上書きし、再起動する（update.bat不要）。
-        ① 現行 futaba2b_* を old/{日時}.zip にバックアップ
+        ① 現行 futaba2b_* と上書き対象のCSSを old/{日時}.zip にバックアップ
         ② リポジトリの全ファイルを base 直下に展開・上書き
+           skip_css=True のときは、既にある .css を残す（無ければ配置する）
         ③ 旧プロセスの終了を待って新プロセスを起動する一時ランチャを起動し、自分は終了"""
         import zipfile, io, datetime, sys, subprocess, tempfile, os as _os
         base = Path(__file__).resolve().parent
@@ -5042,27 +5106,14 @@ class MainWindow(QMainWindow):
             # GitHubのzipは「リポジトリ名-ブランチ名/」のフォルダを含むため除去する
             prefix = names[0].split("/")[0] + "/"
 
-            # ① バックアップ: 現行 futaba2b_* を old/{日時}.zip へ
+            # ① バックアップ: 現行 futaba2b_* と上書き対象のCSSを old/{日時}.zip へ
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             old_dir = base / "old"
             old_dir.mkdir(exist_ok=True)
-            bak = old_dir / f"{ts}.zip"
-            with zipfile.ZipFile(bak, "w", zipfile.ZIP_DEFLATED) as bz:
-                for f in base.glob("futaba2b_*"):
-                    if f.is_file():
-                        bz.write(f, f.name)
+            _update_backup(src, prefix, base, old_dir / f"{ts}.zip")
 
             # ② 展開・上書き（プレフィックス除去・サブフォルダ作成）
-            for info in src.infolist():
-                if info.is_dir() or not info.filename.startswith(prefix):
-                    continue
-                rel = info.filename[len(prefix):]
-                if not rel:
-                    continue
-                target = base / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with open(target, "wb") as wf:
-                    wf.write(src.read(info.filename))
+            _update_extract(src, prefix, base, skip_css)
         except Exception as e:
             self._st_log.setText("アップデートの適用に失敗しました")
             QMessageBox.warning(self, "アップデート",
