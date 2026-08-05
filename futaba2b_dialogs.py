@@ -4620,21 +4620,6 @@ class AppSettingsDialog(QDialog):
         _scroll_hint.setStyleSheet("color: gray; font-size: 11px;")
         scf.addRow("", _scroll_hint)
 
-        # アップデート
-        g_upd = QGroupBox("アップデート"); f0.addWidget(g_upd)
-        udf = QVBoxLayout(g_upd)
-        self._update_skip_css = QCheckBox("CSS（theme/user.css）は更新しない")
-        self._update_skip_css.setToolTip(
-            "自分で編集した user.css をそのまま残してバージョンアップします。\n"
-            "アップデート確認ダイアログのチェックと同じ設定です。\n"
-            "（チェックを外しても、更新前のCSSは old/ に退避されます）")
-        udf.addWidget(self._update_skip_css)
-        _upd_hint = QLabel(
-            "本体の表示が変わった版では、古い user.css が新しい既定値を上書きして\n"
-            "見た目が崩れることがあります。おかしいと感じたら一度外して更新してください。")
-        _upd_hint.setStyleSheet("color: gray; font-size: 11px;")
-        udf.addWidget(_upd_hint)
-
         f0.addStretch(); nb.addTab(_scroll(w0), "全般")
 
         # ══════════════════════════════════════════════════════════════════
@@ -4789,6 +4774,22 @@ class AppSettingsDialog(QDialog):
         _log_hint.setStyleSheet("color: gray; font-size: 11px;")
         _log_hint.setWordWrap(True)
         lgf.addWidget(_log_hint)
+
+        # アップデート
+        g_upd = QGroupBox("アップデート"); f_ap.addWidget(g_upd)
+        udf = QVBoxLayout(g_upd)
+        self._update_skip_css = QCheckBox("CSS（theme/user.css）は更新しない")
+        self._update_skip_css.setToolTip(
+            "自分で編集した user.css をそのまま残してバージョンアップします。\n"
+            "アップデート確認ダイアログのチェックと同じ設定です。\n"
+            "（チェックを外しても、更新前のCSSは old/ に退避されます）")
+        udf.addWidget(self._update_skip_css)
+        _upd_hint = QLabel(
+            "本体の表示が変わった版では、古い user.css が新しい既定値を上書きして\n"
+            "見た目が崩れることがあります。おかしいと感じたら一度外して更新してください。")
+        _upd_hint.setStyleSheet("color: gray; font-size: 11px;")
+        _upd_hint.setWordWrap(True)
+        udf.addWidget(_upd_hint)
 
         f_ap.addStretch()
         _w_ap = _scroll(w_ap)   # 棒読みちゃんタブの後で addTab する
