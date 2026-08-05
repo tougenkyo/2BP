@@ -3616,7 +3616,8 @@ class NgImageEditDialog(QDialog):
             "size_max":      self._size_max.value(),
             "file_path":     self._file_path.text().strip(),
             "md5":           self._md5_edit.text().strip(),
-            "last_hit":      "",
+            # last_hit は入れない。修正のたびに最終ヒット日が消えてしまうため、
+            # 呼び出し側で元の値を引き継ぐ（新規なら未設定＝空扱い）。
             "expires":       exp_text,
             "expires_at":    expires_at,
             "is_reverse_ng": self._chk_reverse.isChecked(),
@@ -4350,6 +4351,24 @@ class NgSettingsDialog(QDialog):
                 except RuntimeError: pass
                 self._refresh_img_table()
 
+    @staticmethod
+    def _merge_img_entry(old: dict, result: dict) -> dict:
+        """NG画像の修正結果を元のエントリに重ねる。
+
+        ダイアログはフォームの項目しか作らないため、そのまま差し替えると
+        登録時に控えた本画像URL(known_urls)・ファイルサイズ・最終ヒット日が
+        消え、以後キャッシュ頼みの照合しかできなくなる。
+        ただし一致条件そのもの（方法/MD5/ファイル）を変えた場合は、前の画像で
+        覚えた内容は当てにならないので捨てる（別の画像を誤って隠さないため）。"""
+        merged = {**old, **result}
+        if (result.get("method") != old.get("method")
+                or result.get("md5", "") != old.get("md5", "")
+                or result.get("file_path", "") != old.get("file_path", "")):
+            merged.pop("known_urls", None)
+            merged.pop("size", None)
+            merged["last_hit"] = ""
+        return merged
+
     def _img_edit(self):
         rows = sorted(set(
             idx.row() for idx in self._img_table.selectedIndexes()
@@ -4359,11 +4378,13 @@ class NgSettingsDialog(QDialog):
         if len(rows) == 1:
             row = rows[0]
             if 0 <= row < len(self._settings.ng_images):
-                dlg = NgImageEditDialog(self._settings.ng_images[row], parent=self)
+                old = self._settings.ng_images[row]
+                dlg = NgImageEditDialog(old, parent=self)
                 if dlg.exec() == QDialog.DialogCode.Accepted:
                     result = dlg.get_result()
                     if result:
-                        self._settings.ng_images[row] = result
+                        self._settings.ng_images[row] = self._merge_img_entry(
+                            old, result)
                         self._settings.invalidate_ng_cache()
                         try: self._img_table.itemChanged.disconnect()
                         except RuntimeError: pass
