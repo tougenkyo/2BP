@@ -3428,9 +3428,12 @@ class NgWordEditDialog(QDialog):
 
 class NgImageEditDialog(QDialog):
     """NG画像の追加・修正ダイアログ"""
-    def __init__(self, ng_entry: dict | None = None, parent=None):
+    def __init__(self, ng_entry: dict | None = None, parent=None,
+                 is_new: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("NG画像の追加" if ng_entry is None else "NG画像の修正")
+        # is_new: 右クリック登録のように、初期値を入れた状態で「追加」する場合
+        self.setWindowTitle("NG画像の追加"
+                            if (ng_entry is None or is_new) else "NG画像の修正")
         self.resize(400, 380)
         self._result: dict | None = None
         self._build(ng_entry or {})

@@ -1803,6 +1803,18 @@ class NgFilter:
                     return img_ng
         return None
 
+    def _known_url_hit(self, img_ng: dict, url: str) -> bool:
+        """登録時に控えた本画像URL(known_urls)と照合する。
+
+        v0.9.356以前は画像モードから登録するとサムネURLが控えられていたため、
+        本画像URLと突き合わせても一致せず「登録した時だけ効く」状態になっていた。
+        ふたばは本画像とサムネでファイル名の数字が同じなので、数字でも拾い直す。"""
+        known = img_ng.get("known_urls", []) or []
+        if url in known:
+            return True
+        _no = self._futaba_img_no(url)
+        return bool(_no) and any(self._futaba_img_no(u) == _no for u in known)
+
     def classify_catalog_image(self, entry) -> str:
         """カタログエントリのスレ画のNG分類: 'ng' / 'reverse_ng' / 'none'"""
         _ng  = self._find_matched_ng_image_catalog(entry, is_reverse=False)
@@ -1851,8 +1863,7 @@ class NgFilter:
                 stored_md5 = img_ng.get("md5", "").lower()
                 if not stored_md5:
                     continue
-                known_urls = img_ng.get("known_urls", [])
-                if url in known_urls:
+                if self._known_url_hit(img_ng, url):
                     matched = True
                 else:
                     # _check_image と同じ最適化: サイズ事前フィルタ＋URL→MD5メモ
@@ -1907,7 +1918,7 @@ class NgFilter:
                     continue
                 # 1) known_urls による URL直接照合（キャッシュ不要）
                 known_urls = img_ng.get("known_urls", [])
-                if url in known_urls:
+                if self._known_url_hit(img_ng, url):
                     matched = True
                 else:
                     # 2) サイズ事前フィルタ: エントリに登録済みサイズがあり、レスの

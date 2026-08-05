@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.356"
+APP_VER = "0.9.357"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4368,6 +4368,13 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """画像右クリック「NG画像登録」→ URLから画像を取得してMD5を計算しダイアログ表示"""
         if not img_url:
             return
+        # サムネURLで来たら本画像URLに直す。サムネのMD5を控えても、再描画時に
+        # 照合されるのは本画像URLなので二度と一致しなくなる（登録した時だけ効く）。
+        if self._thread and "/thumb/" in img_url:
+            for _r in self._thread.res_list:
+                if _r.thumb_url == img_url and _r.image_url:
+                    img_url = _r.image_url
+                    break
         import threading as _th
         def _fetch_md5():
             try:
@@ -4416,7 +4423,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 hide_mode = img.get("hide_mode", "image")
                 self._ng_image_apply.emit(img_url, hide_mode)
                 return
-        dlg = NgImageEditDialog(preset, parent=self)
+        dlg = NgImageEditDialog(preset, parent=self, is_new=True)
         if dlg.exec() != dlg.DialogCode.Accepted:
             return
         new_entry = dlg.get_result()
@@ -7200,7 +7207,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 + _gi_del +
                 '<div class="gn" data-popup-no="'+str(r.no)+'">'+display_no+'</div>'
                 '<div class="gt"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')
-                + '><img src="'+_esc(it['thumb'], quote=True)+'" loading="lazy"></div>'
+                + '><img src="'+_esc(it['thumb'], quote=True)+'" loading="lazy"'
+                  ' data-full="'+_ua+'"></div>'
                 '<div class="gs">'+_esc(it['info'])+'</div>'
                 '</div>'
             )
