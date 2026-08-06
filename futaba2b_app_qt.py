@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.360"
+APP_VER = "0.9.361"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -13193,7 +13193,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
     _ZOOM_STEPS = [25, 50, 75, 100, 150, 200, 400, 800, 1600, 3200, 6400]
     # 表の外へ出ても頭打ちにせず倍々で伸ばす。下限/上限は表示が破綻しない範囲。
     _ZOOM_MIN = 5
-    _ZOOM_MAX = 25600
+    # 実質の上限はブラウザ側のレイアウト限界(約3355万px)。ここはその手前の目安。
+    _ZOOM_MAX = 102400
 
     @classmethod
     def _next_zoom(cls, cur: int, direction: int) -> int:
@@ -13217,12 +13218,14 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         label = f"{pct}%"
         idx = cb.findText(label)
         if idx >= 0:
-            cb.setCurrentIndex(idx)
-        else:
-            cb.blockSignals(True)
-            cb.setCurrentText(label)
-            cb.blockSignals(False)
-            self._on_zoom_combo(label)
+            cb.setCurrentIndex(idx)   # currentTextChanged → _on_zoom_combo で反映
+            return
+        # 一覧に無い倍率は項目を足してから適用する。
+        # 従来は setCurrentText で入れようとしていたが、編集不可のコンボでは
+        # 無視されて表示が古い倍率のまま残り、次のCtrl+ホイールがその古い値から
+        # 計算されるため、一覧の一番上より先へ進めなくなっていた。
+        self._set_zoom_combo_value(pct)   # 数値順に挿入（シグナルはブロック済み）
+        self._on_zoom_combo(label)
 
     def wheelEvent(self, event):
         """Ctrl+ホイールで拡大縮小"""
