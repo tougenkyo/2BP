@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.361"
+APP_VER = "0.9.362"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -12434,7 +12434,11 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             # はみ出し時に start へフォールバックするため左端までスクロールできる。
             "body{display:flex;justify-content:safe center;align-items:safe center;"
             "overflow:auto;box-sizing:border-box;}"
-            "img,video{display:block;cursor:zoom-in;visibility:hidden;user-select:none;-webkit-user-drag:none;}"
+            # flex:none が無いと、bodyがflexコンテナなので画像がflexアイテムとして
+            # 自動縮小され（flex-shrink既定=1）、指定した幅よりウインドウ幅が優先されて
+            # しまう。結果、ウインドウより大きくは決して拡大できなかった。
+            "img,video{display:block;flex:none;cursor:zoom-in;visibility:hidden;"
+            "user-select:none;-webkit-user-drag:none;}"
             "#img.actual{max-width:none!important;max-height:none!important;"
             "width:auto!important;}"
             # pannable = ドラッグで表示位置を動かせる状態（100%含む全ての%表示）。
