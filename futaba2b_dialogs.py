@@ -3628,6 +3628,22 @@ class NgImageEditDialog(QDialog):
         }
         if idx == 2 and not entry["md5"]:
             QMessageBox.warning(self, "入力エラー", "MD5ハッシュを入力してください"); return
+        if idx == 1:
+            # 「このファイルと一致」: 照合はMD5で行うので、ここで必ず計算しておく。
+            # 以前は計算ボタンを押さない限り空のままで、登録しても永久に
+            # 一致しなかった（照合側は md5 が空のエントリを読み飛ばす）。
+            if not entry["file_path"]:
+                QMessageBox.warning(self, "入力エラー",
+                                    "ファイルを選択してください"); return
+            import hashlib as _hl
+            try:
+                with open(entry["file_path"], "rb") as _f:
+                    entry["md5"] = _hl.md5(_f.read()).hexdigest()
+            except OSError as _e:
+                if not entry["md5"]:
+                    QMessageBox.warning(self, "入力エラー",
+                        f"ファイルを読み込めませんでした:\n{_e}"); return
+                # 読めないが以前計算したMD5がある → そのまま残す（説明だけ直した等）
         self._result = entry
         self.accept()
 
