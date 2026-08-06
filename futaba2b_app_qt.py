@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.358"
+APP_VER = "0.9.359"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11749,7 +11749,9 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         ctrl_lay.addWidget(_make_search_btn("NAO", "https://saucenao.com/search.php?url={url}"))
         # ── 拡大縮小コンボ ──
         self._zoom_combo = QComboBox()
-        self._zoom_combo.addItems(["画面に合わせる", "25%", "50%", "75%", "100%", "150%", "200%", "400%"])
+        self._zoom_combo.addItems(["画面に合わせる", "25%", "50%", "75%", "100%",
+                                   "150%", "200%", "400%", "800%", "1600%",
+                                   "3200%", "6400%"])
         self._zoom_combo.setFixedWidth(113)
         self._zoom_combo.setToolTip("拡大率 (Ctrl+ホイール・Ctrl++/−)")
         # 「画像を原寸大で開く」設定: 初期選択を 100% にする。以降の表示は
@@ -12910,6 +12912,17 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                 lambda cur, d=direction: self._apply_step_from_scale(cur or 0, d))
             return
         idx = cb.currentIndex()
+        if direction > 0 and idx >= n - 1:
+            # 一番上まで来たら止めずに、さらに上の倍率を作って進める
+            try:
+                cur = int(cb.currentText().rstrip("%"))
+            except ValueError:
+                return
+            nxt = self._next_zoom(cur, 1)
+            if nxt != cur:
+                self._set_zoom_combo_value(nxt)
+                self._on_zoom_combo(f"{nxt}%")
+            return
         new_idx = max(0, min(n - 1, idx + direction))
         if new_idx != idx:
             cb.setCurrentIndex(new_idx)   # currentTextChanged → _on_zoom_combo で反映
@@ -12923,10 +12936,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             idx = cb.currentIndex()
             cb.setCurrentIndex(max(0, min(cb.count() - 1, idx + direction)))
             return
-        if direction > 0:
-            nxt = next((s for s in steps if s > cur_pct), steps[-1])
-        else:
-            nxt = next((s for s in reversed(steps) if s < cur_pct), steps[0])
+        nxt = self._next_zoom(cur_pct, direction)
         self._set_zoom_combo_value(nxt)
         self._on_zoom_combo(f"{nxt}%")
 
@@ -13180,19 +13190,27 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             self._on_zoom_combo(f"{self._zoom_last_pct}%")
             self._view.page().runJavaScript("document.title='';")
 
-    _ZOOM_STEPS = [25, 50, 75, 100, 150, 200, 400]
+    _ZOOM_STEPS = [25, 50, 75, 100, 150, 200, 400, 800, 1600, 3200, 6400]
+    # 表の外へ出ても頭打ちにせず倍々で伸ばす。下限/上限は表示が破綻しない範囲。
+    _ZOOM_MIN = 5
+    _ZOOM_MAX = 25600
+
+    @classmethod
+    def _next_zoom(cls, cur: int, direction: int) -> int:
+        """現在の倍率(%)から1段階上/下の倍率(%)を返す。表の先は倍々/半々で続く。"""
+        steps = cls._ZOOM_STEPS
+        if direction > 0:
+            nxt = next((s for s in steps if s > cur), 0) or cur * 2
+        else:
+            nxt = next((s for s in reversed(steps) if s < cur), 0) or cur // 2
+        return max(cls._ZOOM_MIN, min(cls._ZOOM_MAX, nxt))
 
     def _step_zoom(self, direction: int):
         try:
             cur = int(self._zoom_combo.currentText().rstrip("%"))
         except (ValueError, AttributeError):
             cur = 100
-        steps = self._ZOOM_STEPS
-        if direction > 0:
-            nxt = next((s for s in steps if s > cur), steps[-1])
-        else:
-            nxt = next((s for s in reversed(steps) if s < cur), steps[0])
-        self._set_zoom_pct(nxt)
+        self._set_zoom_pct(self._next_zoom(cur, direction))
 
     def _set_zoom_pct(self, pct: int):
         cb = self._zoom_combo
