@@ -11,7 +11,6 @@ class ThreadBridge(QObject):
 
     # Python 側が受け取るシグナル
     mouse_gesture         = Signal(str)          # マウスジェスチャー（方向列）
-    tab_wheel             = Signal(int)          # 右ボタン+ホイール（+1=次 / -1=前）
     quote_no_requested    = Signal(int)          # 番号クリック → >>No.NNNN
     quote_comment_requested = Signal(int)        # コメントクリック → >本文
     quote_img_requested   = Signal(int)          # 画像クリック → 画像URLを引用
@@ -64,10 +63,6 @@ class ThreadBridge(QObject):
         """マウスジェスチャー成立（右ドラッグの方向列）"""
         self.mouse_gesture.emit(seq)
 
-    @Slot(int)
-    def tabWheel(self, d: int):
-        """右ボタンを押したままホイール → 前後のタブへ移動（d: +1=次 / -1=前）"""
-        self.tab_wheel.emit(int(d))
 
     @Slot(int)
     def quoteImg(self, no: int):
@@ -228,7 +223,6 @@ class CatalogBridge(QObject):
     cat_hover_enter          = Signal(str, str, str)  # (url, thumb_url, comment)
     cat_hover_leave          = Signal()
     mouse_gesture            = Signal(str)   # マウスジェスチャー（方向列）
-    tab_wheel                = Signal(int)   # 右ボタン+ホイール（+1=次 / -1=前）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -272,10 +266,6 @@ class CatalogBridge(QObject):
         """マウスジェスチャー成立（右ドラッグの方向列）"""
         self.mouse_gesture.emit(seq)
 
-    @Slot(int)
-    def tabWheel(self, d: int):
-        """右ボタンを押したままホイール → 前後のタブへ移動（d: +1=次 / -1=前）"""
-        self.tab_wheel.emit(int(d))
 
     @Slot(str, str, str)
     def catHoverEnter(self, url: str, thumb_url: str, comment: str):

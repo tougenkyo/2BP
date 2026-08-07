@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.365"
+APP_VER = "0.9.366"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1329,16 +1329,12 @@ def _mouse_gesture_js(enabled: bool = False, step: int = 30,
     document.title='__mg__:<列>' で通知する（titleChanged で受け取る）。"""
     _notify = ("document.title='__mg__:'+seq.join('');" if via_title
                else "if(typeof _b==='function')_b('mouseGesture',[seq.join('')]);")
-    _notify_wheel = ("document.title='__mgw__:'+d;" if via_title
-                     else "if(typeof _b==='function')_b('tabWheel',[d]);")
     return (
         "(function(){"
         "if(window._mgInit)return; window._mgInit=true;"
         f"window._mgEnabled={'true' if enabled else 'false'};"
         f"var STEP={int(step)};"
-        # rdown はジェスチャー設定と無関係に右ボタンの押下を追う
-        # （右ボタン＋ホイールのタブ移動はジェスチャーOFFでも使えるようにする）
-        "var on=false,rdown=false,lx=0,ly=0,seq=[],moved=false;"
+        "var on=false,lx=0,ly=0,seq=[],moved=false;"
         "function ind(){var e=document.getElementById('_mg_ind');"
         "if(!e){e=document.createElement('div');e.id='_mg_ind';"
         "e.style.cssText='position:fixed;right:18px;bottom:18px;z-index:2147483647;"
@@ -1349,20 +1345,8 @@ def _mouse_gesture_js(enabled: bool = False, step: int = 30,
         "function push(d){if(seq.length===0||seq[seq.length-1]!==d){seq.push(d);"
         "var e=ind();e.textContent=seq.join('');e.style.display='block';}}"
         "document.addEventListener('mousedown',function(ev){"
-        "if(ev.button!==2)return;"
-        "rdown=true;"
-        "if(!window._mgEnabled)return;"
+        "if(!window._mgEnabled||ev.button!==2)return;"
         "on=true;moved=false;seq=[];lx=ev.clientX;ly=ev.clientY;},true);"
-        # 右ボタンを押したままホイール → 前後のタブへ移動
-        # （方向列は破棄してジェスチャーとして成立させない。離した時の
-        #   右クリックメニューも抑止する）
-        "document.addEventListener('wheel',function(ev){"
-        "if(!rdown)return;"
-        "ev.preventDefault();ev.stopPropagation();"
-        "on=false;seq=[];hide();window._mgFired=Date.now();"
-        "var d=(ev.deltaY>0)?1:-1;"
-        + _notify_wheel +
-        "},{capture:true,passive:false});"
         "document.addEventListener('mousemove',function(ev){"
         "if(!on)return;"
         "var dx=ev.clientX-lx,dy=ev.clientY-ly;"
@@ -1372,7 +1356,6 @@ def _mouse_gesture_js(enabled: bool = False, step: int = 30,
         "else{push(dy>0?'\\u2193':'\\u2191');}"
         "lx=ev.clientX;ly=ev.clientY;},true);"
         "document.addEventListener('mouseup',function(ev){"
-        "if(ev.button===2)rdown=false;"
         "if(!on||ev.button!==2)return;"
         "on=false;hide();"
         "if(seq.length){"
@@ -1380,13 +1363,14 @@ def _mouse_gesture_js(enabled: bool = False, step: int = 30,
         + _notify +
         "}"
         "seq=[];},true);"
-        # ジェスチャーが成立した直後の contextmenu は出さない
+        # ジェスチャーが成立した直後の contextmenu は出さない。
+        # _mgSuppressCtx は右ボタン+ホイールでタブを移動した時にPython側から
+        # 立てる一度きりのフラグ（押しっぱなしの時間に関係なく1回だけ抑止する）。
         "document.addEventListener('contextmenu',function(ev){"
+        "if(window._mgSuppressCtx){ev.preventDefault();ev.stopPropagation();"
+        "window._mgSuppressCtx=false;return;}"
         "if(window._mgFired&&Date.now()-window._mgFired<600){"
         "ev.preventDefault();ev.stopPropagation();window._mgFired=0;}},true);"
-        # ページ外へ出た/フォーカスを失った時に押下状態を落とす（押しっぱなし防止）
-        "window.addEventListener('blur',function(){rdown=false;on=false;"
-        "seq=[];hide();},true);"
         "window._mgSetEnabled=function(v){window._mgEnabled=!!v;"
         "if(!v){on=false;seq=[];hide();}};"
         "})();"
@@ -1436,16 +1420,6 @@ class _MouseGestureMixin:
         if not action:
             return
         self._run_gesture_action(action)
-
-    def _on_tab_wheel(self, d: int):
-        """右ボタンを押したままホイール → 前後のタブへ移動（+1=次 / -1=前）。
-        ジェスチャー機能のON/OFFとは無関係に使える。"""
-        mw = self._main_window()
-        if mw is None:
-            return
-        f = getattr(mw, "_next_tab" if d > 0 else "_prev_tab", None)
-        if callable(f):
-            f()
 
     def _main_window(self):
         w = self
@@ -4237,7 +4211,6 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._bridge.scroll_bottom_reached.connect(self._on_scroll_bottom)
         self._bridge.scroll_top_reached.connect(self._on_scroll_top)
         self._bridge.mouse_gesture.connect(self._on_mouse_gesture)
-        self._bridge.tab_wheel.connect(self._on_tab_wheel)
         self._bridge.scroll_count_updated.connect(self._on_scroll_count)
         self._bridge.unread_state_changed.connect(self.unread_state_changed)
         self._bridge.bottom_seen.connect(self._on_bottom_seen)
@@ -8710,7 +8683,6 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._bridge.cat_hover_enter.connect(self._on_cat_hover_enter)
         self._bridge.cat_hover_leave.connect(self._on_cat_hover_leave)
         self._bridge.mouse_gesture.connect(self._on_mouse_gesture)
-        self._bridge.tab_wheel.connect(self._on_tab_wheel)
 
         # ホバーポップアップウィジェット
         # Qt.Tool: システム全体の最前面ではなく本ソフトの前面に表示（親=メインウインドウ）。
@@ -13250,14 +13222,6 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             # マウスジェスチャー成立（画像タブはQWebChannelを持たないためtitle経由）
             self._view.page().runJavaScript("document.title='';")
             self._on_mouse_gesture(title.split(":", 1)[1])
-            return
-        if title.startswith("__mgw__:"):
-            # 右ボタン+ホイールでのタブ移動（同じくtitle経由）
-            self._view.page().runJavaScript("document.title='';")
-            try:
-                self._on_tab_wheel(int(title.split(":", 1)[1]))
-            except ValueError:
-                pass
             return
         if title == "__imgloaded__" or title.startswith("__imgloaded__:"):
             self._hide_img_spinner()
