@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.363"
+APP_VER = "0.9.364"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2965,6 +2965,10 @@ class BoardPane(QWidget):
                     # ずれるため、DOM反映済み状態に合わせてラベルも同期する。
                     _new_c = sum(1 for r in _th.res_list[1:] if r.is_new)
                     _w._refresh_count_label(_th, _new_c)
+                    # 開いたので自動更新の未読カウントを解除（タブの青と(+N)を戻す）
+                    if getattr(_w, "_bg_new_total", 0):
+                        _w._bg_new_total = 0
+                        _w.bg_new_arrival.emit(_th.no, 0)
                 _w._pending_redraw = False
                 _w.refresh_status_info()
             QTimer.singleShot(240, _sync_after_redraw)
@@ -3962,6 +3966,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
     status_info       = Signal(object)  # ステータスバー更新用
     _del_result       = Signal(bool, str)  # 削除結果
     thread_loaded         = Signal(int, int)   # (thread_no, new_count) 未読バッジ用
+    # 自動更新（AutoRefreshManager）で新着が来た時のタブ通知。表示中の経路が使う
+    # thread_loaded はタブ名の再構築なども担うため、背景更新では別の口を使う。
+    bg_new_arrival        = Signal(int, int)   # (thread_no, unread_count)
     thread_error          = Signal(str)         # エラー発生時 (error_msg)
     thread_dead           = Signal(str)         # スレ落ち確定 (url) → 自動更新から削除
     scroll_count_updated  = Signal(int)         # 末尾スクロール残回数 (0=リセット)
@@ -4017,6 +4024,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._pending_frags: list = []  # 非表示中(返信モード)にARが生成した新着フラグメント。
                                         # アクティブ化時にフルリロードせずDOM追記して
                                         # 「一瞬先頭が見える」ちらつきを防ぐ
+        self._bg_new_total    = 0      # 自動更新で貯まった未読数（タブの(+N)・青表示用）。
+                                        # このタブを開いた時に0へ戻す
         self._pending_self_res_popups: list = []  # 非アクティブ時のそうだね/返信通知→アクティブ化時に表示
         self._scroll_bottom_after_update = False  # 投稿後: 更新完了時に最下部へ送る
         self._prev_scroll_y   = 0   # 前回のスクロール位置 (前回のレス位置に移動 用)
@@ -6297,10 +6306,31 @@ class ThreadView(_MouseGestureMixin, QWidget):
             "})();" % (_no, int(_off)))
         return True
 
+    def _flush_pending_frags(self):
+        """読み込み中に届いて貯めておいた新着フラグメントをDOMへ流し込む。
+
+        表示中のタブでも、ページの読み込み中に自動更新が来ると追記できない。
+        その分をここで反映しないと、read数だけ進んでレスが欠けたままになる。
+        直前にロードしたHTMLが既にその新着を含んでいる場合もあるため、
+        DOMに無いレスだけを追記する（二重表示の防止）。"""
+        frags = getattr(self, "_pending_frags", None)
+        if not frags or not getattr(self, "_thread_page_live", False):
+            return
+        self._pending_frags = []
+        import json as _json
+        self._view.page().runJavaScript(
+            "(function(){var fr=" + _json.dumps(frags, ensure_ascii=False) + ";"
+            "var add=fr.filter(function(h){"
+            "  var m=/id=\"r(\\d+)\"/.exec(h);"
+            "  return !m||!document.getElementById('r'+m[1]);});"
+            "if(add.length)appendNewReplies(add);})();"
+            + self._expiry_sync_js(self._thread))
+
     def _on_load_finished_scroll(self, _ok: bool):
         """ページ読込完了後にスクロール位置を復元"""
         # スレッドページのDOMがロード完了 → モード切替をDOM入替で行える
         self._thread_page_live = True
+        self._flush_pending_frags()
         # 板設定を変えた後に返信モードへ戻ると、生成済みHTML(_last_html)に
         # 焼かれた古いぼかし設定のまま表示されるため、読込完了時に合わせ直す
         self.apply_blur_setting()
@@ -10894,7 +10924,12 @@ class AutoRefreshManager(QObject):
                 # 非表示時は追記せずフラグメントを蓄積し、アクティブ化時にまとめて
                 # DOM追記する（フルリロードだとスクロール復元前に一瞬先頭が見えて
                 # ちらつくため。取りこぼし時は _last_html 再ロードにフォールバック）。
-                if not view.isVisible():
+                # 表示中でもページの読み込み中（_thread_page_live=False）は、追記先の
+                # DOMがこれから差し替わるため appendNewReplies が消えてしまう。
+                # read数だけ進むので、そのレスは以後二度と追記されない
+                # （＝「たまにレスが飛ぶ・再取得すると出てくる」の原因）。
+                # 非表示時と同じくフラグメントを貯め、読込完了時に流し込む。
+                if not view.isVisible() or not getattr(view, '_thread_page_live', False):
                     view._pending_redraw = True
                     if fragments:
                         if not hasattr(view, '_pending_frags'):
@@ -10924,6 +10959,7 @@ class AutoRefreshManager(QObject):
             view._check_self_res_notifications(thread, new_res)
             if hasattr(view, '_apply_heatmap'):
                 view._apply_heatmap()   # 新着でヒートマップの分布を更新
+            self._notify_bg_arrival(view, thread, len(new_res))
             return
 
         # ── 全体再描画（フォールバック） ──────────────────────────────────
@@ -10958,6 +10994,24 @@ class AutoRefreshManager(QObject):
         # 棒読みちゃん送信（フォールバック全体再描画）
         if bouyomi:
             self._speak_bouyomi(thread.res_list)
+        self._notify_bg_arrival(view, thread, thread._footer_new_count)
+
+    def _notify_bg_arrival(self, view, thread, arrived: int):
+        """自動更新で新着が入ったことをタブへ伝える。
+
+        表示中の経路（_show_impl → _update_ui_after_show → thread_loaded）を
+        通らないため、ここから伝えないとタブが青くならず (+N) も出ない。
+        開いていない間の到着数は貯めて出す（開いた時に0へ戻す）。"""
+        if arrived <= 0:
+            return
+        try:
+            if view.isVisible():
+                view._bg_new_total = 0
+                return
+            view._bg_new_total = getattr(view, "_bg_new_total", 0) + int(arrived)
+            view.bg_new_arrival.emit(thread.no, view._bg_new_total)
+        except Exception:
+            pass
 
     def _get_my_nos_for_view(self, view, thread) -> set:
         """ARマネージャ用: スレッドの自分のレス番号セットを返す"""

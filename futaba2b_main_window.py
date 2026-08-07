@@ -987,6 +987,10 @@ class MainWindow(QMainWindow):
         view.thread_loaded.connect(
             lambda no2, cnt, _inner=inner, _view=view:
             self._update_thread_badge(_inner, _view, no2, cnt))
+        # 自動更新（背景タブ）での新着も同じ表示に反映する
+        view.bg_new_arrival.connect(
+            lambda no2, cnt, _inner=inner, _view=view:
+            self._update_thread_badge(_inner, _view, no2, cnt))
         # _refresh_tab_pane は _update() 内でタブテキスト設定後に呼ぶため、ここでは接続不要
         # エラー時にタブを赤文字にする（タブ名は変更しない）
         def _set_error_tab(msg, _inner=inner, _view=view):
@@ -1567,6 +1571,9 @@ class MainWindow(QMainWindow):
         view.thread_loaded.connect(
             lambda no2, cnt, _inner=inner, _view=view:
             self._update_thread_badge(_inner, _view, no2, cnt))
+        view.bg_new_arrival.connect(
+            lambda no2, cnt, _inner=inner, _view=view:
+            self._update_thread_badge(_inner, _view, no2, cnt))
         def _set_err_m(msg, _inner=inner, _view=view):
             idx2 = _inner.indexOf(_view)
             if idx2 < 0: return
@@ -1685,6 +1692,9 @@ class MainWindow(QMainWindow):
             self._update_image_window_img_list(_sv, img_list)
         view.img_list_updated.connect(_on_img_list_updated_bg)
         view.thread_loaded.connect(
+            lambda n2, cnt, _p=pane, _v=view:
+            self._update_thread_badge(_p, _v, n2, cnt))
+        view.bg_new_arrival.connect(
             lambda n2, cnt, _p=pane, _v=view:
             self._update_thread_badge(_p, _v, n2, cnt))
         def _set_err_bg(msg, _p=pane, _v=view):
