@@ -35,6 +35,7 @@ THREAD_CSS = """
   --reply-bg:           #F0E0D6;
   --new-res-border:     #cc1105;
   --self-res-border:    #1a6fd4;
+  --to-self-res-border: #e08a00;
   --divider-fg:         #cc1105;
   --divider-bg:         #fff0f0;
   --link-color:         #0000EE;
@@ -92,6 +93,10 @@ body {
 .res.reply.new-res  { border-left: 3px solid var(--new-res-border); }
 /* ─ 自分のレス ─ */
 .res.reply.self-res { border-left: 3px solid var(--self-res-border); }
+/* 自分のレスへの返信（自分のレス自身の青帯が優先） */
+.res.reply.to-self-res:not(.self-res) {
+    border-left: 3px solid var(--to-self-res-border);
+}
 /* ─ 新着仕切り線 ─ */
 .new-res-divider {
     clear: both;
@@ -1179,8 +1184,24 @@ function _computeQuotedBy() {
     });
     return quotedBy;
 }
+/* 自分のレスを引用しているレス（＝自分宛ての返信）に印を付ける。
+   自分のレス自身の青帯(self-res)が優先。引用関係は▼と同じ計算を使う。 */
+function _markRepliesToSelf(quotedBy) {
+    document.querySelectorAll('.res.to-self-res').forEach(function(el) {
+        el.classList.remove('to-self-res');
+    });
+    document.querySelectorAll('.res.self-res').forEach(function(me) {
+        var m = (me.id || '').match(/^r(\d+)$/);
+        if (!m) return;
+        (quotedBy[parseInt(m[1])] || []).forEach(function(qno) {
+            var q = document.getElementById('r' + qno);
+            if (q && !q.classList.contains('self-res')) q.classList.add('to-self-res');
+        });
+    });
+}
 document.addEventListener('DOMContentLoaded', function() {
     var quotedBy = _computeQuotedBy();
+    _markRepliesToSelf(quotedBy);
     /* 全レスの .header 先頭に ▼(被引用あり) / …(被引用なし) を追加 (inject_popup_js でフックを後付け) */
     document.querySelectorAll('.res').forEach(function(el) {
         var m = (el.id || '').match(/^r(\\d+)$/);
@@ -1549,6 +1570,7 @@ function _rebuildQuoteIndicators() {
         });
         // 最後のレスの .comment innerHTML をダンプ（デバッグ用）
     });
+    if (typeof _markRepliesToSelf === 'function') _markRepliesToSelf(quotedBy);
     // 既存インジケータを一度クリアして再挿入
     document.querySelectorAll('.quote-ind').forEach(function(el) { el.remove(); });
     var inserted = 0;

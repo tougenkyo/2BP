@@ -4663,6 +4663,12 @@ class AppSettingsDialog(QDialog):
         _tab_hint = QLabel("0=無制限（テキスト幅に自動調整）　数値を指定すると長いタブ名が切れます")
         _tab_hint.setStyleSheet("color: gray; font-size: 11px;")
         taf.addRow("", _tab_hint)
+        self._tab_active_row_bottom = QCheckBox("選んだタブの行を最下段へ移動する（多段タブ）")
+        self._tab_active_row_bottom.setToolTip(
+            "タブが2列以上になった時、選んだタブのある行を一番下（本文のすぐ上）へ\n"
+            "移動します。旧2Bと同じ挙動です。\n"
+            "OFFにするとタブの並びが固定され、選んでも行が入れ替わりません。")
+        taf.addRow(self._tab_active_row_bottom)
         self._tab_pink_op_no_id = QCheckBox("IDが出ちゃったスレのタブをピンク色にする")
         self._tab_pink_op_no_id.setToolTip(
             "メール欄にID表示の指定が無いのにIDが出ているスレのタブ文字をピンクにします")
@@ -5527,6 +5533,8 @@ class AppSettingsDialog(QDialog):
         self._parse_sem_kb.setValue(getattr(s, "parse_sem_kb", 50))
         self._show_console.setChecked(getattr(s, "show_console", False))
         self._tab_max_width.setValue(getattr(s, "tab_max_width", 0))
+        self._tab_active_row_bottom.setChecked(
+            getattr(s, "tab_active_row_bottom", True))
         self._tab_pink_op_no_id.setChecked(getattr(s, "tab_pink_op_no_id", False))
         self._tab_orange_quarantine.setChecked(getattr(s, "tab_orange_quarantine", True))
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
@@ -5696,6 +5704,7 @@ class AppSettingsDialog(QDialog):
         # 0=無制限。1未満は下限へ丸める（丸めた値は次に開いた時に表示される）
         _tw = self._tab_max_width.value()
         s.tab_max_width           = 0 if _tw <= 0 else max(_TAB_MIN_WIDTH(), _tw)
+        s.tab_active_row_bottom   = self._tab_active_row_bottom.isChecked()
         s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()

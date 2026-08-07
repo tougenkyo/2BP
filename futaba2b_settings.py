@@ -455,6 +455,8 @@ class AppSettings:
         self.parse_sem_kb: int = 50
         # タブ最大幅 (px, 0=無制限)
         self.tab_max_width: int = 0
+        # 多段タブで、選んだタブのある行を最下段へ移動するか（OFF=並びを固定）
+        self.tab_active_row_bottom: bool = True
         # IDが出ちゃったスレ(メール欄にID表示要求が無いのにIDが出ている)のタブをピンクにする
         self.tab_pink_op_no_id: bool = False
         # 隔離されたスレ(json∖cat)のタブをオレンジ、ID+隔離同時は #FF0099 にする
@@ -924,6 +926,7 @@ class AppSettings:
             self.download_workers = int(raw.get("download_workers", 4))
             self.parse_sem_kb = int(raw.get("parse_sem_kb", 50))
             self.tab_max_width = int(raw.get("tab_max_width", 0))
+            self.tab_active_row_bottom = bool(raw.get("tab_active_row_bottom", True))
             self.tab_pink_op_no_id = bool(raw.get("tab_pink_op_no_id", False))
             self.tab_orange_quarantine = bool(raw.get("tab_orange_quarantine", True))
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
@@ -1140,6 +1143,7 @@ class AppSettings:
                         "download_workers": self.download_workers,
                         "parse_sem_kb": self.parse_sem_kb,
                         "tab_max_width": self.tab_max_width,
+                        "tab_active_row_bottom": self.tab_active_row_bottom,
                         "tab_pink_op_no_id": self.tab_pink_op_no_id,
                         "tab_orange_quarantine": self.tab_orange_quarantine,
                         "image_mode_cols": self.image_mode_cols,

@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.370"
+APP_VER = "0.9.371"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -612,8 +612,10 @@ class WrapTabBar(QTabBar):
             if row_w + tw > avail and rows[-1]:
                 rows.append([]); row_w = 0
             rows[-1].append(i); row_w += tw
-        # アクティブタブのある行を最下段へ（実インデックスは不変・描画順のみ並べ替え）
-        if len(rows) > 1:
+        # アクティブタブのある行を最下段へ（実インデックスは不変・描画順のみ並べ替え）。
+        # 設定でOFFにすると並びを固定する（選んだ拍子にタブが動くのを嫌う人向け）。
+        if len(rows) > 1 and getattr(
+                getattr(self, '_settings', None), 'tab_active_row_bottom', True):
             cur = self.currentIndex()
             if cur >= 0:
                 for ri, row in enumerate(rows):
