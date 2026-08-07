@@ -187,6 +187,7 @@ MOUSE_GESTURE_ACTIONS: list[tuple[str, str]] = [
     ("next_tab",        "右のタブへ移動"),
     ("refresh_current", "このビューの更新"),
     ("refresh_board",   "この板の更新"),
+    ("refresh_all_tabs", "この板の全タブを更新"),
     ("catalog",         "カタログ表示"),
     # 2BPには futaba.htm のスレ一覧ページを表示するビューが無いため、これは
     # 「カタログ表示」と同じ動作になる。旧2Bからの割り当てをそのまま使えるよう

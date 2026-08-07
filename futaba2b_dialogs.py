@@ -10,7 +10,7 @@ import configparser
 
 from PySide6.QtCore    import (Qt, QTimer, Signal, QSize, QPoint, QRect, QEvent,
                                QObject, Slot, QFile, QIODevice)
-from PySide6.QtGui     import QPixmap, QIcon, QImage, QColor
+from PySide6.QtGui     import QPixmap, QIcon, QImage, QColor, QTextCursor
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QGroupBox,
     QLabel, QLineEdit, QTextEdit, QPushButton, QFileDialog, QMessageBox,
@@ -444,7 +444,47 @@ class _CommentEdit(QTextEdit):
             if text:
                 self.insertPlainText(text)
                 return
+        if self._move_to_edge(event):
+            return
         super().keyPressEvent(event)
+
+    def _move_to_edge(self, event) -> bool:
+        """先頭行で↑なら文頭へ、末尾行で↓なら文末へカーソルを移す。
+
+        Qt の既定では行が無いので何も起きず、押しても動かない。
+        折り返し行があっても正しく判定できるよう、実際に1行動かしてみて
+        位置が変わらなかった時だけ端へ飛ばす（通常の上下移動は素通しするので、
+        列位置の記憶など既定の挙動は変わらない）。"""
+        key = event.key()
+        if key not in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            return False
+        mods = event.modifiers()
+        # Shift（選択）だけ許容。Ctrl/Alt付きは既定の動作に任せる
+        if mods & ~Qt.KeyboardModifier.ShiftModifier:
+            return False
+        cur = self.textCursor()
+        up = (key == Qt.Key.Key_Up)
+        # 先頭/末尾の段落に居ることを先に確かめる。レイアウトが未確定だと
+        # movePosition が動かないことがあり、それだけを根拠にすると
+        # 途中の行から文頭・文末へ飛んでしまう。
+        if up:
+            if cur.blockNumber() != 0:
+                return False
+        elif cur.blockNumber() != self.document().blockCount() - 1:
+            return False
+        probe = QTextCursor(cur)
+        probe.movePosition(QTextCursor.MoveOperation.Up if up
+                           else QTextCursor.MoveOperation.Down)
+        if probe.position() != cur.position():
+            return False        # 折り返しでまだ上/下に行がある → 既定に任せる
+        mode = (QTextCursor.MoveMode.KeepAnchor
+                if mods & Qt.KeyboardModifier.ShiftModifier
+                else QTextCursor.MoveMode.MoveAnchor)
+        cur.movePosition(QTextCursor.MoveOperation.Start if up
+                         else QTextCursor.MoveOperation.End, mode)
+        self.setTextCursor(cur)
+        event.accept()
+        return True
 
     def insertFromMimeData(self, source):
         """ドロップ/ペーストで画像が混入しないようプレーンテキストのみ受付。
