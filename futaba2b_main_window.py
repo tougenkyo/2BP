@@ -2534,14 +2534,14 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._refresh_status_for_active_tab)
         QTimer.singleShot(0, self._refresh_title_bar)
         self._sync_post_dialog_roll()
-        # NG設定変更で保留された全再描画を、切替先板の現在タブでも消化する。
+        # 保留中の再描画を、切替先板の現在タブでも消化する。
         # インナータブ切替は BoardPane._on_tab_changed が消化するが、アウター
         # (板ペイン)切替では BoardPane 側のシグナルが飛ばないため、ここで補完する。
+        # NG再描画だけでなく自動更新でたまった新着(_pending_frags)も対象。
+        # 補完しないと「別の板に行って帰ってくるとレスが飛ぶ」ことになる。
         cur_pane = self._outer_tabs.widget(_idx)
         if isinstance(cur_pane, BoardPane):
-            cw = cur_pane._tabs.currentWidget()
-            if isinstance(cw, ThreadView) and hasattr(cw, '_consume_ng_dirty'):
-                cw._consume_ng_dirty()
+            cur_pane.consume_pending_for(cur_pane._tabs.currentWidget())
 
     def _refresh_tab_pane(self):
         """タブペインを現在のタブ構成で更新（メインスレッド保証）"""

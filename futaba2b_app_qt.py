@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.367"
+APP_VER = "0.9.368"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2853,65 +2853,12 @@ class BoardPane(QWidget):
             return widget._view
         return None
 
-    def _on_tab_changed(self, idx: int):
-        # ドラッグ中のcurrentChanged発火は完全スキップ（ちらつき防止）
-        bar = self._tabs.tabBar()
-        if getattr(bar, '_drag_active', False):
-            return
+    def consume_pending_for(self, w):
+        """非表示中にたまった更新（NG再描画・自動更新の新着）を反映する。
 
-        if self._main: self._main._update_url_from_active()
-
-        # ── 旧タブの検索テキストをウィジェット属性に保存 ──────────────────
-        if self._prev_tab_idx >= 0:
-            old_w = self._tabs.widget(self._prev_tab_idx)
-            if isinstance(old_w, ThreadView):
-                old_w._saved_search = old_w._search_edit.text()
-                _old_view = old_w._view
-                QTimer.singleShot(0, lambda v=_old_view: v.page().runJavaScript(
-                    'try{extractPosts("");extractPostsPopup("");}catch(e){}'))
-            # 旧タブをFreezeしてCPU・メモリ消費を抑制
-            _old_web = self._get_webview(old_w)
-
-        # タブ履歴に追加（閉じたとき前のタブに戻る用）
-        _old_idx = self._prev_tab_idx
-        if _old_idx >= 0 and _old_idx != idx:
-            if not self._tab_history or self._tab_history[-1] != _old_idx:
-                self._tab_history.append(_old_idx)
-        self._prev_tab_idx = idx
-
-        w = self._tabs.currentWidget()
-        is_thread = isinstance(w, ThreadView)
-        # 画像タブの場合は元スレを参照
-        _src_thread = None
-        if isinstance(w, ImageTabView):
-            _src_thread = getattr(w, '_src_thread_view', None)
-            if not isinstance(_src_thread, ThreadView):
-                _src_thread = None
-        self._btn_reply.setEnabled(is_thread)
-        self._btn_move.setEnabled(is_thread)
-        # ── スレタイ更新 ──
-        self._update_title_lbl(w)
-        if not is_thread and _src_thread is None:
-            self._auto_timer.stop()
-            self._auto_lbl.setText("")
-            return
-
-        # 画像タブで元スレあり → 元スレのカウントダウンを表示して終了
-        if _src_thread is not None:
-            if self._main and hasattr(self._main, '_ar_mgr') and _src_thread._thread:
-                entry = self._main._ar_mgr.find_entry_by_url(_src_thread._thread.url or '')
-                if entry:
-                    mgr = self._main._ar_mgr
-                    for i in range(mgr.entry_count()):
-                        if mgr.entry(i) is entry:
-                            _src_thread.update_countdown(mgr.remaining(i))
-                            break
-                else:
-                    _src_thread.update_countdown(-1)
-            return
-
-        # ── 新タブの検索テキストを復元 ────────────────────────────────────
-        saved = getattr(w, '_saved_search', "")
+        インナータブの切替だけでなく、板（アウタータブ）の切替からも呼ぶ。
+        板を移動して戻った時は BoardPane のシグナルが飛ばないため、ここを
+        通さないと貯めた新着が反映されないままレスが飛ぶ。"""
         # NG設定変更で保留された全再描画を最優先で消化する（フル再描画が走るので
         # 差分パスの _pending_redraw ブロックはスキップして良い）
         _ng_consumed = isinstance(w, ThreadView) and w._consume_ng_dirty()
@@ -2977,6 +2924,67 @@ class BoardPane(QWidget):
                 _w._pending_redraw = False
                 _w.refresh_status_info()
             QTimer.singleShot(240, _sync_after_redraw)
+
+    def _on_tab_changed(self, idx: int):
+        # ドラッグ中のcurrentChanged発火は完全スキップ（ちらつき防止）
+        bar = self._tabs.tabBar()
+        if getattr(bar, '_drag_active', False):
+            return
+
+        if self._main: self._main._update_url_from_active()
+
+        # ── 旧タブの検索テキストをウィジェット属性に保存 ──────────────────
+        if self._prev_tab_idx >= 0:
+            old_w = self._tabs.widget(self._prev_tab_idx)
+            if isinstance(old_w, ThreadView):
+                old_w._saved_search = old_w._search_edit.text()
+                _old_view = old_w._view
+                QTimer.singleShot(0, lambda v=_old_view: v.page().runJavaScript(
+                    'try{extractPosts("");extractPostsPopup("");}catch(e){}'))
+            # 旧タブをFreezeしてCPU・メモリ消費を抑制
+            _old_web = self._get_webview(old_w)
+
+        # タブ履歴に追加（閉じたとき前のタブに戻る用）
+        _old_idx = self._prev_tab_idx
+        if _old_idx >= 0 and _old_idx != idx:
+            if not self._tab_history or self._tab_history[-1] != _old_idx:
+                self._tab_history.append(_old_idx)
+        self._prev_tab_idx = idx
+
+        w = self._tabs.currentWidget()
+        is_thread = isinstance(w, ThreadView)
+        # 画像タブの場合は元スレを参照
+        _src_thread = None
+        if isinstance(w, ImageTabView):
+            _src_thread = getattr(w, '_src_thread_view', None)
+            if not isinstance(_src_thread, ThreadView):
+                _src_thread = None
+        self._btn_reply.setEnabled(is_thread)
+        self._btn_move.setEnabled(is_thread)
+        # ── スレタイ更新 ──
+        self._update_title_lbl(w)
+        if not is_thread and _src_thread is None:
+            self._auto_timer.stop()
+            self._auto_lbl.setText("")
+            return
+
+        # 画像タブで元スレあり → 元スレのカウントダウンを表示して終了
+        if _src_thread is not None:
+            if self._main and hasattr(self._main, '_ar_mgr') and _src_thread._thread:
+                entry = self._main._ar_mgr.find_entry_by_url(_src_thread._thread.url or '')
+                if entry:
+                    mgr = self._main._ar_mgr
+                    for i in range(mgr.entry_count()):
+                        if mgr.entry(i) is entry:
+                            _src_thread.update_countdown(mgr.remaining(i))
+                            break
+                else:
+                    _src_thread.update_countdown(-1)
+            return
+
+        # ── 新タブの検索テキストを復元 ────────────────────────────────────
+        saved = getattr(w, '_saved_search', "")
+        self.consume_pending_for(w)
         # アクティブ化時に「末尾まで表示済みなら未読(青背景)を解除」を再評価する。
         # 背景でロードされ innerHeight=0 のまま初回判定が効かなかった画像モード等で、
         # 表示後に末尾が見えていれば青背景をデフォルトに戻す（少し遅延でレイアウト確定後）。
@@ -10872,6 +10880,10 @@ class AutoRefreshManager(QObject):
         )
 
         if _is_same_thread:
+            # 新たに削除（隔離含む）されたレスを反映する。従来は自動更新では
+            # 一切書き換えておらず、スレを取り直すまで消えたことに気づけなかった。
+            _newly_deleted = self._newly_deleted_nos(view, thread)
+
             if len(thread.res_list) <= view._known_res_count:
                 # 新着なし → レスのDOM変更は不要（スクロール位置も動かさない）。
                 # ただし赤字/仮赤字と落ち予定時刻は新着と無関係に変化するので、
@@ -10884,6 +10896,8 @@ class AutoRefreshManager(QObject):
                 view._thread = thread
                 if _new_exp != _old_exp or ThreadView._expiry_text(thread) != _old_die:
                     view._last_html_dirty = True
+                if _newly_deleted:
+                    self._apply_deleted_to_view(view, thread, _newly_deleted, _ng, _ul, _del_nos)
                 if view.isVisible():
                     view._view.page().runJavaScript(view._expiry_sync_js(thread))
                 return
@@ -10974,6 +10988,9 @@ class AutoRefreshManager(QObject):
             if bouyomi:
                 _base2 = view._known_res_count - len(new_res)
                 self._speak_bouyomi(thread.res_list[_base2:])
+            if _newly_deleted:
+                # 新着の追記と同時に、消えたレスも書き換える
+                self._apply_deleted_to_view(view, thread, _newly_deleted, _ng, _ul, _del_nos)
             view._notify_ng_word_match(new_res)
             view._check_self_res_notifications(thread, new_res)
             if hasattr(view, '_apply_heatmap'):
@@ -11014,6 +11031,36 @@ class AutoRefreshManager(QObject):
         if bouyomi:
             self._speak_bouyomi(thread.res_list)
         self._notify_bg_arrival(view, thread, thread._footer_new_count)
+
+    @staticmethod
+    def _newly_deleted_nos(view, thread) -> list:
+        """前回表示時から新たに削除（隔離含む）されたレス番号を返す。"""
+        _old = getattr(view, "_thread", None)
+        if _old is None or thread is None:
+            return []
+        _was = {r.no for r in _old.res_list if r.is_deleted}
+        return [r.no for r in thread.res_list if r.is_deleted and r.no not in _was]
+
+    def _apply_deleted_to_view(self, view, thread, newly_deleted: list,
+                               _ng, _ul, _del_nos):
+        """削除されたレスをDOMへ反映する（前景と同じ _update_deleted_res_dom）。
+
+        表示中でページが生きている時だけ書き換える。そうでない時は
+        アクティブ化時の再描画に任せる（最新モデルから作り直されるため）。"""
+        if not newly_deleted:
+            return
+        if not view.isVisible() or not getattr(view, "_thread_page_live", False):
+            view._pending_redraw = True
+            view._last_html_dirty = True
+            return
+        try:
+            _hidden = set(self._settings.ng_hidden_res_nos.get(thread.url or "", []))
+            _reveal = not getattr(view, "_ng_enabled", True)
+            view._update_deleted_res_dom(thread, newly_deleted, _ng, _ul,
+                                         _hidden, _del_nos, _reveal)
+            view._last_html_dirty = True
+        except (AttributeError, RuntimeError):
+            pass
 
     def _notify_bg_arrival(self, view, thread, arrived: int):
         """自動更新で新着が入ったことをタブへ伝える。
