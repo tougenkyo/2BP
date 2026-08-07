@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.362"
+APP_VER = "0.9.363"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -12978,25 +12978,37 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             except ValueError:
                 return
             self._zoom_last_pct = pct
-            # クリック位置中心スクロール（フィット→拡大クリック時のみセットされる）。
-            # サイズ確定後の getBoundingClientRect で実位置を測り、クリック相対点が
-            # 画面中心に来るよう scrollBy する。通常のコンボ/ホイール操作では None。
+            # 拡大の中心。クリックで拡大した時はその位置（_zoom_center）、
+            # ＋/−・ホイール・コンボ操作では「今見えている中心」を保つ。
+            # 保たないと左上を起点に広がり、見ていた場所が画面外へ逃げる。
             _ctr = getattr(self, "_zoom_center", None)
             self._zoom_center = None
-            _center_js = ""
             if _ctr:
                 _cfx, _cfy = _ctr
-                _center_js = (
-                    "  var _vw=window.innerWidth,_vh=window.innerHeight;"
-                    "  var _r=el.getBoundingClientRect();"
-                    f"  window.scrollBy(Math.round(_r.left+{_cfx}*_r.width-_vw/2),"
-                    f"    Math.round(_r.top+{_cfy}*_r.height-_vh/2));"
+                _pre_js = f"  var _fx={_cfx},_fy={_cfy};"
+            else:
+                # 拡大前の画像上で、画面中心がどこに当たるかを比率で覚えておく
+                _pre_js = (
+                    "  var _pr=el.getBoundingClientRect();"
+                    "  var _fx=_pr.width?((window.innerWidth/2-_pr.left)/_pr.width):.5;"
+                    "  var _fy=_pr.height?((window.innerHeight/2-_pr.top)/_pr.height):.5;"
+                    "  _fx=Math.max(0,Math.min(1,_fx));"
+                    "  _fy=Math.max(0,Math.min(1,_fy));"
                 )
+            # サイズ確定後の getBoundingClientRect で実位置を測り、
+            # 覚えておいた相対点が画面中心に来るよう scrollBy する。
+            _center_js = (
+                "  var _vw=window.innerWidth,_vh=window.innerHeight;"
+                "  var _r=el.getBoundingClientRect();"
+                "  window.scrollBy(Math.round(_r.left+_fx*_r.width-_vw/2),"
+                "    Math.round(_r.top+_fy*_r.height-_vh/2));"
+            )
             # %はnaturalWidth基準のpx指定に変換（ビューポート幅基準だと縦長画像が切れる）
             js = (
                 f"window._fitMode=false;"
                 f"var el=document.querySelector('img,video');"
                 f"if(el){{"
+                + _pre_js +
                 f"  var nw=el.naturalWidth||el.videoWidth||0;"
                 f"  var nh=el.naturalHeight||el.videoHeight||0;"
                 f"  el.style.maxWidth='none';el.style.maxHeight='none';"
