@@ -252,6 +252,7 @@ class MainWindow(QMainWindow):
         self._ar_dlg: "AutoRefreshDialog | None" = None
         # 右ボタン＋ホイールのタブ移動。WebEngineの中のウィジェットが受け取る
         # ホイールも拾えるよう、アプリ全体のフィルタとして入れる
+        self._rb_wheel_armed = 0.0   # タブ移動直後（右クリックメニュー抑止）の時刻
         QApplication.instance().installEventFilter(self)
         self._ng_filter    = self._settings.ng_filter  # シングルトン参照
         self._bbsmenu_cats = []
@@ -2444,21 +2445,43 @@ class MainWindow(QMainWindow):
         新しいページへ引き継がれず、1回しか動かない。アプリ全体のイベント
         フィルタなら押下状態はQt側が持つので、押しっぱなしのまま何回でも送れる。"""
         try:
-            if (ev.type() == QEvent.Type.Wheel
+            _t = ev.type()
+            if (_t == QEvent.Type.Wheel
                     and (ev.buttons() & Qt.MouseButton.RightButton)
                     and isinstance(obj, QWidget) and self.isAncestorOf(obj)):
                 dy = ev.angleDelta().y()
                 if dy:
                     self._step_tab(1 if dy < 0 else -1)   # 下=次 / 上=前
-                    self._suppress_next_context_menu()
+                    self._arm_context_menu_block()
                 return True      # ページはスクロールさせない
+            # タブを移動した後にボタンを離すと、そのままでは移動先のページで
+            # 右クリックメニューが出る。メニュー要求をQt側で握り潰す。
+            if _t == QEvent.Type.ContextMenu and self._ctx_block_armed():
+                self._rb_wheel_armed = 0.0
+                return True
+            # 右ボタンを押し直したら（＝新しい操作の始まり）抑止を解除する
+            if (_t == QEvent.Type.MouseButtonPress
+                    and ev.button() == Qt.MouseButton.RightButton):
+                self._rb_wheel_armed = 0.0
         except (AttributeError, RuntimeError):
             pass
         return super().eventFilter(obj, ev)
 
-    def _suppress_next_context_menu(self):
-        """タブ移動後にボタンを離した時の右クリックメニューを1回だけ抑止する。
-        移動先のページに立てるので、何度移動しても最後のページで効く。"""
+    def _ctx_block_armed(self) -> bool:
+        """右ボタン+ホイールの直後か。取りこぼした時に無関係な右クリックまで
+        抑止しないよう、時間でも打ち切る。"""
+        import time as _t
+        _armed = getattr(self, "_rb_wheel_armed", 0.0)
+        return bool(_armed) and (_t.monotonic() - _armed) < 5.0
+
+    def _arm_context_menu_block(self):
+        """タブ移動後の右クリックメニューを1回だけ抑止する準備をする。
+
+        Qt側（メニュー要求の握り潰し）とページ側（JSで作る独自メニュー）の
+        両方を止める。ページ側はJSが未注入のことがあり、Qt側だけでは
+        ページが自前で出すメニューを止められないため、両方に効かせる。"""
+        import time as _t
+        self._rb_wheel_armed = _t.monotonic()
         inner = self._active_inner()
         w = inner.currentWidget() if inner else None
         view = getattr(w, "_view", None)
