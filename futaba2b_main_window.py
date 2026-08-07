@@ -4935,6 +4935,28 @@ class MainWindow(QMainWindow):
                     # アウター切替は _on_outer_tab_changed が消化）。
                     w._ng_dirty = True
 
+    def mark_all_threads_ng_dirty(self, keep_view=None):
+        """開いている全ThreadViewに「NG再描画が要る」印を付ける。
+
+        NG画像の登録はDOMを直接書き換えて即座に消すが、それだけだと
+        モデルから作り直した瞬間（_last_html からの再ロード・モード切替）に
+        元へ戻ってしまう。登録済みタブは _last_html だけ作り直させ、
+        他のタブはアクティブ化時に再描画させる。"""
+        for i in range(self._outer_tabs.count()):
+            pane = self._outer_tabs.widget(i)
+            if not isinstance(pane, BoardPane):
+                continue
+            for j in range(pane._tabs.count()):
+                w = pane._tabs.widget(j)
+                if not isinstance(w, ThreadView):
+                    continue
+                if w is keep_view:
+                    # 既にDOMへ反映済み。再描画は要らないが、次に
+                    # _last_html を使う時に作り直させる
+                    w._last_html_dirty = True
+                else:
+                    w._ng_dirty = True
+
     def _on_settings_applied(self):
         # ショートカット設定変更を反映（メニュー再構築）
         self.menuBar().clear()

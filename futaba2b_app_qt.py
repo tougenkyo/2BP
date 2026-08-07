@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.369"
+APP_VER = "0.9.370"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4458,6 +4458,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 self._settings.save()
                 hide_mode = img.get("hide_mode", "image")
                 self._ng_image_apply.emit(img_url, hide_mode)
+                self._propagate_ng_image()
                 return
         dlg = NgImageEditDialog(preset, parent=self, is_new=True)
         if dlg.exec() != dlg.DialogCode.Accepted:
@@ -4474,6 +4475,22 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._settings.save()
         hide_mode = new_entry.get("hide_mode", "image")
         self._ng_image_apply.emit(img_url, hide_mode)
+        self._propagate_ng_image()
+
+    def _propagate_ng_image(self):
+        """NG画像の登録を、DOMだけでなくモデル側にも効かせる。
+
+        _apply_ng_image_dom は表示中のDOMを直接書き換えるだけなので、あとで
+        モデルからHTMLを作り直した瞬間（_last_html からの再ロード・モード切替・
+        自動更新後のアクティブ化）に元の見た目へ戻ってしまう。
+        NGワード/IDの登録と同じように、開いている他のタブにも印を付ける。"""
+        _p = self
+        while _p is not None and not hasattr(_p, "mark_all_threads_ng_dirty"):
+            _p = _p.parent()
+        if _p is not None:
+            _p.mark_all_threads_ng_dirty(keep_view=self)
+        else:
+            self._last_html_dirty = True
 
     def _apply_ng_image_dom(self, img_url: str, hide_mode: str):
         """メインスレッド: NG画像登録後にDOMへ即時反映（返信/引用/画像モード）。
