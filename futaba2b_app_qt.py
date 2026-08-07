@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.368"
+APP_VER = "0.9.369"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -12126,6 +12126,26 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         # レイアウト確定を待ってからフィット適用（即時だとviewportが極小）
         QTimer.singleShot(120, self._apply_fit_js)
 
+    def _schedule_late_recomposite(self):
+        """読込完了の通知が届かなくても絵が出るよう、遅れて再コンポジットする。
+
+        従来は320ms後の1回だけだった。大きい画像はデコードがそれより長くかかり、
+        まだ描けていない時点で叩いて空振りするため、間隔を空けて数回試す。
+        別の画像へ移った後（_media_seq が変わった後）は何もしない。"""
+        _seq = getattr(self, "_media_seq", None)
+        def _shot(_s=_seq):
+            if getattr(self, "_media_seq", None) != _s:
+                return
+            try:
+                from shiboken6 import isValid as _iv
+                if not _iv(self):
+                    return
+            except Exception:
+                pass
+            self._force_recomposite()
+        for _ms in (320, 900, 2000):
+            QTimer.singleShot(_ms, _shot)
+
     def _force_recomposite(self):
         """QtWebEngine の強制再コンポジット（1px resizeジグル）。
         file:// 画像を <img>.src 差し替えで表示した際、DOM/src は更新されても
@@ -12737,6 +12757,12 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                     # 既にデコード済み(complete)なら自前で通知する。
                     "  setTimeout(function(){if(window._imgSeq!==_sq)return;"
                     "    if(el.complete&&el.naturalWidth)document.title='__imgloaded__:'+_sq;},0);"
+                    # onload はデコード完了・描画準備完了を保証しないため、大きい
+                    # 画像では通知が早すぎて再コンポジットが空振りする。decode() は
+                    # 「描ける状態になった」時点で解決するので、そちらでも通知する。
+                    "  if(el.decode){el.decode().then(function(){"
+                    "    if(window._imgSeq!==_sq)return;"
+                    "    document.title='__imgloaded__:'+_sq;}).catch(function(){});}"
                     "  el.style.maxWidth='none';el.style.maxHeight='none';"
                     "  el.style.display='block';el.style.margin='auto';"
                     "  if(nw>0&&nh>0){" + _size_js + "}"
@@ -12753,29 +12779,30 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                 self._view.page().runJavaScript(swap_js)
                 # 保険: __imgloaded__ 通知が何らかの理由で届かなくても、
                 # 少し遅れて強制再コンポジットして前の画像の残留を防ぐ。
-                # （最新のswapでなくなっていたら何もしない）
-                _seq_now = self._media_seq
-                def _late_recomposite(_s=_seq_now):
-                    if getattr(self, "_media_seq", None) != _s:
-                        return
-                    try:
-                        from shiboken6 import isValid as _iv
-                        if not _iv(self):
-                            return
-                    except Exception:
-                        pass
-                    self._force_recomposite()
-                QTimer.singleShot(320, _late_recomposite)
+                self._schedule_late_recomposite()
                 # アトミック適用済みのため pending は不要
                 self._pending_fit = False
                 self._pending_zoom = None
             else:
                 self._img_page_ready = False
+                # ページごと作り直す経路にも読込完了の通知を入れる。これが無いと
+                # 描画準備が整った合図が来ず、大きい画像で背景(#222)だけが見えた
+                # まま止まることがあった（ホイール等で再描画されるまで直らない）。
+                _ready_js = (
+                    "(function(){var el=document.getElementById('img');if(!el)return;"
+                    "var done=function(){document.title='__imgloaded__:0';};"
+                    "if(el.decode){el.decode().then(done).catch(done);}"
+                    "else if(el.complete&&el.naturalWidth){done();}"
+                    "else{el.onload=done;el.onerror=done;}"
+                    "})();"
+                )
                 self._view.setHtml(
                     f'<html><head><style>{base_css}</style>'
                     f'<script>{click_js}</script></head>'
-                    f'<body><img id="img" src="{url}"></body></html>',
+                    f'<body><img id="img" src="{url}">'
+                    f'<script>{_ready_js}</script></body></html>',
                     self._html_base())
+                self._schedule_late_recomposite()
                 if _prev_zoom == "画面に合わせる":
                     self._pending_fit = True
                 else:
