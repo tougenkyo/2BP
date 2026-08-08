@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.374"
+APP_VER = "0.9.375"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10060,8 +10060,12 @@ class CatalogView(_MouseGestureMixin, QWidget):
             char_limit = int(parts[2]) if len(parts) > 2 else 6
             img_idx    = int(parts[4]) if len(parts) > 4 else 0
             img_size   = self._IMG_PX.get(img_idx, 84)
+            # cxyl の4つ目が文字位置（0=下 / 1=右）。従来はここを読んでおらず、
+            # 「右」にしても常に画像の下に描いていた。
+            _text_right = (int(parts[3]) if len(parts) > 3 else 0) == 1
         except Exception:
             cols, char_limit, img_size = 14, 6, 84
+            _text_right = False
 
         # 前回レス数との差分を渡してカタログに新着数を表示
         read_counts = self._settings.catalog_read_counts
@@ -10098,6 +10102,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
                                 getattr(self._settings, "catalog_common_id_bottom", True)),
                             history_mode=_hist_render,
                             # 履歴表示のみ: 自書スレを上部にまとめる（1のとき）
+                            text_right=_text_right,
                             self_post_section=(_hist_render and
                                 getattr(self._settings, "history_self_mode", 0) == 1))
         # マージ再描画（_re_render_light 経由）はフルリロードせず body のみ入替える。

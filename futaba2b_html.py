@@ -551,6 +551,20 @@ body {
     flex-shrink: 0;
 }
 .entry:hover { border-color: #DD0000; box-shadow: 1px 1px 3px #aaa; }
+/* 文字位置=右: 画像を左・文字を右に並べる。サムネの大きさは変えず、
+   セルの幅を文字ぶん広げる（--cell-w は画像幅+文字幅で作ってある） */
+body.cat-text-right .entry { flex-direction: row; align-items: stretch; }
+body.cat-text-right .entry-img {
+    flex: 0 0 var(--thumb-w, 84px); width: var(--thumb-w, 84px);
+}
+body.cat-text-right .entry-img img {
+    max-width: calc(var(--thumb-w, 84px) - 4px);
+    max-height: calc(var(--thumb-w, 84px) - 4px);
+}
+body.cat-text-right .entry-title {
+    flex: 1 1 auto; min-width: 0; text-align: left;
+    padding: 2px 3px; overflow: hidden;
+}
 /* 削除依頼を送信中（ふたばの応答待ち）。受理されたら消え、断られたら元に戻る */
 .entry.del-pending { opacity: 0.35; pointer-events: none; }
 .entry-img {
@@ -2688,7 +2702,8 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                      quarantine_section: bool = False,
                      common_id_section: bool = False,
                      history_mode: bool = False,
-                     self_post_section: bool = False) -> str:
+                     self_post_section: bool = False,
+                     text_right: bool = False) -> str:
     """
     search_sections: None | (matched_list, unmatched_list)
     指定された場合、matched を上にセクション表示する
@@ -2969,24 +2984,28 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                  + _common_id_section(cid_groups)
                  + _quar_section(quar))
 
+    # 文字位置=右: サムネの大きさは保ったまま、右に文字ぶんの幅を足してセルを広げる
+    _text_w  = max(80, min(160, img_size)) if text_right else 0
+    _cell_w  = img_size + _text_w
     if cols > 0:
         grid_style = (
             f"display:grid;"
-            f"grid-template-columns:repeat({cols},{img_size}px);"
+            f"grid-template-columns:repeat({cols},{_cell_w}px);"
             f"gap:3px;padding:4px;width:100%;"
         )
     else:
         grid_style = "display:flex;flex-wrap:wrap;gap:3px;padding:4px;width:100%;"
 
     _usr_cat = f'<style>{user_css}</style>' if user_css else ''
+    _body_cls = ' class="cat-text-right"' if text_right else ''
     html = (
         f'<!DOCTYPE html><html><head><meta charset="utf-8">'
         f'<style>{CATALOG_CSS}</style>'
-        f'<style>:root{{--cell-w:{img_size}px}}</style>'
+        f'<style>:root{{--cell-w:{_cell_w}px;--thumb-w:{img_size}px}}</style>'
         f'{_usr_cat}'
         f'{WEBCHANNEL_JS}'
         f'<script>{_make_scroll_bottom_js(scroll_bottom_count, scroll_top_count)}</script>'
-        f'</head><body>'
+        f'</head><body{_body_cls}>'
         f'<div id="grid" style="{grid_style}">{inner}</div>'
         f'{footer_html}'
         f'</body></html>'
