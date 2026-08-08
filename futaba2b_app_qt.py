@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.377"
+APP_VER = "0.9.378"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8753,7 +8753,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._bridge.cat_hover_enter.connect(self._on_cat_hover_enter)
         self._bridge.cat_hover_leave.connect(self._on_cat_hover_leave)
         self._bridge.mouse_gesture.connect(self._on_mouse_gesture)
-        self._bridge.jump_to_res_requested.connect(self._on_jump_to_res)
+        # jump_to_res_requested は「そのレスへ移動」用でスレッド表示専用。
+        # カタログには移動先のレスが無いので繋がない（繋ぐとハンドラが無く
+        # カタログの生成そのものが落ちる）。
 
         # ホバーポップアップウィジェット
         # Qt.Tool: システム全体の最前面ではなく本ソフトの前面に表示（親=メインウインドウ）。
