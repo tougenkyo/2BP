@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.381"
+APP_VER = "0.9.382"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5616,23 +5616,18 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 目的の位置になる。画像で高さが変わるぶんは従来どおり後段でも直す。
         _anchor = getattr(self, "_pending_anchor", None)
         if _anchor and '</body>' in html and '<head>' in html:
-            _a_no, _a_off = _anchor
             # レス数が多いと </body> に届く前に描き始めるため、スクリプトだけでは
             # 先頭が一瞬見える。位置が決まるまでは描かせない。
             # 何かで解除に失敗しても白いままにならないよう、時間切れでも戻す。
-            _hide = ('<style id="__anch">html{visibility:hidden}</style>'
-                     '<script>setTimeout(function(){var s='
-                     'document.getElementById("__anch");if(s)s.remove();},2000);'
-                     '</script>')
-            html = html.replace('<head>', '<head>' + _hide, 1)
-            _pre = (
-                "<script>(function(){var e=document.getElementById('r%s');"
-                "if(e)window.scrollTo(0,e.getBoundingClientRect().top"
-                "+window.scrollY-%d);"
-                "var s=document.getElementById('__anch');if(s)s.remove();"
-                "})();</script>" % (_a_no, int(_a_off))
+            _hide = (
+                '<style id="__anch">html{visibility:hidden}</style>'
+                # 位置合わせ(_restore_scroll_anchor)が済んだら解除される。
+                # 何かで動かなくても白いままにしないよう時間切れも置く。
+                '<script>setTimeout(function(){var s='
+                'document.getElementById("__anch");if(s)s.remove();},1500);'
+                '</script>'
             )
-            html = html.replace('</body>', _pre + '</body>', 1)
+            html = html.replace('<head>', '<head>' + _hide, 1)
 
         tmp = tempfile.NamedTemporaryFile(
             mode='w', suffix='.html', encoding='utf-8', delete=False)
@@ -6409,9 +6404,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 画像の読み込みで高さが変わるため、位置が落ち着くまで数回やり直す
         self._view.page().runJavaScript(
             "(function(){var id='r%s',off=%d,tries=0;"
-            "function go(){var e=document.getElementById(id);if(!e)return;"
+            "function show(){var s=document.getElementById('__anch');"
+            "if(s)s.remove();}"
+            "function go(){var e=document.getElementById(id);"
+            "if(!e){show();return;}"
             "var y=e.getBoundingClientRect().top+window.scrollY-off;"
-            "window.scrollTo(0,y);"
+            "window.scrollTo(0,y);show();"
             "if(Math.abs(e.getBoundingClientRect().top-off)>2&&tries++<50)"
             "{setTimeout(go,33);}}"
             "requestAnimationFrame(function(){requestAnimationFrame(go);});"
@@ -6449,6 +6447,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
         if self._restore_scroll_anchor():
             self._pending_scroll = 0
             return
+        # 戻す目印が無い場合はここで解除する（位置合わせ側では解除されないため）
+        _safe_run_js(self._view,
+                     'var s=document.getElementById("__anch");if(s)s.remove();')
         if self._pending_scroll > 0:
             y = self._pending_scroll
             self._pending_scroll = 0
