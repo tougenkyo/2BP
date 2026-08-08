@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.379"
+APP_VER = "0.9.380"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5609,6 +5609,21 @@ class ThreadView(_MouseGestureMixin, QWidget):
         base_href = base_url.toString()
         if '<head>' in html:
             html = html.replace('<head>', f'<head><base href="{base_href}">', 1)
+
+        # 戻り先が決まっている場合は、HTMLの中で先に位置を合わせる。
+        # loadFinished 後に scrollTo すると、その前に先頭が1フレーム描かれて
+        # 一瞬ちらつく。本文の直後（要素が揃った時点）で実行すれば最初の描画から
+        # 目的の位置になる。画像で高さが変わるぶんは従来どおり後段でも直す。
+        _anchor = getattr(self, "_pending_anchor", None)
+        if _anchor and '</body>' in html:
+            _a_no, _a_off = _anchor
+            _pre = (
+                "<script>(function(){var e=document.getElementById('r%s');"
+                "if(!e)return;"
+                "window.scrollTo(0,e.getBoundingClientRect().top+window.scrollY-%d);"
+                "})();</script>" % (_a_no, int(_a_off))
+            )
+            html = html.replace('</body>', _pre + '</body>', 1)
 
         tmp = tempfile.NamedTemporaryFile(
             mode='w', suffix='.html', encoding='utf-8', delete=False)
