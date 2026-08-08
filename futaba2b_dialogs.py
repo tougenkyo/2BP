@@ -4648,6 +4648,14 @@ class AppSettingsDialog(QDialog):
         self._auto_close = QCheckBox("スレ落ちを検知したらタブを自動で閉じる"); clf2.addWidget(self._auto_close)
         self._auto_close_full = QCheckBox("1000レス到達時もタブを自動で閉じる"); clf2.addWidget(self._auto_close_full)
         self._auto_close_skip_pinned = QCheckBox("ピン留めしているタブは閉じない"); clf2.addWidget(self._auto_close_skip_pinned)
+        self._auto_close_rev_ng = QCheckBox(
+            "逆NG(ピックアップ)で自動オープンしたスレは、上の設定に関わらず閉じる")
+        self._auto_close_rev_ng.setToolTip(
+            "逆NGで自動的に開いたスレが落ちた時、上のチェックがOFFでもタブを閉じます。\n"
+            "多数の逆NGスレが開きっぱなしでメモリを圧迫するのを防ぐための動作です。\n"
+            "（自動保存されるので内容は残ります）\n"
+            "OFFにすると、上の設定だけに従います。")
+        clf2.addWidget(self._auto_close_rev_ng)
         def _toggle_close(checked): self._auto_close_skip_pinned.setEnabled(checked or self._auto_close_full.isChecked())
         def _toggle_close_full(checked): self._auto_close_skip_pinned.setEnabled(checked or self._auto_close.isChecked())
         self._auto_close.toggled.connect(_toggle_close); _toggle_close(False)
@@ -5618,6 +5626,8 @@ class AppSettingsDialog(QDialog):
         self._auto_close.setChecked(close_en)
         self._auto_close_full.setChecked(getattr(s, "auto_close_full_tab", False))
         self._auto_close_skip_pinned.setChecked(getattr(s, "auto_close_skip_pinned", False))
+        self._auto_close_rev_ng.setChecked(
+            getattr(s, "auto_close_dead_reverse_ng", True))
         self._auto_close_skip_pinned.setEnabled(close_en or self._auto_close_full.isChecked())
 
         # アップローダー
@@ -5777,6 +5787,7 @@ class AppSettingsDialog(QDialog):
         s.auto_close_dead_tab     = self._auto_close.isChecked()
         s.auto_close_full_tab     = self._auto_close_full.isChecked()
         s.auto_close_skip_pinned  = self._auto_close_skip_pinned.isChecked()
+        s.auto_close_dead_reverse_ng = self._auto_close_rev_ng.isChecked()
 
         # 画像保存
         s.image_save_folders  = [self._isf_list.item(i).text()

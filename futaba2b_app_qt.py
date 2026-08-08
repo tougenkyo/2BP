@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.371"
+APP_VER = "0.9.372"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11291,18 +11291,33 @@ class AutoRefreshDialog(QDialog):
         al.addWidget(QLabel("自動更新間隔：" if _is_cat else
                             "更新間隔（残り件数の割合に応じて自動切替）："))
 
-        # デフォルト設定 or 最後に使った設定を初期値に
+        # デフォルト設定 or 最後に使った設定を初期値に。
+        # 「スレのデフォルト間隔を使う」は板設定(BoardSettings)にあるため、
+        # アプリ設定だけを見ていると手動で追加した時に反映されなかった。
         _s = self._settings
+        _bs = None
+        try:
+            _iv = self._init_view
+            _brd = (getattr(_iv, "_board", None)
+                    or getattr(getattr(_iv, "_thread", None), "board", None))
+            if _brd is not None and getattr(_brd, "base_url", ""):
+                from futaba2b_settings import get_board_settings as _gbs
+                _bs = _gbs(_brd.base_url)
+        except Exception:
+            _bs = None
+        _def_src = _bs if _bs is not None else _s
         if _s is None:
             last_vals = [60, 30, 10, 2, 1]
             last_chks = [False, False, False, False]
-        elif _is_cat and getattr(_s, "ar_use_default_catalog", False):
-            _c_ivals = getattr(_s, "ar_default_catalog_intervals", [60])
-            last_vals = _c_ivals + [30, 10, 2, 1]  # カタログは1行だけ使うが長さ合わせ
+        elif _is_cat and getattr(_def_src, "ar_use_default_catalog", False):
+            _c_ivals = getattr(_def_src, "ar_default_catalog_intervals", [60])
+            last_vals = list(_c_ivals) + [30, 10, 2, 1]  # カタログは1行だけ使うが長さ合わせ
             last_chks = [False, False, False, False]
-        elif not _is_cat and getattr(_s, "ar_use_default_thread", False):
-            last_vals = list(getattr(_s, "ar_default_thread_intervals", [60, 30, 10, 2, 1]))
-            last_chks = list(getattr(_s, "ar_default_thread_checks",    [False, False, False, False]))
+        elif not _is_cat and getattr(_def_src, "ar_use_default_thread", False):
+            last_vals = list(getattr(_def_src, "ar_default_thread_intervals",
+                                     [60, 30, 10, 2, 1]))
+            last_chks = list(getattr(_def_src, "ar_default_thread_checks",
+                                     [False, False, False, False]))
         else:
             last_vals = list(getattr(_s, "ar_last_intervals", [60, 30, 10, 2, 1]))
             last_chks = list(getattr(_s, "ar_last_checks",    [False, False, False, False]))
