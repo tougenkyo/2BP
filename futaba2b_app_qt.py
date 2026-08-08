@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.378"
+APP_VER = "0.9.379"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5098,13 +5098,23 @@ class ThreadView(_MouseGestureMixin, QWidget):
             else:
                 self._show_error(thread)
             return
-        try:
-            self._show_impl(thread)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            thread.error = f"表示エラー: {e}"
-            self._show_error(thread)
+        def _go(_th=thread):
+            try:
+                self._show_impl(_th)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                _th.error = f"表示エラー: {e}"
+                self._show_error(_th)
+        # スレが落ちた後の更新は、キャッシュ（res_list入り）＋エラーバナー付きの
+        # フルレンダーに切り替わるため、そのままだと先頭へ飛ぶ。
+        # 上の分岐は「キャッシュが無い場合」だけを見ていて、実際に多いのは
+        # fetch_thread がキャッシュから組み立てて返すこちらの経路だった。
+        # 見ていたレスを目印にして戻す（正常時は素通し）。
+        if thread.error and thread.res_list and not self._was_error:
+            self._capture_scroll_anchor(_go)
+        else:
+            _go()
 
     _PREFETCH_VID_EXT = ('.mp4', '.webm', '.mov', '.avi', '.mkv')
 
