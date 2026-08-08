@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.380"
+APP_VER = "0.9.381"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5615,12 +5615,21 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 一瞬ちらつく。本文の直後（要素が揃った時点）で実行すれば最初の描画から
         # 目的の位置になる。画像で高さが変わるぶんは従来どおり後段でも直す。
         _anchor = getattr(self, "_pending_anchor", None)
-        if _anchor and '</body>' in html:
+        if _anchor and '</body>' in html and '<head>' in html:
             _a_no, _a_off = _anchor
+            # レス数が多いと </body> に届く前に描き始めるため、スクリプトだけでは
+            # 先頭が一瞬見える。位置が決まるまでは描かせない。
+            # 何かで解除に失敗しても白いままにならないよう、時間切れでも戻す。
+            _hide = ('<style id="__anch">html{visibility:hidden}</style>'
+                     '<script>setTimeout(function(){var s='
+                     'document.getElementById("__anch");if(s)s.remove();},2000);'
+                     '</script>')
+            html = html.replace('<head>', '<head>' + _hide, 1)
             _pre = (
                 "<script>(function(){var e=document.getElementById('r%s');"
-                "if(!e)return;"
-                "window.scrollTo(0,e.getBoundingClientRect().top+window.scrollY-%d);"
+                "if(e)window.scrollTo(0,e.getBoundingClientRect().top"
+                "+window.scrollY-%d);"
+                "var s=document.getElementById('__anch');if(s)s.remove();"
                 "})();</script>" % (_a_no, int(_a_off))
             )
             html = html.replace('</body>', _pre + '</body>', 1)
