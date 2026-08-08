@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.372"
+APP_VER = "0.9.373"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9657,8 +9657,20 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 jinfo = self._fetcher.fetch_catalog_json(_b)
             except Exception as e:
                 print(f'[History] json fetch error: {e}')
+            # 生存スレの「今のレス数」はカタログにしかない（mode=json は
+            # サムネ・ID・本文だけでレス数を持たない）。カタログも取って
+            # 突き合わせないと、履歴表示のレス数が既読数のまま止まり
+            # 「更新を取得していない」ように見える。
+            live_counts = {}
             try:
-                entries = self._build_history_entries(_b, jinfo)
+                _cat = self._fetcher.fetch_catalog(_b, 0)
+                for _e in (_cat or []):
+                    if getattr(_e, "no", 0):
+                        live_counts[int(_e.no)] = int(getattr(_e, "res_count", 0) or 0)
+            except Exception as e:
+                print(f'[History] catalog fetch error: {e}')
+            try:
+                entries = self._build_history_entries(_b, jinfo, live_counts)
             except Exception as e:
                 import traceback as _tb
                 print(f'[History] build error: {e}\n{_tb.format_exc()}')
@@ -9667,7 +9679,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
 
         threading.Thread(target=_work, daemon=True).start()
 
-    def _build_history_entries(self, board, jinfo) -> list:
+    def _build_history_entries(self, board, jinfo, live_counts=None) -> list:
         """スレッド履歴から、この板のぶんだけカタログ用エントリを作る。
         ・生存スレ … mode=json の thumb/id を使う
         ・落ちたスレ … キャッシュ生htmからサムネURLを拾い、画像ディスクキャッシュに
@@ -9675,6 +9687,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         ※ ワーカースレッドから呼ばれる（ファイルI/Oを含むため）"""
         jmap = (jinfo or {}).get("map") or {}
         jnos = (jinfo or {}).get("nos") or set()
+        live_counts = live_counts or {}
         base = board.base_url
         trc = dict(self._settings.thread_read_counts)
         # 履歴用サムネ保管庫（ディレクトリ走査1回でまとめて引く）
@@ -9721,10 +9734,15 @@ class CatalogView(_MouseGestureMixin, QWidget):
             # （OP除く）なので揃える。落ちて記録が消えたスレは0のままにして
             # おき、あとでキャッシュから埋める。
             _rc = int(trc.get(turl, 0) or 0)
+            # 生きているスレはカタログの現在レス数を優先する。
+            # thread_read_counts は「自分が読んだ数」なので、それだけだと
+            # 新着があってもレス数が増えず更新に気づけない。
+            _live = live_counts.get(no)
+            _res_cnt = _live if (alive and _live is not None) else max(0, _rc - 1)
             out.append(CatalogEntry(
                 no         = no,
                 thumb_url  = thumb,
-                res_count  = max(0, _rc - 1),
+                res_count  = _res_cnt,
                 thread_url = turl,
                 title      = str(h.get("title", "") or ""),
                 email      = (ji or {}).get("email", ""),
@@ -10875,7 +10893,14 @@ class AutoRefreshManager(QObject):
             html = html.replace("</body>", f"{banner}</body>", 1)
             view._thread = thread
             view._known_res_count = 0
-            view._load_html_via_tempfile(html, QUrl(thread.url or 'https://www.2chan.net/'))
+            # 落ちたスレの更新はここでキャッシュのフルレンダーに切り替わる。
+            # そのままだと先頭へ飛ぶので、見ていたレスを目印にして戻す。
+            # （手動更新の _show 側は対応済みだったが、自動更新のこの経路は
+            #   素通しだったため「落ちたスレを初回更新すると先頭に戻る」が残っていた）
+            _url_e = thread.url or 'https://www.2chan.net/'
+            view._capture_scroll_anchor(
+                lambda _v=view, _h=html, _u=_url_e:
+                _v._load_html_via_tempfile(_h, QUrl(_u)))
             _code = thread.error.split()[0] if thread.error.split() else ''
             view.thread_error.emit(thread.error)        # エラー通知（赤タブ等）は全エラー
             if _code != "404":
