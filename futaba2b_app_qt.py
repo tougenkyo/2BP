@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.375"
+APP_VER = "0.9.376"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4221,6 +4221,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._bridge.scroll_bottom_reached.connect(self._on_scroll_bottom)
         self._bridge.scroll_top_reached.connect(self._on_scroll_top)
         self._bridge.mouse_gesture.connect(self._on_mouse_gesture)
+        self._bridge.jump_to_res_requested.connect(self._on_jump_to_res)
         self._bridge.scroll_count_updated.connect(self._on_scroll_count)
         self._bridge.unread_state_changed.connect(self.unread_state_changed)
         self._bridge.bottom_seen.connect(self._on_bottom_seen)
@@ -6176,6 +6177,22 @@ class ThreadView(_MouseGestureMixin, QWidget):
             item.onclick = function(){ fn(); document.body.removeChild(menu); };
             menu.appendChild(item);
         }
+        /* 画像モード/引用モードから、その画像のレスへ飛ぶ。
+           画像モードは .gi[data-res-no]、引用モードは行内の No.リンクから拾う */
+        var _jumpNo = 0;
+        if (inGi) {
+            _jumpNo = parseInt(inGi.getAttribute('data-res-no') || '0') || 0;
+        } else if (inQt) {
+            var _row = img.closest && img.closest('.qt-row');
+            var _a = _row ? _row.querySelector('a.qt-no[href^="#r"]') : null;
+            var _m = _a ? (_a.getAttribute('href') || '').match(/#r(\d+)/) : null;
+            _jumpNo = _m ? parseInt(_m[1]) : 0;
+        }
+        if (_jumpNo > 0) {
+            addItem2('返信モードでこのレスへ移動', function(){
+                if (typeof _b === 'function') _b('jumpToRes', [_jumpNo]);
+            });
+        }
         addItem2('外部ブラウザで開く', function(){ if(typeof _b==='function') _b('openUrlExternal',[imgUrl]); });
         addItem2('この画像をNG登録する', function(){ if(typeof _b==='function') _b('ngImage',[imgUrl]); });
         addItem2('画像URLをコピーする', function(){
@@ -6331,6 +6348,21 @@ class ThreadView(_MouseGestureMixin, QWidget):
             # ページがまだ無い/破棄済み → 目印は取れないがthenは必ず実行する
             self._pending_anchor = None
             then()
+
+    def _on_jump_to_res(self, no: int):
+        """画像/引用モードから、そのレスを返信モードで表示する。
+
+        位置合わせは既存のスクロール目印（_pending_anchor）を使い回す。
+        返信モードのHTMLを読み終えたところで、そのレスが画面の一番上に来る。"""
+        if not no:
+            return
+        self._pending_anchor = (str(int(no)), 0)
+        _checked = self._mode_grp.checkedButton() if hasattr(self, '_mode_grp') else None
+        if (_checked.property("mode") if _checked else "") == "reply":
+            # 既に返信モードなら読み直さずその場で移動する
+            self._restore_scroll_anchor()
+            return
+        self._set_view_mode("reply")   # モードボタンの同期はこの中で行われる
 
     def _restore_scroll_anchor(self):
         """控えた目印のレスが画面の同じ位置に来るよう戻す。
@@ -8721,6 +8753,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._bridge.cat_hover_enter.connect(self._on_cat_hover_enter)
         self._bridge.cat_hover_leave.connect(self._on_cat_hover_leave)
         self._bridge.mouse_gesture.connect(self._on_mouse_gesture)
+        self._bridge.jump_to_res_requested.connect(self._on_jump_to_res)
 
         # ホバーポップアップウィジェット
         # Qt.Tool: システム全体の最前面ではなく本ソフトの前面に表示（親=メインウインドウ）。

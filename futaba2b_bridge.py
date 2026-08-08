@@ -11,6 +11,7 @@ class ThreadBridge(QObject):
 
     # Python 側が受け取るシグナル
     mouse_gesture         = Signal(str)          # マウスジェスチャー（方向列）
+    jump_to_res_requested = Signal(int)          # 画像/引用モード→返信モードで該当レスへ
     quote_no_requested    = Signal(int)          # 番号クリック → >>No.NNNN
     quote_comment_requested = Signal(int)        # コメントクリック → >本文
     quote_img_requested   = Signal(int)          # 画像クリック → 画像URLを引用
@@ -62,6 +63,11 @@ class ThreadBridge(QObject):
     def mouseGesture(self, seq: str):
         """マウスジェスチャー成立（右ドラッグの方向列）"""
         self.mouse_gesture.emit(seq)
+
+    @Slot(int)
+    def jumpToRes(self, no: int):
+        """画像/引用モードから、その画像のレスへ移動する"""
+        self.jump_to_res_requested.emit(int(no))
 
 
     @Slot(int)
@@ -223,6 +229,7 @@ class CatalogBridge(QObject):
     cat_hover_enter          = Signal(str, str, str)  # (url, thumb_url, comment)
     cat_hover_leave          = Signal()
     mouse_gesture            = Signal(str)   # マウスジェスチャー（方向列）
+    jump_to_res_requested    = Signal(int)   # 画像/引用モード→返信モードで該当レスへ
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -265,6 +272,11 @@ class CatalogBridge(QObject):
     def mouseGesture(self, seq: str):
         """マウスジェスチャー成立（右ドラッグの方向列）"""
         self.mouse_gesture.emit(seq)
+
+    @Slot(int)
+    def jumpToRes(self, no: int):
+        """画像/引用モードから、その画像のレスへ移動する"""
+        self.jump_to_res_requested.emit(int(no))
 
 
     @Slot(str, str, str)
