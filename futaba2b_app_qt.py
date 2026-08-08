@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.373"
+APP_VER = "0.9.374"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -7226,6 +7226,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         _inc_ul = bool(getattr(self._settings, 'image_mode_include_uploader', False))
         _uls = getattr(self._settings, 'uploader_links', []) if _inc_ul else []
         out = []
+        _seen_ul = set()      # あぷ直リンの重複除け（スレ全体で1回だけ）
         for r in (self._thread.res_list if self._thread else []):
             if r.image_url:
                 _ext = (r.image_name.rsplit('.', 1)[-1].upper()
@@ -7237,7 +7238,17 @@ class ThreadView(_MouseGestureMixin, QWidget):
             if not _uls:
                 continue
             # 本文からうｐろだの直リン画像を拾う。サイズは分からないので「あぷ」と出す。
-            for _u in uploader_image_urls(r.comment_text or r.comment_html or "", _uls):
+            # 引用行（>で始まる行）は元レスの再掲なので除く。含めると引用された
+            # 回数だけ同じあぷ画像が並んでしまう。
+            _txt = r.comment_text or r.comment_html or ""
+            _txt = "\n".join(_ln for _ln in _txt.splitlines()
+                             if not _ln.lstrip()[:1] in ('>', '＞'))
+            for _u in uploader_image_urls(_txt, _uls):
+                # 引用以外でも同じURLが複数回貼られることがあるので、
+                # スレ全体で1回だけ並べる（最初に貼られたレスに付ける）
+                if _u['url'] in _seen_ul:
+                    continue
+                _seen_ul.add(_u['url'])
                 _nm = _u['name']
                 _ext = (_nm.rsplit('.', 1)[-1].upper() if '.' in _nm else '?')
                 out.append({'res': r, 'url': _u['url'], 'thumb': _u['url'],
