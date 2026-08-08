@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.376"
+APP_VER = "0.9.377"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11501,6 +11501,8 @@ class AutoRefreshDialog(QDialog):
     def _on_dialog_tab_changed(self, idx: int):
         """ダイアログタブ切り替え: 変更・追加タブ表示時にアクティブビューを反映"""
         if idx == 1 and self._modify_row < 0:
+            # 明示的にタブを開き直した時は、対象が同じでも入れ直す
+            self._synced_key = None
             self._sync_active_view()
 
     def _sync_active_view(self):
@@ -11517,6 +11519,14 @@ class AutoRefreshDialog(QDialog):
         w = inner.currentWidget()
         if w is None:
             return
+        # この同期は1秒ごとの一覧更新からも呼ばれる。対象が変わっていないのに
+        # フォームを作り直すと、入力中のチェックや数値が数秒おきに巻き戻る。
+        # 対象が切り替わった時だけ入れ直す。
+        _th0 = getattr(w, '_thread', None)
+        _key = (id(w), (_th0.url if _th0 else "") or "")
+        if _key == getattr(self, "_synced_key", None):
+            return
+        self._synced_key = _key
 
         # ThreadView
         th = getattr(w, '_thread', None)
