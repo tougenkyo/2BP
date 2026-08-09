@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.387"
+APP_VER = "0.9.388"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1204,7 +1204,8 @@ def _img_mode_css(cols: int) -> str:
             "align-self:flex-start;"
             "border-radius:2px;padding:0 3px;min-width:6em}"
             ".gt{flex:1;display:flex;align-items:center;justify-content:center;padding:2px 0}"
-            ".gt img{max-width:100%;max-height:72px;object-fit:contain}"
+            # うｐろだの動画は <video> の1コマ目をサムネ代わりに出す
+            ".gt img,.gt video{max-width:100%;max-height:72px;object-fit:contain}"
             ".gs{text-align:right;font-size:7pt;overflow:hidden;line-height:1.3}"
             ".gi.deleted{display:none}body.show-deleted .gi.deleted{display:flex}"
             ".gi.ng-hidden{display:none}.gi.ng-band{box-shadow:inset 2px 0 0 #1f9d1f}"
@@ -6186,7 +6187,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
     if (window._thumbCtx) document.removeEventListener('contextmenu', window._thumbCtx);
     window._thumbCtx = function(e) {
         var img = e.target;
-        if (img.tagName !== 'IMG') return;
+        /* うｐろだの動画セルは <video>（1コマ目をサムネ代わりに出している） */
+        if (img.tagName !== 'IMG' && img.tagName !== 'VIDEO') return;
         /* .qt-thumb (引用モード) か .gi img (画像モード) のみ対象 */
         var inQt = img.classList.contains('qt-thumb');
         var inGi = img.closest && img.closest('.gi');
@@ -7304,7 +7306,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             _txt = r.comment_text or r.comment_html or ""
             _txt = "\n".join(_ln for _ln in _txt.splitlines()
                              if not _ln.lstrip()[:1] in ('>', '＞'))
-            for _u in uploader_image_urls(_txt, _uls):
+            for _u in uploader_image_urls(_txt, _uls, include_video=True):
                 # 引用以外でも同じURLが複数回貼られることがあるので、
                 # スレ全体で1回だけ並べる（最初に貼られたレスに付ける）
                 if _u['url'] in _seen_ul:
@@ -7313,7 +7315,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 _nm = _u['name']
                 _ext = (_nm.rsplit('.', 1)[-1].upper() if '.' in _nm else '?')
                 out.append({'res': r, 'url': _u['url'], 'thumb': _u['url'],
-                            'name': _nm, 'info': _ext + ' / あぷ', 'is_ul': True})
+                            'name': _nm, 'info': _ext + ' / あぷ', 'is_ul': True,
+                            'is_video': bool(_u.get('is_video'))})
         if getattr(self._settings, 'sort_by_sodane', False):
             # そうだね降順（同数は元の並び=投稿順で安定）
             out.sort(key=lambda it: it['res'].sodane, reverse=True)
@@ -7348,6 +7351,16 @@ class ThreadView(_MouseGestureMixin, QWidget):
             if r.res_idx == 0 and not it.get('is_ul'):
                 _gi_cls += " gi-op"
             _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
+            # うｐろだの動画はサムネ画像が無いので、<video> の1コマ目を出す。
+            # #t=0.1 を付けるとChromiumがその位置まで読んで絵を出してくれる。
+            # ふたばの動画は thumb_url に本物のサムネがあるので従来どおり <img>。
+            if it.get('is_video'):
+                _media = ('<video src="'+_esc(it['thumb'], quote=True)+'#t=0.1"'
+                          ' preload="metadata" muted playsinline'
+                          ' data-full="'+_ua+'"></video>')
+            else:
+                _media = ('<img src="'+_esc(it['thumb'], quote=True)+'" loading="lazy"'
+                          ' data-full="'+_ua+'">')
             items.append(
                 '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'" data-img-url="'+_ua+'"'
                 ' onclick="_giClick(event,'+str(idx)+',this)"'
@@ -7355,8 +7368,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 + _gi_del +
                 '<div class="gn" data-popup-no="'+str(r.no)+'">'+display_no+'</div>'
                 '<div class="gt"'+(' data-popup-no="'+str(r.no)+'"' if _hover_pop else '')
-                + '><img src="'+_esc(it['thumb'], quote=True)+'" loading="lazy"'
-                  ' data-full="'+_ua+'"></div>'
+                + '>'+_media+'</div>'
                 '<div class="gs">'+_esc(it['info'])+'</div>'
                 '</div>'
             )

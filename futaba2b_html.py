@@ -477,9 +477,10 @@ body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown):not(._rp *),
 body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown),
 /* 引用モードのツリー行のサムネ（.res ではなく img.qt-thumb 単独）。スレ画は除く */
 body.blur-res img.qt-thumb:not(.qt-thumb-op):not(.thumb-shown),
-/* うｐろだの直リン画像（別設定） */
+/* うｐろだの直リン画像（別設定）。動画は <video> の1コマ目なので一緒に伏せる */
 body.blur-ul .ul-thumb:not(.thumb-shown):not(._rp *),
-body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown) {
+body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown),
+body.blur-ul .gi.gi-ul .gt video:not(.thumb-shown) {
     /* 消してしまうとクリック先が分からないので「ぼんやり見えている」状態にする。
        中身が読み取れないのは主に blur で担保し、彩度落としは強い段階で足す
        （グロ画像の判別は色＝赤に大きく依るため、強では効かせる）。
@@ -499,7 +500,8 @@ body.blur-res .res:not(.op) .video-thumb img:not(.thumb-shown):not(._rp *):hover
 body.blur-res .gi:not(.gi-op):not(.gi-ul) .gt img:not(.thumb-shown):hover,
 body.blur-res img.qt-thumb:not(.qt-thumb-op):not(.thumb-shown):hover,
 body.blur-ul .ul-thumb:not(.thumb-shown):not(._rp *):hover,
-body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown):hover {
+body.blur-ul .gi.gi-ul .gt img:not(.thumb-shown):hover,
+body.blur-ul .gi.gi-ul .gt video:not(.thumb-shown):hover {
     opacity: var(--blur-oh);
 }
 /* ポップアップの中身（返信モードの設定で伏せる） */
@@ -931,7 +933,8 @@ function sodane(no)             { _b('sodane',         [no]); }
    キャプチャ段階で拾って、レス側の onclick より先に止める。 */
 document.addEventListener('click', function(e) {
     var img = e.target;
-    if (!img || img.tagName !== 'IMG') return;
+    /* うｐろだの動画は <video> の1コマ目をサムネ代わりにしているので同じ扱い */
+    if (!img || (img.tagName !== 'IMG' && img.tagName !== 'VIDEO')) return;
     if (img.classList.contains('thumb-shown')) return;
     var cell = img.closest && img.closest('.gi');
     var isUl = img.classList.contains('ul-thumb')
@@ -965,7 +968,7 @@ document.addEventListener('click', function(e) {
 function restoreShownImgs() {
     var m = window._shownImgs;
     if (!m) return;
-    document.querySelectorAll('img').forEach(function(img) {
+    document.querySelectorAll('img,video').forEach(function(img) {
         var k = img.getAttribute('data-full') || img.src || '';
         if (k && m[k]) img.classList.add('thumb-shown');
     });
@@ -1737,12 +1740,15 @@ def _elapsed(datetime_str: str) -> str:
 _UL_IMG_EXTS = re.compile(r'\.(jpe?g|png|gif|webp|bmp)$', re.IGNORECASE)
 
 
-def uploader_image_urls(text: str, uploaders: list) -> list:
-    """テキストからうｐろだの直リン画像を抽出して [{url, name}] で返す。
+def uploader_image_urls(text: str, uploaders: list,
+                        include_video: bool = False) -> list:
+    """テキストからうｐろだの直リン画像を抽出して [{url, name, is_video}] で返す。
 
     画像モードで「あぷの画像も読み込む」ために使う。_apply_uploaders と同じ
     パターン・同じ画像判定を使うので、返信モードでサムネが出るものと一致する。
-    重複URLは1つにまとめる（同じ画像を複数回貼った場合）。"""
+    重複URLは1つにまとめる（同じ画像を複数回貼った場合）。
+    include_video=True なら mp4/webm などの動画も拾う。うｐろだの動画は
+    サムネが無いので、並べる側で <video> の1コマ目を使う。"""
     if not uploaders or not text or not text.strip():
         return []
     matches = []
@@ -1761,12 +1767,13 @@ def uploader_image_urls(text: str, uploaders: list) -> list:
             continue                      # _apply_uploaders と同じ重なり除去
         pos = end
         url = ul["url"].replace("$MATCH", match_str)
-        if not _UL_IMG_EXTS.search(url.split('?')[0]):
-            continue                      # 画像以外のリンクは対象外
+        _vid = include_video and _is_video(url)
+        if not _vid and not _UL_IMG_EXTS.search(url.split('?')[0]):
+            continue                      # 画像（と動画）以外のリンクは対象外
         if url in seen:
             continue
         seen.add(url)
-        out.append({"url": url, "name": match_str})
+        out.append({"url": url, "name": match_str, "is_video": _vid})
     return out
 
 
