@@ -685,6 +685,40 @@ body.cat-text-right .entry-title {
 }
 """
 
+# ══════════════════════════════════════════════════════════════════════════════
+# JSで作る右クリックメニュー（カタログのスレ・レス内のID・画像）の見た目。
+# 以前は生成時にインラインstyleを書いていたため user.css から色を変えられず、
+# ここのメニューだけ他と違う見た目のままだった。クラスに逃がしてある。
+# スレ・カタログの両方で使うので、両方のCSSへ足す。
+# ══════════════════════════════════════════════════════════════════════════════
+CTX_MENU_CSS = """
+.ctx-menu {
+    position: fixed;
+    background: #fff;
+    color: #000;
+    border: 1px solid #999;
+    padding: 2px 0;
+    box-shadow: 2px 2px 4px rgba(0,0,0,.3);
+    font-size: 9pt;
+    /* 文字を選択させない。押した位置と離した位置がずれた時にドラッグ扱いに
+       なって、項目が反応しなくなるのを防ぐ */
+    -webkit-user-select: none;
+    user-select: none;
+}
+.ctx-menu .ctx-item {
+    padding: 4px 16px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.ctx-menu .ctx-item:hover { background: #0078d7; color: #fff; }
+.ctx-menu .ctx-item.ctx-danger { color: #a00; }
+.ctx-menu .ctx-item.ctx-danger:hover { background: #a00; color: #fff; }
+.ctx-menu .ctx-sep { border-top: 1px solid #ddd; margin: 2px 0; }
+"""
+
+THREAD_CSS  += CTX_MENU_CSS
+CATALOG_CSS += CTX_MENU_CSS
+
 ID_POPUP_JS = """
 // ── ID ホバーポップアップ ──────────────────────────────────────────────────
 // ID引用ポップアップの実体は _inject_popup_js で後付け注入（未注入時のスタブ）
@@ -696,6 +730,57 @@ function showOpPopup(x, y, fromEl) { /* injected after load */ }
 WEBCHANNEL_JS = """
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script>
+
+/* ── JSで作る右クリックメニューの共通部品 ─────────────────────────────────
+   項目は click ではなく mouseup で拾う。押した位置と離した位置が少しでも
+   ずれると、ブラウザは click を「押した要素と離した要素の共通の親」で起こす。
+   メニューの余白や項目の隙間から押し始めた場合、click が項目ではなく
+   メニュー本体で起きるため項目の onclick が呼ばれず、「メニューを選んでも
+   何も起きない」状態になっていた（カタログの削除依頼など）。
+   mouseup は離した位置の要素で起きるので、押し始めがずれていても効く。 */
+function ctxMakeMenu(id, x, y, z) {
+    var m = document.createElement('div');
+    m.id = id;
+    m.className = 'ctx-menu';
+    m.style.left = x + 'px';
+    m.style.top  = y + 'px';
+    if (z) m.style.zIndex = z;
+    return m;
+}
+function ctxAddItem(menu, label, fn, danger) {
+    var it = document.createElement('div');
+    it.className = 'ctx-item' + (danger ? ' ctx-danger' : '');
+    it.textContent = label;
+    it.onmouseup = function(ev) {
+        if (ev && ev.button !== 0) return;   /* 左ボタンだけ。右の離しは無視 */
+        if (menu._ctxFired) return;          /* 二重に走らせない */
+        menu._ctxFired = 1;
+        if (menu.parentNode) menu.parentNode.removeChild(menu);
+        fn();
+    };
+    menu.appendChild(it);
+    return it;
+}
+function ctxAddSep(menu) {
+    var s = document.createElement('div');
+    s.className = 'ctx-sep';
+    menu.appendChild(s);
+}
+/* メニューを閉じる係。次の click 1回だけ拾う（項目を選んだ場合は既に消えている） */
+function ctxArmClose(id) {
+    setTimeout(function() {
+        document.addEventListener('click', function() {
+            var m = document.getElementById(id);
+            if (m && m.parentNode) m.parentNode.removeChild(m);
+        }, {once: true});
+    }, 0);
+}
+/* 画面外にはみ出したら内側へ寄せる */
+function ctxFit(menu) {
+    var r = menu.getBoundingClientRect();
+    if (r.right  > window.innerWidth)  menu.style.left = (window.innerWidth  - r.width  - 4) + 'px';
+    if (r.bottom > window.innerHeight) menu.style.top  = (window.innerHeight - r.height - 4) + 'px';
+}
 
 let _delNo = null;
 function delRes(no, el) {
@@ -832,36 +917,12 @@ document.addEventListener('contextmenu', function(e) {
     e.preventDefault(); e.stopPropagation();
     var old = document.getElementById('__id_ctx');
     if (old && old.parentNode) old.parentNode.removeChild(old);
-    var menu = document.createElement('div');
-    menu.id = '__id_ctx';
-    menu.style.cssText = 'position:fixed;z-index:100000;background:#fff;'
-        + 'border:1px solid #888;box-shadow:2px 2px 6px rgba(0,0,0,.3);'
-        + 'font-size:9pt;color:#000;padding:2px 0;';
-    menu.style.left = e.clientX + 'px';
-    menu.style.top  = e.clientY + 'px';
-    function add(label, fn, color) {
-        var it = document.createElement('div');
-        it.textContent = label;
-        it.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;'
-            + (color ? 'color:' + color + ';' : '');
-        it.onmouseenter = function(){ this.style.background='#0078d7'; this.style.color='#fff'; };
-        it.onmouseleave = function(){ this.style.background=''; this.style.color=color||''; };
-        it.onclick = function(){ fn(); if (menu.parentNode) menu.parentNode.removeChild(menu); };
-        menu.appendChild(it);
-    }
-    add('ID:' + id + ' のレスを抽出', function(){ showIdExtraction(id); });
-    add('ID:' + id + ' をNGに追加', function(){ ngId(id); }, '#a00');
+    var menu = ctxMakeMenu('__id_ctx', e.clientX, e.clientY, 100000);
+    ctxAddItem(menu, 'ID:' + id + ' のレスを抽出', function(){ showIdExtraction(id); });
+    ctxAddItem(menu, 'ID:' + id + ' をNGに追加', function(){ ngId(id); }, true);
     document.body.appendChild(menu);
-    /* 画面外にはみ出したら内側へ寄せる */
-    var r = menu.getBoundingClientRect();
-    if (r.right  > window.innerWidth)  menu.style.left = (window.innerWidth  - r.width  - 4) + 'px';
-    if (r.bottom > window.innerHeight) menu.style.top  = (window.innerHeight - r.height - 4) + 'px';
-    setTimeout(function(){
-        document.addEventListener('click', function cleanup(){
-            var m = document.getElementById('__id_ctx');
-            if (m && m.parentNode) m.parentNode.removeChild(m);
-        }, {once: true});
-    }, 0);
+    ctxFit(menu);
+    ctxArmClose('__id_ctx');
 });
 function quoteIdIp(no)          { _b('quoteIdIp',      [no]); }
 function sodane(no)             { _b('sodane',         [no]); }
@@ -975,34 +1036,15 @@ document.addEventListener('contextmenu', function(e) {
     /* フル画像URLを優先、なければsrc */
     var imgUrl = img.getAttribute('data-full') || img.src || '';
     if (!imgUrl) return;
-    var menu = document.createElement('div');
-    menu.id = '__img_ctx';
-    menu.style.cssText = 'position:fixed;background:#fff;border:1px solid #999;'
-        + 'padding:2px 0;z-index:19998;box-shadow:2px 2px 4px rgba(0,0,0,.3);font-size:9pt;';
-    menu.style.left = e.clientX + 'px';
-    menu.style.top  = e.clientY + 'px';
-    function addItem(label, fn) {
-        var item = document.createElement('div');
-        item.textContent = label;
-        item.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;';
-        item.onmouseenter = function(){ this.style.background='#0078d7';this.style.color='#fff'; };
-        item.onmouseleave = function(){ this.style.background='';this.style.color=''; };
-        item.onclick = function(){ fn(); document.body.removeChild(menu); };
-        menu.appendChild(item);
-    }
-    addItem('外部ブラウザで開く', function(){ _b('openUrlExternal',[imgUrl]); });
-    addItem('この画像をNG登録する', function(){ _b('ngImage',[imgUrl]); });
-    addItem('画像URLをコピーする',  function(){
+    var menu = ctxMakeMenu('__img_ctx', e.clientX, e.clientY, 19998);
+    ctxAddItem(menu, '外部ブラウザで開く', function(){ _b('openUrlExternal',[imgUrl]); });
+    ctxAddItem(menu, 'この画像をNG登録する', function(){ _b('ngImage',[imgUrl]); });
+    ctxAddItem(menu, '画像URLをコピーする',  function(){
         try{navigator.clipboard.writeText(imgUrl);}catch(er){}
     });
     document.body.appendChild(menu);
-    setTimeout(function(){
-        document.addEventListener('click', function cleanup(){
-            var m = document.getElementById('__img_ctx');
-            if (m) m.parentNode.removeChild(m);
-            document.removeEventListener('click', cleanup);
-        });
-    }, 0);
+    ctxFit(menu);
+    ctxArmClose('__img_ctx');
 });
 function openImg(url, idx)      { _b('openImg',        [url, idx]); }
 function openImgBg(url, idx)    { _b('openImgBg',      [url, idx]); }
@@ -1049,56 +1091,27 @@ document.addEventListener('contextmenu', function(e) {
     var m = oc.match(/handleCatClick\\('([^']+)'/);
     if (m) url = m[1];
     if (!url) return;
-    var menu = document.createElement('div');
-    menu.id = '__ng_ctx';
-    menu.style.cssText = 'position:fixed;background:#fff;border:1px solid #999;'
-        + 'padding:2px 0;z-index:9999;box-shadow:2px 2px 4px rgba(0,0,0,.3);font-size:9pt;';
-    menu.style.left = e.clientX + 'px';
-    menu.style.top  = e.clientY + 'px';
-    function addMenuItem(label, fn) {
-        var item = document.createElement('div');
-        item.textContent = label;
-        item.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;';
-        item.onmouseenter = function(){ this.style.background='#0078d7';this.style.color='#fff'; };
-        item.onmouseleave = function(){ this.style.background='';this.style.color=''; };
-        item.onclick = function(){ fn(); document.body.removeChild(menu); };
-        menu.appendChild(item);
-    }
-    addMenuItem('このスレ画をNG登録する', function(){
+    var menu = ctxMakeMenu('__ng_ctx', e.clientX, e.clientY, 9999);
+    ctxAddItem(menu, 'このスレ画をNG登録する', function(){
         var img = el.querySelector('.entry-img img');
         if (typeof _b === 'function')
             _b('catalogNgImage', [url, img ? (img.getAttribute('src') || '') : '']);
     });
-    addMenuItem('外部ブラウザで開く', function(){ openUrl(url); });
-    addMenuItem('URLをコピーする',    function(){
+    ctxAddItem(menu, '外部ブラウザで開く', function(){ openUrl(url); });
+    ctxAddItem(menu, 'URLをコピーする',    function(){
         if(typeof _b==='function') _b('copyToClipboard',[url]);
     });
-    var sep = document.createElement('div');
-    sep.style.cssText = 'border-top:1px solid #ddd;margin:2px 0;';
-    menu.appendChild(sep);
-    var item = document.createElement('div');
-    item.textContent = 'このスレをNGにする';
-    item.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;';
-    item.onmouseenter = function(){ this.style.background='#0078d7';this.style.color='#fff'; };
-    item.onmouseleave = function(){ this.style.background='';this.style.color=''; };
-    item.onclick = function(){ addThreadNg(url); document.body.removeChild(menu); };
-    menu.appendChild(item);
-    var itemDel = document.createElement('div');
-    itemDel.textContent = '削除依頼(del)';
-    itemDel.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;color:#a00;';
-    itemDel.onmouseenter = function(){ this.style.background='#a00';this.style.color='#fff'; };
-    itemDel.onmouseleave = function(){ this.style.background='';this.style.color='#a00'; };
-    itemDel.onclick = function(){
+    ctxAddSep(menu);
+    ctxAddItem(menu, 'このスレをNGにする', function(){ addThreadNg(url); });
+    ctxAddItem(menu, '削除依頼(del)', function(){
         catalogDel(url);
         /* 送信中は薄く出しておく。ふたばが「操作が早すぎます」等で受け付けない
            ことがあるため、ここでは消さずに結果(catalogDelDone)を待つ。 */
         if (el) el.classList.add('del-pending');
-        document.body.removeChild(menu);
-    };
-    menu.appendChild(itemDel);
+    }, true);
     document.body.appendChild(menu);
-    function cleanup(){ var m=document.getElementById('__ng_ctx'); if(m) m.parentNode.removeChild(m); }
-    setTimeout(function(){ document.addEventListener('click', cleanup, {once:true}); }, 0);
+    ctxFit(menu);
+    ctxArmClose('__ng_ctx');
 });
 function updateSodane(no, cnt) {
     // ポップアップは元レスの innerHTML を複製するため id="sodNNN" が重複する。

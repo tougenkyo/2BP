@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.386"
+APP_VER = "0.9.387"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6196,21 +6196,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         if (old) old.parentNode.removeChild(old);
         var imgUrl = img.getAttribute('data-full') || img.src || '';
         if (!imgUrl) return;
-        var menu = document.createElement('div');
-        menu.id = '__img_ctx2';
-        menu.style.cssText = 'position:fixed;background:#fff;border:1px solid #999;'
-            + 'padding:2px 0;z-index:19998;box-shadow:2px 2px 4px rgba(0,0,0,.3);font-size:9pt;';
-        menu.style.left = e.clientX + 'px';
-        menu.style.top  = e.clientY + 'px';
-        function addItem2(label, fn) {
-            var item = document.createElement('div');
-            item.textContent = label;
-            item.style.cssText = 'padding:4px 16px;cursor:pointer;white-space:nowrap;';
-            item.onmouseenter = function(){ this.style.background='#0078d7';this.style.color='#fff'; };
-            item.onmouseleave = function(){ this.style.background='';this.style.color=''; };
-            item.onclick = function(){ fn(); document.body.removeChild(menu); };
-            menu.appendChild(item);
-        }
+        /* 見た目と「押した位置がずれても効く」動きは WEBCHANNEL_JS の
+           共通部品(ctxMakeMenu/ctxAddItem)に合わせる */
+        var menu = ctxMakeMenu('__img_ctx2', e.clientX, e.clientY, 19998);
+        function addItem2(label, fn) { return ctxAddItem(menu, label, fn); }
         /* 画像モード/引用モードから、その画像のレスへ飛ぶ。
            画像モードは .gi[data-res-no]、引用モードは行内の No.リンクから拾う */
         var _jumpNo = 0;
@@ -6233,13 +6222,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
             try{ navigator.clipboard.writeText(imgUrl); }catch(er){}
         });
         document.body.appendChild(menu);
-        setTimeout(function(){
-            document.addEventListener('click', function cleanup2(){
-                var m2 = document.getElementById('__img_ctx2');
-                if (m2) m2.parentNode.removeChild(m2);
-                document.removeEventListener('click', cleanup2);
-            });
-        }, 0);
+        ctxFit(menu);
+        ctxArmClose('__img_ctx2');
     };
     document.addEventListener('contextmenu', window._thumbCtx);
 
