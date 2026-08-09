@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.390"
+APP_VER = "0.9.391"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5418,6 +5418,16 @@ class ThreadView(_MouseGestureMixin, QWidget):
         prev_count = self._known_res_count
         new_res = thread.res_list[prev_count:]   # 新着分のみ
 
+        # 新着と同時に削除されたレスを拾っておく。self._thread を差し替える前に
+        # 比べる必要がある。従来は「レス数が変わらない時」しか削除を反映して
+        # おらず、新着が1件でもあるとこの経路に来て削除が無視されていた
+        # （上の削除件数だけ増えて、レスは消えないまま残る）。
+        _newly_deleted = []
+        if self._thread is not None:
+            _was_del = {r.no for r in self._thread.res_list if r.is_deleted}
+            _newly_deleted = [r.no for r in thread.res_list[:prev_count]
+                              if r.is_deleted and r.no not in _was_del]
+
         # id_counts を全レスで再計算（引用インジケータ用）
         id_counts: dict[str, int] = {}
         for r in thread.res_list:
@@ -5444,7 +5454,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
             # 差分なし（NGで全消し等）→ 仕切り線・既読化だけ更新して終了
             self._view.page().runJavaScript(
                 "appendNewReplies([]);" + self._expiry_sync_js(thread))
+            if _newly_deleted:
+                self._update_deleted_res_dom(thread, _newly_deleted, _ng, _ul,
+                                             _hidden_nos, _del_nos, _ng_reveal)
             self._known_res_count = len(thread.res_list)
+            self._thread = thread
             self._update_ui_after_show(thread, new_count, False, skip_mode_reload=True)
             return
 
@@ -5452,6 +5466,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
         frags_json = json.dumps(fragments, ensure_ascii=False)
         js = f"appendNewReplies({frags_json});" + self._expiry_sync_js(thread)
         self._view.page().runJavaScript(js)
+
+        # 新着の追記と同じタイミングで、消えたレスも書き換える
+        if _newly_deleted:
+            self._update_deleted_res_dom(thread, _newly_deleted, _ng, _ul,
+                                         _hidden_nos, _del_nos, _ng_reveal)
 
 
         # _last_html は「全体HTML」として保持したいので再生成はしない
