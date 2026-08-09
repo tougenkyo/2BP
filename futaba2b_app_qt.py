@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.391"
+APP_VER = "0.9.392"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -166,6 +166,12 @@ def _safe_run_js(view, js, cb=None) -> bool:
     except RuntimeError:
         return False
 _FETCH_POOL = _TPE(max_workers=3, thread_name_prefix='2BP_fetch')
+
+# 自動更新で「削除されたレス」を確認する間隔（秒）。
+# JSON差分API(futaba.php?mode=json)は新着しか返さず削除が分からないため、
+# 表示中のタブに限りこの間隔でHTMLをフルGETして突き合わせる。
+# 裏のタブはリクエストを増やさないため対象外（開いた時の再描画で消える）。
+_DEL_CHECK_SEC = 300
 
 class _NoWheelSpinBox(QSpinBox):
     """スクロールで値が変わらない QSpinBox"""
@@ -4863,6 +4869,19 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 pass
             return False
         return hidden, delnos, _is_ng, reveal
+
+    def _refresh_del_btn_count(self):
+        """削除件数のボタン表示だけを今のモデルに合わせる。
+        「削除:見る/隠す」の状態(_del_showing)は DOM 側と揃っているので変えない。"""
+        _dc = sum(1 for r in self._thread.res_list[1:] if r.is_deleted) if self._thread else 0
+        if not hasattr(self, '_del_btn'):
+            return
+        if _dc > 0:
+            _lbl = "削除:隠す" if self._del_showing else "削除:見る"
+            self._del_btn.setText(f"{_lbl}({_dc}件)")
+            self._del_btn_action.setVisible(True)
+        else:
+            self._del_btn_action.setVisible(False)
 
     def _sync_del_btn_after_full_render(self):
         """画像/引用モードを全描画した直後の状態同期。全描画ではbodyが作り直され
@@ -10480,6 +10499,7 @@ class AutoRefreshManager(QObject):
     entry_added   = Signal()   # エントリが追加されたときに発火
     _view_update  = Signal(object, object, bool, bool)  # view, thread, scroll, bouyomi
     _sd_apply     = Signal(object, object)               # view, {no: count} そうだね反映
+    _del_check    = Signal(object, object)   # view, フルGETしたスレ: 削除レスの反映
     _expiry_sync  = Signal(object)            # view: スレ落ち予定の表示だけ同期
     _remove_later_url = Signal(str)          # URLベースの削除要求（スレッドセーフ）
     _catalog_reload   = Signal(object)       # カタログビュー更新要求（スレッドセーフ）
@@ -10507,6 +10527,9 @@ class AutoRefreshManager(QObject):
         self._view_update.connect(self._update_view)
         self._sd_apply.connect(self._apply_sd_to_view)
         self._expiry_sync.connect(self._sync_expiry_to_view)
+        self._del_check.connect(self._apply_del_check)
+        # 削除チェック用フルGETの最終実行時刻 {スレURL: monotonic}
+        self._last_del_check: dict = {}
         self._remove_later_url.connect(self.remove_by_url)
         self._catalog_reload.connect(self._do_catalog_reload)
         self._fetching_done.connect(lambda u: self._fetching.discard(u))
@@ -10955,6 +10978,13 @@ class AutoRefreshManager(QObject):
                 else:
                     new_n = len(new_res)
 
+                # ── 削除レスの確認（表示中のタブだけ・数分に1回） ──────────
+                # JSON差分APIは新着しか返さず削除が分からないため、これだけでは
+                # 消えたレスに気づけない。見ているスレに限って、たまにフルGET
+                # して突き合わせる。裏のタブは開いた時の再描画で最新になる。
+                if view is not None and th_cur is not None:
+                    self._maybe_check_deleted(view, board, no, entry.url)
+
                 self._new_cnt[idx] = new_n
                 if th_cur:
                     self._res_cnt[idx] = len(th_cur.res_list) - 1
@@ -11325,6 +11355,72 @@ class AutoRefreshManager(QObject):
         if bouyomi:
             self._speak_bouyomi(thread.res_list)
         self._notify_bg_arrival(view, thread, thread._footer_new_count)
+
+    def _maybe_check_deleted(self, view, board, no: int, url: str) -> None:
+        """表示中のタブに限り、たまにフルGETして削除されたレスを拾う（BGスレッド）。
+
+        JSON差分API(futaba.php?mode=json)は start 以降の新着しか返さないので、
+        既にあるレスが消えたことは原理的に分からない。削除が分かるのはHTMLを
+        取り直した時だけなので、見ているスレだけ _DEL_CHECK_SEC ごとに確認する。
+        裏のタブでやらないのは、リクエストを増やさないため（開いた時に最新の
+        モデルから作り直されるので、そこで消える）。"""
+        try:
+            if not view.isVisible():
+                return
+        except (RuntimeError, AttributeError):
+            return
+        _now = time.monotonic()
+        if _now - self._last_del_check.get(url, 0.0) < _DEL_CHECK_SEC:
+            return
+        self._last_del_check[url] = _now      # 失敗しても次の間隔まで待つ
+        try:
+            th_full = self._fetcher.fetch_thread(board, no)
+        except Exception as e:
+            print(f"[AutoRefresh] 削除確認の取得に失敗 No.{no}: {e}")
+            return
+        if not th_full or not th_full.res_list or th_full.error:
+            return
+        self._del_check.emit(view, th_full)
+
+    def _apply_del_check(self, view, th_full):
+        """メインスレッド: フルGETの結果と突き合わせて、消えたレスを反映する"""
+        if view is None or th_full is None or app_is_shutting_down():
+            return
+        try:
+            from shiboken6 import isValid
+            if not isValid(view):
+                return
+        except Exception:
+            pass
+        _cur = getattr(view, "_thread", None)
+        if _cur is None:
+            return
+        _nos = self._newly_deleted_nos(view, th_full)
+        if not _nos:
+            return
+        # 削除で本文が消えたレスに、こちらが持っている削除前の本文を引き継ぐ
+        _carry_over_deleted_content(_cur, th_full)
+        # 表示中のモデルにも印を付ける。付けないと上の削除件数が合わず、
+        # 作り直した時（モード切替など）にまた出てきてしまう。
+        _full_by_no = {r.no: r for r in th_full.res_list}
+        for r in _cur.res_list:
+            _f = _full_by_no.get(r.no)
+            if _f is None or not getattr(_f, "is_deleted", False):
+                continue
+            r.is_deleted = True
+            for _attr in ("deleted_reason", "deleted_preserved",
+                          "deleted_orig_image_name", "comment_html", "comment_text"):
+                if hasattr(_f, _attr):
+                    setattr(r, _attr, getattr(_f, _attr))
+        _ng  = self._settings.ng_filter
+        _ul  = getattr(self._settings, "uploader_links", [])
+        _del = set(self._settings.del_res_nos.get(_cur.url or "", []))
+        self._apply_deleted_to_view(view, _cur, _nos, _ng, _ul, _del)
+        try:
+            view._refresh_del_btn_count()
+        except (AttributeError, RuntimeError):
+            pass
+        print(f"[AutoRefresh] 削除を検知 No.{_cur.no}: {_nos}")
 
     @staticmethod
     def _newly_deleted_nos(view, thread) -> list:
