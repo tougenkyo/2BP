@@ -892,7 +892,23 @@ document.addEventListener('click', function(e) {
     }
     e.preventDefault(); e.stopPropagation();
     img.classList.add('thumb-shown');
+    /* 解除したことを window に覚えておく。画像/引用モードは更新のたびに
+       中身を作り直すため、覚えていないと解除がそのたびに戻ってしまう
+       （返信モードは追記なので元から残る）。ページを読み直せば消える。 */
+    try {
+        var _k = img.getAttribute('data-full') || img.src || '';
+        if (_k) { window._shownImgs = window._shownImgs || {}; window._shownImgs[_k] = 1; }
+    } catch (er) {}
 }, true);
+/* 作り直した後に、解除済みの画像へ印を戻す */
+function restoreShownImgs() {
+    var m = window._shownImgs;
+    if (!m) return;
+    document.querySelectorAll('img').forEach(function(img) {
+        var k = img.getAttribute('data-full') || img.src || '';
+        if (k && m[k]) img.classList.add('thumb-shown');
+    });
+}
 /* 表示モードの目印を body に付ける（m-reply / m-quote / m-image）。
    ぼかしの強さなどを user.css でモードごとに変えるためのフック。 */
 function setPageMode(m) {

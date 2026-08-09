@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.383"
+APP_VER = "0.9.384"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6386,12 +6386,15 @@ class ThreadView(_MouseGestureMixin, QWidget):
         if not no:
             return
         self._pending_anchor = (str(int(no)), 0)
+        # 返信モードの mode プロパティは "reply" ではなく空文字。
+        # "reply" を渡すとどのボタンにも一致せず、排他グループでは画像モードの
+        # ボタンが選ばれたまま残り、次の更新で画像モードに戻ってしまう。
         _checked = self._mode_grp.checkedButton() if hasattr(self, '_mode_grp') else None
-        if (_checked.property("mode") if _checked else "") == "reply":
+        if not (_checked.property("mode") if _checked else ""):
             # 既に返信モードなら読み直さずその場で移動する
             self._restore_scroll_anchor()
             return
-        self._set_view_mode("reply")   # モードボタンの同期はこの中で行われる
+        self._set_view_mode("")        # モードボタンの同期はこの中で行われる
 
     def _restore_scroll_anchor(self):
         """控えた目印のレスが画面の同じ位置に来るよう戻す。
@@ -7265,6 +7268,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
             # body要素は残るので、モードの目印とぼかしは切替のたびに入れ直す
             "if(window.setPageMode)setPageMode('quote');\n"
             + self._blur_js('quote') + "\n"
+            # 画像モードと同じく、解除済みの画像へ印を戻す
+            "window.restoreShownImgs&&restoreShownImgs();\n"
             f"window.scrollTo(0, {int(scroll_y)});\n"
         )
         _pool_js = self._respool_inject_js(res_pool_html)
@@ -7472,6 +7477,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
             "window._galleryList = " + gallery_js + ";\n"
             # body入替で選択セルは消えるため、バー表示/ボタン状態を現状態に再同期
             "window._selUpdate&&window._selUpdate();\n"
+            # 作り直しでぼかしの解除が消えるため、解除済みの画像へ印を戻す
+            "window.restoreShownImgs&&restoreShownImgs();\n"
             "window.scrollTo(0, " + str(int(scroll_y)) + ");\n"
         )
         _pool_js = self._respool_inject_js(_respool_inner)
