@@ -3487,12 +3487,19 @@ class NgImageEditDialog(QDialog):
         self._rb_typesize = QRadioButton("画像の拡張子・幅・高さ・サイズと一致")
         self._rb_file     = QRadioButton("このファイルと一致")
         self._rb_md5      = QRadioButton("MD5ハッシュと一致")
+        self._rb_similar  = QRadioButton("似ている画像と一致（縮小・再圧縮された同じ画像）")
+        self._rb_similar.setToolTip(
+            "見た目を64bitに潰したハッシュで比べます。\n"
+            "MD5と違い、縮小されたり貼り直しで再圧縮された同じ画像も拾えます。\n"
+            "左右反転や大きく切り抜かれたものは拾えません。")
         self._method_grp.addButton(self._rb_typesize, 0)
         self._method_grp.addButton(self._rb_file,     1)
         self._method_grp.addButton(self._rb_md5,      2)
+        self._method_grp.addButton(self._rb_similar,  3)
         lay.addWidget(self._rb_typesize)
         lay.addWidget(self._rb_file)
         lay.addWidget(self._rb_md5)
+        lay.addWidget(self._rb_similar)
 
         # ── タイプ/サイズ設定 ────────────────────────────────────
         self._typesize_w = QWidget()
@@ -3558,6 +3565,79 @@ class NgImageEditDialog(QDialog):
         md5_lay.addRow("MD5ハッシュ値", self._md5_edit)
         lay.addWidget(self._md5_w)
 
+        # ── 似ている画像 ──────────────────────────────────────────
+        self._sim_w = QWidget()
+        sim_lay = QFormLayout(self._sim_w)
+        self._dhash_edit = QLineEdit(d.get("dhash", ""))
+        self._dhash_edit.setPlaceholderText("16文字の16進数")
+        # 入れ物のウィジェットに載せる。QFormLayout.addRow() へ裸のレイアウトを
+        # 渡すと、PySide6が持ち主を見失って終了時に落ちることがある。
+        _dh_box = QWidget()
+        _dh_row = QHBoxLayout(_dh_box)
+        _dh_row.setContentsMargins(0, 0, 0, 0)
+        _dh_row.addWidget(self._dhash_edit)
+        _dh_btn = QPushButton("画像から計算")
+        _dh_btn.setToolTip("画像ファイルを選んで、見た目のハッシュを計算します")
+
+        def _calc_dhash():
+            from futaba2b_settings import compute_dhash_file
+            p, _ = QFileDialog.getOpenFileName(
+                self, "画像を選択", "",
+                "画像 (*.jpg *.jpeg *.png *.gif *.webp);;全て (*)")
+            if not p:
+                return
+            h = compute_dhash_file(p)
+            if not h:
+                QMessageBox.warning(self, "エラー", "画像を読み込めませんでした")
+                return
+            self._dhash_edit.setText(h)
+            if not self._file_path.text().strip():
+                self._file_path.setText(p)
+        _dh_btn.clicked.connect(_calc_dhash)
+        _dh_row.addWidget(_dh_btn)
+
+        # 既存のMD5エントリを「似ている画像」に切り替える時の移行用。
+        # 登録時に控えた本画像URLがキャッシュに残っていればそこから計算できる。
+        self._sim_known_urls = list(d.get("known_urls", []) or [])
+        if self._sim_known_urls:
+            _kb = QPushButton("登録済み画像から")
+            _kb.setToolTip("このNGを登録した時の画像がキャッシュに残っていれば、\n"
+                           "そこから見た目のハッシュを計算します")
+
+            def _calc_from_known():
+                from futaba2b_settings import compute_dhash_file, NgFilter
+                _nf = NgFilter.__new__(NgFilter)   # パス解決だけ借りる
+                for _u in self._sim_known_urls:
+                    _p = NgFilter._get_cached_path(_nf, _u)
+                    if not _p:
+                        continue
+                    _h = compute_dhash_file(_p)
+                    if _h:
+                        self._dhash_edit.setText(_h)
+                        return
+                QMessageBox.information(
+                    self, "見つかりません",
+                    "登録時の画像がキャッシュに残っていませんでした。\n"
+                    "画像ファイルを選んで計算してください。")
+            _kb.clicked.connect(_calc_from_known)
+            _dh_row.addWidget(_kb)
+        sim_lay.addRow("見た目のハッシュ", _dh_box)
+        self._sim_level = QComboBox()
+        self._sim_level.addItems([
+            "厳しい（ほぼ同じ画像だけ）",
+            "普通（少し加工されたものまで）",
+            "緩い（切り抜きも拾う・誤爆あり）"])
+        _lv = d.get("similar_level", 0)
+        self._sim_level.setCurrentIndex(_lv if isinstance(_lv, int) and 0 <= _lv <= 2 else 0)
+        sim_lay.addRow("似ている度合い", self._sim_level)
+        _sim_note = QLabel(
+            "縮小・再圧縮された同じ画像を拾います。左右反転や大きな切り抜きは拾えません。\n"
+            "判定にはダウンロード済みの画像が要ります（先読みONだと効きやすい）。")
+        _sim_note.setStyleSheet("color:#666;")
+        _sim_note.setWordWrap(True)
+        sim_lay.addRow(_sim_note)
+        lay.addWidget(self._sim_w)
+
         # ── 有効期限 ──────────────────────────────────────────────
         exp_lay = QHBoxLayout()
         exp_lay.addWidget(QLabel("有効期限"))
@@ -3622,7 +3702,7 @@ class NgImageEditDialog(QDialog):
         lay.addWidget(btns)
 
         # 初期選択
-        _method_map = {"type_size": 0, "file": 1, "md5": 2}
+        _method_map = {"type_size": 0, "file": 1, "md5": 2, "similar": 3}
         btn = self._method_grp.button(_method_map.get(d.get("method", "md5"), 2))
         if btn: btn.setChecked(True)
         self._method_grp.idClicked.connect(lambda _: self._update_method_ui())
@@ -3633,10 +3713,11 @@ class NgImageEditDialog(QDialog):
         self._typesize_w.setVisible(idx == 0)
         self._file_w.setVisible(idx == 1)
         self._md5_w.setVisible(idx == 2)
+        self._sim_w.setVisible(idx == 3)
 
     def _ok(self):
         idx = self._method_grp.checkedId()
-        _methods = ["type_size", "file", "md5"]
+        _methods = ["type_size", "file", "md5", "similar"]
         exp_text = self._expires.currentText()
 
         import datetime
@@ -3648,7 +3729,7 @@ class NgImageEditDialog(QDialog):
 
         entry = {
             "enabled":       True,
-            "method":        _methods[idx] if 0 <= idx < 3 else "md5",
+            "method":        _methods[idx] if 0 <= idx < len(_methods) else "md5",
             "image_type":    self._img_type.currentText(),
             "width":         self._img_w.value(),
             "height":        self._img_h.value(),
@@ -3656,6 +3737,8 @@ class NgImageEditDialog(QDialog):
             "size_max":      self._size_max.value(),
             "file_path":     self._file_path.text().strip(),
             "md5":           self._md5_edit.text().strip(),
+            "dhash":         self._dhash_edit.text().strip().lower(),
+            "similar_level": self._sim_level.currentIndex(),
             # last_hit は入れない。修正のたびに最終ヒット日が消えてしまうため、
             # 呼び出し側で元の値を引き継ぐ（新規なら未設定＝空扱い）。
             "expires":       exp_text,
@@ -3668,6 +3751,22 @@ class NgImageEditDialog(QDialog):
         }
         if idx == 2 and not entry["md5"]:
             QMessageBox.warning(self, "入力エラー", "MD5ハッシュを入力してください"); return
+        if idx == 3:
+            # 「似ている画像と一致」: ハッシュが無いと永久に一致しない。
+            # 未入力ならファイル欄から計算してみて、それも無理なら止める。
+            if not entry["dhash"] and entry["file_path"]:
+                from futaba2b_settings import compute_dhash_file
+                entry["dhash"] = compute_dhash_file(entry["file_path"])
+            if not entry["dhash"]:
+                QMessageBox.warning(
+                    self, "入力エラー",
+                    "見た目のハッシュがありません。\n"
+                    "「画像から計算」で元になる画像を選んでください。"); return
+            try:
+                int(entry["dhash"], 16)
+            except ValueError:
+                QMessageBox.warning(self, "入力エラー",
+                                    "見た目のハッシュは16進数で入力してください"); return
         if idx == 1:
             # 「このファイルと一致」: 照合はMD5で行うので、ここで必ず計算しておく。
             # 以前は計算ボタンを押さない限り空のままで、登録しても永久に
@@ -4214,7 +4313,7 @@ class NgSettingsDialog(QDialog):
         else:
             self._img_sort_col = col
             self._img_sort_asc = True
-        _METHOD_ORDER = {"type_size": 0, "file": 1, "md5": 2}
+        _METHOD_ORDER = {"type_size": 0, "file": 1, "md5": 2, "similar": 3}
         def _sort_key(img):
             if col == 0:   # 有効/無効
                 return 0 if img.get("enabled", True) else 1
@@ -4247,7 +4346,8 @@ class NgSettingsDialog(QDialog):
     def _refresh_img_table(self):
         from PySide6.QtGui import QColor
         self._img_table.setRowCount(0)
-        _method_labels = {"type_size": "タイプ/サイズ", "file": "ファイル", "md5": "MD5"}
+        _method_labels = {"type_size": "タイプ/サイズ", "file": "ファイル",
+                          "md5": "MD5", "similar": "似ている画像"}
         for img in self._settings.ng_images:
             row = self._img_table.rowCount()
             self._img_table.insertRow(row)
@@ -4259,7 +4359,8 @@ class NgSettingsDialog(QDialog):
                 else Qt.CheckState.Unchecked)
             self._img_table.setItem(row, 0, chk)
 
-            desc = img.get("description", "") or img.get("md5", "")[:20]
+            desc = (img.get("description", "") or img.get("md5", "")[:20]
+                    or img.get("dhash", "")[:20])
             self._img_table.setItem(row, 1, QTableWidgetItem(desc))
             method = _method_labels.get(img.get("method", "md5"), "MD5")
             self._img_table.setItem(row, 2, QTableWidgetItem(method))
@@ -4419,7 +4520,9 @@ class NgSettingsDialog(QDialog):
         merged = {**old, **result}
         if (result.get("method") != old.get("method")
                 or result.get("md5", "") != old.get("md5", "")
-                or result.get("file_path", "") != old.get("file_path", "")):
+                or result.get("file_path", "") != old.get("file_path", "")
+                or result.get("dhash", "") != old.get("dhash", "")
+                or result.get("similar_level", 0) != old.get("similar_level", 0)):
             merged.pop("known_urls", None)
             merged.pop("size", None)
             merged["last_hit"] = ""

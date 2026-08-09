@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.385"
+APP_VER = "0.9.386"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4006,7 +4006,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
     unread_state_changed  = Signal(bool)        # 未読（赤帯）有無通知
     thread_recovered      = Signal()            # エラー→正常更新で復旧（タブのエラー赤解除用）
     _ng_image_apply       = Signal(str, str)    # (img_url, hide_mode) NG画像即時反映
-    _ng_image_md5_ready   = Signal(str, str)    # (img_url, md5) MD5取得完了→ダイアログ表示
+    _ng_image_md5_ready   = Signal(str, str, str)  # (img_url, md5, dhash) 取得完了→ダイアログ表示
     img_list_updated      = Signal(list)        # 更新後の img_list → 画像タブに反映
     _bulk_save_msg        = Signal(str)         # 一括保存の進捗/完了トースト（BG→UI）
 
@@ -4418,17 +4418,21 @@ class ThreadView(_MouseGestureMixin, QWidget):
         def _fetch_md5():
             try:
                 import hashlib
+                from futaba2b_settings import compute_dhash_bytes
                 data = self._fetcher.fetch_image_bytes(img_url)
                 if not data:
                     raise Exception("空データ")
                 md5 = hashlib.md5(data).hexdigest()
+                # 「似ている画像と一致」を選んだ時にすぐ使えるよう、
+                # ここで見た目のハッシュも作っておく（バイト列は手元にある）
+                dhash = compute_dhash_bytes(data)
             except Exception as ex:
                 print(f"[NG画像] 取得失敗: {ex}")
                 return
-            self._ng_image_md5_ready.emit(img_url, md5)
+            self._ng_image_md5_ready.emit(img_url, md5, dhash)
         _th.Thread(target=_fetch_md5, daemon=True).start()
 
-    def _on_ng_image_md5_ready(self, img_url: str, md5: str):
+    def _on_ng_image_md5_ready(self, img_url: str, md5: str, dhash: str = ""):
         """メインスレッド: MD5取得完了後にNG画像追加ダイアログを表示"""
         import re as _re
         from futaba2b_dialogs import NgImageEditDialog
@@ -4451,6 +4455,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             "hide_mode": "image",
             "known_urls": [img_url],
             "size": _sz,
+            "dhash": dhash, "similar_level": 0,
         }
         # 既登録チェック（同MD5）
         for img in self._settings.ng_images:
@@ -8655,7 +8660,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
     _email_data_ready = Signal(object)  # board topから取得したemail情報 {no: email}
     _catalog_json_ready = Signal(object)  # mode=json取得結果 {"map":{no:{email,id}}, "nos":set} or None
     _catalog_del_result = Signal(bool, str, str)  # 削除依頼(del)の結果（ok, msg, url）
-    _cat_ng_img_ready   = Signal(str, str, int, str)  # スレ画NG登録 (本画像URL, md5, size, 説明)
+    _cat_ng_img_ready   = Signal(str, str, int, str, str)  # スレ画NG登録 (本画像URL, md5, size, 説明, dhash)
     _entries_ready = Signal(list)   # スレッド→UI の安全な橋渡し
     _hover_img_ready  = Signal(bytes, object, int)  # (img_data, cursor_pos, hover_seq) BG→UI
     error_band_changed = Signal(str)  # 通信エラー赤帯（text=詳細, ""=解除）をスレタブへ伝播
@@ -9133,7 +9138,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         import threading as _th, re as _re
 
         def _job():
-            _full, _md5, _size = "", "", 0
+            _full, _md5, _size, _dhash = "", "", 0, ""
             try:
                 _m = _re.search(r"/res/(\d+)\.htm", thread_url)
                 if _m and self._board:
@@ -9147,9 +9152,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
             if _full:
                 try:
                     import hashlib
+                    from futaba2b_settings import compute_dhash_bytes
                     _data = self._fetcher.fetch_image_bytes(_full)
                     if _data:
                         _md5 = hashlib.md5(_data).hexdigest()
+                        _dhash = compute_dhash_bytes(_data)
                 except Exception as e:
                     print(f"[CatNG] 画像取得に失敗: {e}")
             if not _md5:
@@ -9157,11 +9164,12 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 _full = _full or thumb_url
                 _size = 0
             _name = _full.rsplit("/", 1)[-1] if _full else "スレ画"
-            self._cat_ng_img_ready.emit(_full, _md5, _size, _name)
+            self._cat_ng_img_ready.emit(_full, _md5, _size, _name, _dhash)
 
         _th.Thread(target=_job, daemon=True).start()
 
-    def _on_cat_ng_img_ready(self, img_url: str, md5: str, size: int, desc: str):
+    def _on_cat_ng_img_ready(self, img_url: str, md5: str, size: int, desc: str,
+                             dhash: str = ""):
         """メインスレッド: 取得結果をもとにNG画像の追加ダイアログを出す"""
         if not img_url:
             return
@@ -9182,6 +9190,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             "width": 0, "height": 0, "size_min": 0, "size_max": 0,
             "file_path": "", "hide_mode": "image",
             "known_urls": [img_url], "size": size,
+            "dhash": dhash, "similar_level": 0,
         }
         if not md5:
             # 本画像までたどれなかった場合。MD5が無いとダイアログは通らないし、

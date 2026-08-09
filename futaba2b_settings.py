@@ -18,6 +18,87 @@ SETTINGS_FILE = Path(SETTINGS_FILE_NAME)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 類似画像NG（見た目のハッシュ）
+# ──────────────────────────────────────────────────────────────────────────────
+# 画像の見た目を 64bit に潰した「dHash」を使う。9×8 に縮めて、横に並んだ画素の
+# 明暗の大小関係を 1bit ずつ並べたもの。縮小・再圧縮では大小関係が崩れにくいので、
+# 「同じ画像を縮めた/貼り直した」ものを拾える。
+# 実測（キャッシュ済み画像60枚）:
+#   50%縮小・JPEG再圧縮・25%縮小+JPEG … 距離は最大4
+#   別画像どうし                       … 最小8（1770組）
+#   5%トリミング                       … 中央値10
+# よってしきい値4なら誤爆ゼロで縮小・再圧縮を拾える。既定は「厳しい」。
+SIMILAR_LEVELS     = ("厳しい", "普通", "緩い")
+SIMILAR_THRESHOLDS = (4, 8, 12)
+# ハッシュ計算結果の保存先（URL→ハッシュ）。画像は不変なので使い回せる
+DHASH_MEMO_FILE = Path("data/img_dhash.json")
+
+
+def _dhash_from_pil(im) -> str:
+    """PIL画像 → dHash（16進16文字）"""
+    from PIL import Image as _PILImage
+    im = im.convert("L").resize((9, 8), _PILImage.Resampling.BILINEAR)
+    px = im.load()
+    bits = 0
+    for y in range(8):
+        for x in range(8):
+            bits = (bits << 1) | (1 if px[x, y] > px[x + 1, y] else 0)
+    return f"{bits:016x}"
+
+
+def compute_dhash_file(path: str) -> str:
+    """画像ファイル → dHash。読めなければ空文字。
+    JPEGは draft() で 1/8 に間引いてデコードするので速い（4ms前後）。
+    PNG/WebP は間引けないので30〜40msかかる。UIスレッドでは回さないこと。"""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            try:
+                im.draft("L", (32, 32))
+            except Exception:
+                pass
+            return _dhash_from_pil(im)
+    except Exception:
+        return ""
+
+
+def compute_dhash_bytes(data: bytes) -> str:
+    """画像バイト列 → dHash。読めなければ空文字。"""
+    if not data:
+        return ""
+    try:
+        import io
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            try:
+                im.draft("L", (32, 32))
+            except Exception:
+                pass
+            return _dhash_from_pil(im)
+    except Exception:
+        return ""
+
+
+def hamming_hex(a: str, b: str) -> int:
+    """16進ハッシュ同士の違うビット数。片方でも壊れていたら 64（最大）を返す。"""
+    try:
+        return bin(int(a, 16) ^ int(b, 16)).count("1")
+    except (ValueError, TypeError):
+        return 64
+
+
+def similar_threshold(entry: dict) -> int:
+    """NG画像エントリの「似ている度合い」→ 許容ビット数"""
+    lv = entry.get("similar_level", 0)
+    try:
+        lv = int(lv)
+    except (TypeError, ValueError):
+        lv = 0
+    return SIMILAR_THRESHOLDS[lv] if 0 <= lv < len(SIMILAR_THRESHOLDS) \
+        else SIMILAR_THRESHOLDS[0]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 板ごとの設定
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -615,10 +696,11 @@ class AppSettings:
         # ─────────────────────────────────────────────────────
         # NG画像リスト
         # 各エントリ: {
-        #   "enabled": bool, "method": "type_size"|"file"|"md5",
+        #   "enabled": bool, "method": "type_size"|"file"|"md5"|"similar",
         #   "image_type": str, "width": int, "height": int,
         #   "size_min": int, "size_max": int,
         #   "file_path": str, "md5": str,
+        #   "dhash": str, "similar_level": int,   # similar のとき（0=厳しい）
         #   "last_hit": str, "expires": str,
         #   "is_reverse_ng": bool, "description": str
         # }
@@ -1444,6 +1526,18 @@ class NgFilter:
         # NG画像判定用: ディスクキャッシュ画像の URL→MD5 メモ。画像は不変のため
         # invalidate_cache() では消さない（NG設定変更に依存しない事実キャッシュ）。
         self._file_md5_memo: dict[str, str] = {}
+        # 類似画像NG用: URL→dHash。PNG/WebPは1枚30〜40msかかるので、判定の場
+        # （＝UIスレッド）では絶対に計算せず、裏のスレッドで作ってここに溜める。
+        # 溜まっていない画像はその回は「一致しない」で通し、出来上がったら
+        # dhash_batch_done で呼び出し側に再描画してもらう。
+        self._dhash_memo: dict[str, str] = {}
+        self._dhash_loaded  = False
+        self._dhash_pending: set[str] = set()
+        import threading as _threading
+        self._dhash_lock    = _threading.Lock()
+        self._dhash_worker  = None
+        self._dhash_unsaved = 0
+        self.dhash_batch_done = None    # 裏の計算が一段落した時に呼ばれる
 
     def invalidate_cache(self) -> None:
         """ng_words/ng_images変更後にキャッシュをすべてクリアする"""
@@ -1762,6 +1856,13 @@ class NgFilter:
             if smin or smax:
                 p.append(f"{smin or 0}〜{smax or ''}B")
             return "種類/サイズ指定" + (f"({' '.join(p)})" if p else "")
+        if e.get("method") == "similar":
+            _lv = e.get("similar_level", 0)
+            _lv = SIMILAR_LEVELS[_lv] if 0 <= _lv < len(SIMILAR_LEVELS) \
+                else SIMILAR_LEVELS[0]
+            _d = (e.get("description", "") or "").strip()
+            return (f"{_d} (似ている画像/{_lv})" if _d
+                    else f"似ている画像 {e.get('dhash', '')[:8]}… ({_lv})")
         md5 = e.get("md5", "")
         name = os.path.basename(e.get("file_path", "") or "")
         if name:
@@ -1863,6 +1964,9 @@ class NgFilter:
                 if ng_smin > 0 and size < ng_smin: continue
                 if ng_smax > 0 and size > ng_smax: continue
                 matched = True
+            elif method == "similar":
+                matched = (self._known_url_hit(img_ng, url)
+                           or self._similar_hit(img_ng, url))
             elif method in ("md5", "file"):
                 stored_md5 = img_ng.get("md5", "").lower()
                 if self._known_url_hit(img_ng, url):
@@ -1915,6 +2019,15 @@ class NgFilter:
                 if ng_smin > 0 and size < ng_smin: continue
                 if ng_smax > 0 and size > ng_smax: continue
                 matched = True
+
+            elif method == "similar":
+                # 見た目のハッシュ（dHash）で照合する。ハッシュ計算は裏の
+                # スレッドに任せてあるので、ここではメモを見るだけで終わる。
+                # MD5と違い known_urls への学習はしない。照合が既にメモ引き
+                # 1回で済むうえ、リストが伸びると _known_url_hit の総当たりが
+                # かえって重くなるため（登録時のURLだけ残す）。
+                matched = (self._known_url_hit(img_ng, url)
+                           or self._similar_hit(img_ng, url))
 
             elif method in ("md5", "file"):
                 # 1) known_urls による URL直接照合（キャッシュ不要）。
@@ -1985,6 +2098,116 @@ class NgFilter:
             memo.clear()
         memo[url] = val
         return val
+
+    # ── 類似画像NG: URL→dHash（計算は裏のスレッド） ──────────────────────────
+    def _load_dhash_memo(self) -> None:
+        """保存してあるハッシュを読み込む（初回だけ）。
+        画像は不変なので、前回計算した分をそのまま使い回せる。"""
+        if self._dhash_loaded:
+            return
+        self._dhash_loaded = True
+        try:
+            if DHASH_MEMO_FILE.exists():
+                raw = json.loads(DHASH_MEMO_FILE.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    self._dhash_memo.update(
+                        {k: v for k, v in raw.items() if isinstance(v, str)})
+        except Exception as e:
+            print(f"[類似画像] ハッシュ保存の読み込みに失敗: {e}")
+
+    def save_dhash_memo(self) -> None:
+        """計算済みハッシュをディスクへ書き出す（終了時・一段落した時）。
+        計算スレッドと終了処理が同時に書きに来ても壊れないよう鍵を取る。"""
+        if not self._dhash_loaded or not self._dhash_unsaved:
+            return
+        with self._dhash_lock:
+            if not self._dhash_unsaved:
+                return
+            self._dhash_unsaved = 0
+            try:
+                memo = dict(self._dhash_memo)
+                if len(memo) > 30000:      # 肥大防止（新しい方から残す）
+                    memo = dict(list(memo.items())[-20000:])
+                    self._dhash_memo = dict(memo)
+                DHASH_MEMO_FILE.parent.mkdir(parents=True, exist_ok=True)
+                tmp = DHASH_MEMO_FILE.with_name(DHASH_MEMO_FILE.name + ".tmp")
+                tmp.write_text(json.dumps(memo, ensure_ascii=False), encoding="utf-8")
+                _os2.replace(tmp, DHASH_MEMO_FILE)
+            except Exception as e:
+                print(f"[類似画像] ハッシュ保存に失敗: {e}")
+
+    def _file_dhash_for(self, url: str) -> str | None:
+        """URLのディスクキャッシュ画像のdHashを返す。
+
+        まだ計算していなければ裏のスレッドへ積んで None を返す（この回は
+        「一致しない」扱い）。UIスレッドを止めないための作りで、計算が
+        一段落したら dhash_batch_done 経由で再描画してもらう。"""
+        self._load_dhash_memo()
+        hit = self._dhash_memo.get(url)
+        if hit is not None:
+            return hit or None          # "" = 読めなかった画像（再計算しない）
+        if not self._get_cached_path(url):
+            return None                 # 未ダウンロード。落ちてきたら計算する
+        with self._dhash_lock:
+            if url in self._dhash_pending:
+                return None
+            self._dhash_pending.add(url)
+            self._start_dhash_worker()
+        return None
+
+    def stop_dhash_worker(self) -> None:
+        """積んである計算をやめる（終了時用）。
+
+        終了処理の最中に何百枚もハッシュを作り続けると、Qtの破棄と
+        重なって落ちる余地が残る。今の1枚を終えたら畳ませる。"""
+        with self._dhash_lock:
+            self._dhash_pending.clear()
+
+    def _start_dhash_worker(self) -> None:
+        """ハッシュ計算スレッドを起こす（呼び出し元は _dhash_lock 保持中）"""
+        w = self._dhash_worker
+        if w is not None and w.is_alive():
+            return
+        import threading
+        self._dhash_worker = threading.Thread(
+            target=self._dhash_worker_run, name="dhash", daemon=True)
+        self._dhash_worker.start()
+
+    def _dhash_worker_run(self) -> None:
+        """裏で dHash を計算し続け、積まれた分が尽きたら通知して終わる"""
+        lock = self._dhash_lock
+        done = 0
+        while True:
+            with lock:
+                if not self._dhash_pending:
+                    self._dhash_worker = None
+                    break
+                url = self._dhash_pending.pop()
+            path = self._get_cached_path(url)
+            val = compute_dhash_file(path) if path else ""
+            # 上限は save_dhash_memo 側で「新しい方を残す」形に間引く。
+            # ここで丸ごと捨てると保存済みの分まで作り直しになる。
+            self._dhash_memo[url] = val
+            self._dhash_unsaved += 1
+            done += 1
+        if done:
+            self.save_dhash_memo()
+            cb = self.dhash_batch_done
+            if cb is not None:
+                try:
+                    cb()
+                except Exception as e:
+                    print(f"[類似画像] 再描画通知に失敗: {e}")
+
+    def _similar_hit(self, img_ng: dict, url: str) -> bool:
+        """類似画像NGの照合。ハッシュが未計算なら False（次の描画で効く）"""
+        stored = (img_ng.get("dhash") or "").strip().lower()
+        if not stored:
+            return False
+        mine = self._file_dhash_for(url)
+        if not mine:
+            return False
+        return hamming_hex(mine, stored) <= similar_threshold(img_ng)
 
     # ── 置換・芝刈り置換（フラット化キャッシュ使用） ────────────────────────
     _MOW_PAT = re.compile(

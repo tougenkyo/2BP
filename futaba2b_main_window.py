@@ -265,6 +265,14 @@ class MainWindow(QMainWindow):
         # タブアイコン設定シグナル（BGスレッド→メインスレッド）
         self._tab_icon_signal.connect(self._on_tab_icon_ready)
         self._main_thread_call.connect(lambda f: f())
+        # 類似画像NG: 見た目のハッシュは裏のスレッドで作るので、出来上がったら
+        # 表示中のスレを描き直して反映させる（初回だけ少し遅れて効く）
+        self._dhash_redraw_at: float = 0.0
+        try:
+            self._settings.ng_filter.dhash_batch_done = (
+                lambda: self._main_thread_call.emit(self._on_dhash_batch_done))
+        except Exception as e:
+            print(f"[類似画像] 通知の接続に失敗: {e}")
         # カタログアイコンキャッシュ
         self._catalog_icon_cache: "QIcon | None" = None
         self._catalog_icon_checked: bool = False
@@ -4935,6 +4943,22 @@ class MainWindow(QMainWindow):
                     # アウター切替は _on_outer_tab_changed が消化）。
                     w._ng_dirty = True
 
+    def _on_dhash_batch_done(self):
+        """類似画像NG用のハッシュが一段落した → 表示中のスレを描き直す。
+
+        描き直すと新しい画像のハッシュがまた積まれ、終わるとまたここに来る。
+        メモが埋まるにつれ収束するが、その間に描き直しが連発しないよう
+        2秒の間隔を空ける。"""
+        import time as _t
+        _now = _t.monotonic()
+        if _now - getattr(self, "_dhash_redraw_at", 0.0) < 2.0:
+            return
+        self._dhash_redraw_at = _now
+        try:
+            self._redraw_all_threads_with_ng()
+        except Exception as e:
+            print(f"[類似画像] 再描画に失敗: {e}")
+
     def mark_all_threads_ng_dirty(self, keep_view=None):
         """開いている全ThreadViewに「NG再描画が要る」印を付ける。
 
@@ -5636,6 +5660,14 @@ class MainWindow(QMainWindow):
         # 止めて、以後のバックグラウンド由来のビュー操作を黙らせる。
         from futaba2b_app_qt import set_app_shutting_down
         set_app_shutting_down()
+        try:
+            # 破棄中のビューを触らせない。計算済みハッシュは書き出しておく
+            _nf = self._settings.ng_filter
+            _nf.dhash_batch_done = None
+            _nf.stop_dhash_worker()
+            _nf.save_dhash_memo()
+        except Exception:
+            pass
         try:
             if getattr(self, "_ar_mgr", None) is not None:
                 self._ar_mgr.stop()
