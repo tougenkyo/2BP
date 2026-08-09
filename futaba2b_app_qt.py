@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.382"
+APP_VER = "0.9.383"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10418,7 +10418,9 @@ class AutoRefreshManager(QObject):
         self._remain.append(entry.interval_sec)
         self._new_cnt.append(0)
         self._res_cnt.append(0)
-        if not self._timer.isActive():
+        # 監視を止めている間に登録しても勝手に動き出さない。
+        # （止めたつもりが解除されるため。止めていない時は従来どおり開始する）
+        if not self._timer.isActive() and not getattr(self, '_user_stopped', False):
             self._timer.start()
         self.entry_added.emit()
 
@@ -10488,8 +10490,12 @@ class AutoRefreshManager(QObject):
                 self._remain[idx] = new_interval_sec
 
     def is_active(self):  return self._timer.isActive()
-    def start(self):      self._timer.start()
+    def start(self):
+        self._user_stopped = False
+        self._timer.start()
     def stop(self):
+        # 止めた状態を覚えておく（新規登録で勝手に再開させないため）
+        self._user_stopped = True
         self._timer.stop()
         self._flush_settings()
 
@@ -11529,7 +11535,12 @@ class AutoRefreshDialog(QDialog):
         self._tabs.addTab(mod_w, "変更・追加")
 
         if self._init_entry:
-            self._fill_form_from_entry(self._init_entry)
+            # 未登録のスレを「追加」する場合、間隔の初期値は板設定から
+            # 入れてあるので、エントリ側の既定値で上書きしない。
+            _known = (self._mgr.find_by_url(self._init_entry.url)
+                      if hasattr(self._mgr, 'find_by_url') else None)
+            self._fill_form_from_entry(self._init_entry,
+                                       keep_intervals=(_known is None))
 
         self._refresh_list()
 
@@ -11766,8 +11777,11 @@ class AutoRefreshDialog(QDialog):
         # adaptive_intervals を pct で辞書化して各行に適用（100%行はchk=None）
         adaptive = getattr(e, 'adaptive_intervals', [])
         
-        if not adaptive and keep_intervals:
-            return   # 新規フォーム同期時：デフォルト設定で初期化済みのスピンを維持
+        if keep_intervals:
+            # 新規追加のフォーム：スピンは板設定のデフォルト間隔で初期化済みなので
+            # 触らない。追加用に組み立てたエントリは中身が既定値のことがあり、
+            # 「空の時だけ維持」にしていると板設定が上書きされて反映されなかった。
+            return
         rule_map = {r.get('pct'): r for r in adaptive}
         for chk, sp, pct, row_w, lbl_w, is_sec in self._adaptive_rows:
             rule = rule_map.get(pct, {})
