@@ -224,6 +224,7 @@ class CatalogBridge(QObject):
     copy_to_clipboard_requested = Signal(str)  # クリップボードコピー
     add_thread_ng_requested  = Signal(str)   # スレッドURLをNGに追加
     catalog_del_requested    = Signal(str)   # 削除依頼(del) → スレッドURL
+    catalog_ng_image_requested = Signal(str, str)  # スレ画NG登録 (スレURL, サムネURL)
     scroll_bottom_reached    = Signal()      # スクロール末尾 → 更新トリガー
     scroll_top_reached       = Signal()      # スクロール先頭 → 更新トリガー
     cat_hover_enter          = Signal(str, str, str)  # (url, thumb_url, comment)
@@ -257,6 +258,11 @@ class CatalogBridge(QObject):
     @Slot(str)
     def catalogDel(self, url: str):
         self.catalog_del_requested.emit(url)
+
+    @Slot(str, str)
+    def catalogNgImage(self, thread_url: str, thumb_url: str):
+        """カタログのスレ画をNG登録する（スレURL・サムネURL）"""
+        self.catalog_ng_image_requested.emit(thread_url, thumb_url)
 
     @Slot()
     def scrollBottom(self):

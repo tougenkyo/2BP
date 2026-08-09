@@ -1064,6 +1064,11 @@ document.addEventListener('contextmenu', function(e) {
         item.onclick = function(){ fn(); document.body.removeChild(menu); };
         menu.appendChild(item);
     }
+    addMenuItem('このスレ画をNG登録する', function(){
+        var img = el.querySelector('.entry-img img');
+        if (typeof _b === 'function')
+            _b('catalogNgImage', [url, img ? (img.getAttribute('src') || '') : '']);
+    });
     addMenuItem('外部ブラウザで開く', function(){ openUrl(url); });
     addMenuItem('URLをコピーする',    function(){
         if(typeof _b==='function') _b('copyToClipboard',[url]);

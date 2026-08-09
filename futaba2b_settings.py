@@ -1865,10 +1865,10 @@ class NgFilter:
                 matched = True
             elif method in ("md5", "file"):
                 stored_md5 = img_ng.get("md5", "").lower()
-                if not stored_md5:
-                    continue
                 if self._known_url_hit(img_ng, url):
                     matched = True
+                elif not stored_md5:
+                    continue
                 else:
                     # _check_image と同じ最適化: サイズ事前フィルタ＋URL→MD5メモ
                     _esz = img_ng.get("size", 0)
@@ -1917,13 +1917,15 @@ class NgFilter:
                 matched = True
 
             elif method in ("md5", "file"):
-                stored_md5 = img_ng.get("md5", "").lower()
-                if not stored_md5:
-                    continue
-                # 1) known_urls による URL直接照合（キャッシュ不要）
+                # 1) known_urls による URL直接照合（キャッシュ不要）。
+                #    カタログから登録した場合など、MD5が無くURLだけのエントリも
+                #    あるため、MD5の有無を見る前に照合する。
                 known_urls = img_ng.get("known_urls", [])
+                stored_md5 = img_ng.get("md5", "").lower()
                 if self._known_url_hit(img_ng, url):
                     matched = True
+                elif not stored_md5:
+                    continue
                 else:
                     # 2) サイズ事前フィルタ: エントリに登録済みサイズがあり、レスの
                     #    ファイルサイズ(-(N B)由来)と不一致ならMD5計算自体を省略

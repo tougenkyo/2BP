@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.384"
+APP_VER = "0.9.385"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8655,6 +8655,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
     _email_data_ready = Signal(object)  # board topから取得したemail情報 {no: email}
     _catalog_json_ready = Signal(object)  # mode=json取得結果 {"map":{no:{email,id}}, "nos":set} or None
     _catalog_del_result = Signal(bool, str, str)  # 削除依頼(del)の結果（ok, msg, url）
+    _cat_ng_img_ready   = Signal(str, str, int, str)  # スレ画NG登録 (本画像URL, md5, size, 説明)
     _entries_ready = Signal(list)   # スレッド→UI の安全な橋渡し
     _hover_img_ready  = Signal(bytes, object, int)  # (img_data, cursor_pos, hover_seq) BG→UI
     error_band_changed = Signal(str)  # 通信エラー赤帯（text=詳細, ""=解除）をスレタブへ伝播
@@ -8786,6 +8787,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._bridge.copy_to_clipboard_requested.connect(self._copy_to_clipboard)
         self._bridge.add_thread_ng_requested.connect(self._on_add_thread_ng)
         self._bridge.catalog_del_requested.connect(self._on_catalog_del)
+        self._bridge.catalog_ng_image_requested.connect(self._on_catalog_ng_image)
+        self._cat_ng_img_ready.connect(self._on_cat_ng_img_ready)
         self._catalog_del_result.connect(self._on_catalog_del_result)
         self._catalog_err_sig.connect(self._on_catalog_err)
         self._bridge.scroll_bottom_reached.connect(
@@ -9116,6 +9119,95 @@ class CatalogView(_MouseGestureMixin, QWidget):
             self._settings.save()
         # カタログを再描画してNGスレを除外
         self._re_render()
+
+    def _on_catalog_ng_image(self, thread_url: str, thumb_url: str):
+        """カタログのスレ画をNG登録する。
+
+        カタログはサムネURLしか持たず、本画像のURL・MD5・拡張子が分からない。
+        そこでスレを1回取得して本画像URLを調べ、その画像からMD5を出して
+        通常のNG画像として登録する（別スレに貼られた同じ画像にも効く）。
+        取得に失敗した場合はサムネURLだけで登録する。ふたばは本画像とサムネで
+        ファイル名の数字が同じなので、そのスレの画像は隠せる。"""
+        if not thread_url:
+            return
+        import threading as _th, re as _re
+
+        def _job():
+            _full, _md5, _size = "", "", 0
+            try:
+                _m = _re.search(r"/res/(\d+)\.htm", thread_url)
+                if _m and self._board:
+                    _th_data = self._fetcher.fetch_thread(self._board, int(_m.group(1)))
+                    if _th_data and _th_data.res_list:
+                        _op = _th_data.res_list[0]
+                        _full = _op.image_url or ""
+                        _size = getattr(_op, "file_size_bytes", 0) or 0
+            except Exception as e:
+                print(f"[CatNG] スレ取得に失敗: {e}")
+            if _full:
+                try:
+                    import hashlib
+                    _data = self._fetcher.fetch_image_bytes(_full)
+                    if _data:
+                        _md5 = hashlib.md5(_data).hexdigest()
+                except Exception as e:
+                    print(f"[CatNG] 画像取得に失敗: {e}")
+            if not _md5:
+                # 本画像までたどれなかった → サムネURLだけで登録（このスレ限定）
+                _full = _full or thumb_url
+                _size = 0
+            _name = _full.rsplit("/", 1)[-1] if _full else "スレ画"
+            self._cat_ng_img_ready.emit(_full, _md5, _size, _name)
+
+        _th.Thread(target=_job, daemon=True).start()
+
+    def _on_cat_ng_img_ready(self, img_url: str, md5: str, size: int, desc: str):
+        """メインスレッド: 取得結果をもとにNG画像の追加ダイアログを出す"""
+        if not img_url:
+            return
+        from futaba2b_dialogs import NgImageEditDialog
+        for img in self._settings.ng_images:
+            if md5 and img.get("md5") == md5:
+                _k = img.setdefault("known_urls", [])
+                if img_url not in _k:
+                    _k.append(img_url)
+                self._settings.invalidate_ng_cache()
+                self._settings.save()
+                self._re_render()
+                return
+        preset = {
+            "enabled": True, "method": "md5", "md5": md5,
+            "description": desc, "expires": "無制限", "expires_at": "",
+            "is_reverse_ng": False, "image_type": "ANY",
+            "width": 0, "height": 0, "size_min": 0, "size_max": 0,
+            "file_path": "", "hide_mode": "image",
+            "known_urls": [img_url], "size": size,
+        }
+        if not md5:
+            # 本画像までたどれなかった場合。MD5が無いとダイアログは通らないし、
+            # 選べる条件も無いので、そのまま登録する（このスレの画像限定で効く）
+            entry = dict(preset)
+        else:
+            dlg = NgImageEditDialog(preset, parent=self, is_new=True)
+            if dlg.exec() != dlg.DialogCode.Accepted:
+                return
+            entry = dlg.get_result()
+            if not entry:
+                return
+        entry.setdefault("known_urls", [img_url])
+        if size:
+            entry.setdefault("size", size)
+        if md5 and not entry.get("md5"):
+            entry["md5"] = md5
+        self._settings.ng_images.append(entry)
+        self._settings.invalidate_ng_cache()
+        self._settings.save()
+        self._re_render()
+        _p = self
+        while _p is not None and not hasattr(_p, "mark_all_threads_ng_dirty"):
+            _p = _p.parent()
+        if _p is not None:
+            _p.mark_all_threads_ng_dirty()
 
     def _on_catalog_del(self, url: str):
         """右クリック→削除依頼(del): /del.php に削除依頼を送る。
