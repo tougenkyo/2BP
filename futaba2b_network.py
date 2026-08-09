@@ -411,6 +411,78 @@ class FutabaFetcher:
         # ホスト名を含めたパス: may.2chan.net/b/res/NNNN.htm
         return THREAD_CACHE_DIR / p.hostname / p.path.lstrip("/")
 
+    # 削除レスの本文救出用。<blockquote>…</blockquote> と赤字の削除通知
+    _BQ_RE      = re.compile(r"<blockquote[^>]*>(.*?)</blockquote>", re.S | re.I)
+    _DELFONT_RE = re.compile(r'<font\s+color="#ff0000">(.*?)</font>', re.S | re.I)
+
+    @staticmethod
+    def _find_bq(html: str, start: int):
+        """start以降の最初の <blockquote>…</blockquote> を (開始, 終了, 中身) で返す"""
+        m = FutabaFetcher._BQ_RE.search(html, start)
+        return (m.start(), m.end(), m.group(1)) if m else (-1, -1, "")
+
+    def _restore_deleted_bodies(self, url: str, html: str) -> str:
+        """削除されて本文が消えたレスに、1つ前のキャッシュにある本文を埋め戻す。
+
+        ふたばは投稿者削除・削除依頼のレスを
+          <blockquote><font color="#ff0000">理由</font></blockquote>
+        だけにして本文を落とす。表示中なら前回のスレデータから引き継げるが
+        （_carry_over_deleted_content）、アプリを開き直すと引き継ぎ元が無く
+        本文が失われていた。上書き前のキャッシュから拾って本文を戻し、
+        戻したHTMLをキャッシュにも書くので、次に開いた時も残る。"""
+        if "削除されました" not in html and "隔離されました" not in html:
+            return html
+        try:
+            old = self._load_thread_cache(url)
+        except Exception:
+            old = None
+        if not old:
+            return html
+        try:
+            # 旧HTMLの delcheck位置を1回だけ索引化する
+            old_pos = {m.group(1): m.end()
+                       for m in re.finditer(r'id="delcheck(\d+)"', old)}
+            if not old_pos:
+                return html
+            out, cur, fixed = [], 0, 0
+            for m in re.finditer(r'id="delcheck(\d+)"', html):
+                no = m.group(1)
+                bs, be, inner = self._find_bq(html, m.end())
+                if bs < 0:
+                    continue
+                _f = self._DELFONT_RE.search(inner)
+                if not _f:
+                    continue                      # 削除されていない
+                if self._DELFONT_RE.sub("", inner).strip(" 　<br/>\r\n"):
+                    continue                      # 本文が残っている（スレあき削除等）
+                op = old_pos.get(no)
+                if op is None:
+                    continue
+                _obs, _obe, old_inner = self._find_bq(old, op)
+                if _obs < 0 or not old_inner.strip():
+                    continue
+                _of = self._DELFONT_RE.search(old_inner)
+                if _of:
+                    # 旧側も削除通知付き。本文まで入っていれば丸ごと使う
+                    if not self._DELFONT_RE.sub("", old_inner).strip(" 　<br/>\r\n"):
+                        continue
+                    _body = self._DELFONT_RE.sub("", old_inner).lstrip(" 　\r\n")
+                    _body = re.sub(r"^(?:<br\s*/?>)+", "", _body, flags=re.I)
+                else:
+                    _body = old_inner
+                out.append(html[cur:bs])
+                out.append(f"<blockquote>{_f.group(0)}<br>{_body}</blockquote>")
+                cur = be
+                fixed += 1
+            if not fixed:
+                return html
+            out.append(html[cur:])
+            print(f"[NET] 削除レスの本文を{fixed}件戻した  url={url}")
+            return "".join(out)
+        except Exception as e:
+            print(f"[NET] 削除レスの本文復元に失敗: {e}")
+            return html
+
     def _save_thread_cache(self, url: str, html: str) -> None:
         try:
             p = self._cache_path(url)
@@ -1600,6 +1672,9 @@ class FutabaFetcher:
             print(f'[NET] fetch_thread  html_len={len(html)}  decoded_ok=True')
             if len(html) >= 300_000:
                 print(f'[NET] fetch_thread  WARNING: large html ({len(html)//1024}KB)  url={url}')
+            # 削除で本文が消えたレスに、上書き前のキャッシュから本文を戻す。
+            # 戻した状態で保存・解析するので、開き直しても本文が残る。
+            html = self._restore_deleted_bodies(url, html)
             self._save_thread_cache(url, html)     # キャッシュ保存
             self._clear_diff_sidecar(url)          # フルGETで完全化 → diff不要
             thread = self._parse_thread(html, board, no, url)
