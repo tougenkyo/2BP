@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.394"
+APP_VER = "0.9.395"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8264,8 +8264,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
 
     def _on_delete_res_with_hide(self, no: int, pwd: str, onlyimg: bool, hide: bool):
         """記事削除 + hideが立っていたらNGと同様に非表示化。
-        「画像だけ」(onlyimg)はサーバ上でレス本体が残るため、レスを非表示にせず
-        del済マークも付けない（成功時に画像部分のみDOMから取り除く）。"""
+        「画像だけ」(onlyimg)はサーバ上でレス本体が残るため、レスを非表示にしない
+        （成功時に画像部分のみDOMから取り除く）。
+
+        No.右の「del済」は削除依頼(del)を出した印なので、削除キーによる
+        記事削除では付けない。以前は付けていたため、自分で消しただけの
+        レスに del済 が出ていた。"""
         board = self._board
         turl  = (self._thread.url if self._thread else "") or ""
         self._pending_del_no = no
@@ -8276,7 +8280,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # チェック状態を次回デフォルトとして記憶
         self._settings.del_hide_checked = bool(hide)
         if not onlyimg:
-            self._mark_del_res(no)
+            # 以前のバージョンで付いてしまった del済 はここで落とす
+            self._unmark_del_res(no)
             if hide:
                 self._hide_res_after_del(no)
         self._settings.save()
@@ -8293,6 +8298,13 @@ class ThreadView(_MouseGestureMixin, QWidget):
         lst = self._settings.del_res_nos.setdefault(thread_url, [])
         if no not in lst:
             lst.append(no)
+
+    def _unmark_del_res(self, no: int):
+        """del済の印を外す（削除依頼ではなかったレス用）。"""
+        thread_url = (self._thread.url if self._thread else "") or ""
+        lst = self._settings.del_res_nos.get(thread_url)
+        if lst and no in lst:
+            lst.remove(no)
 
     def _hide_res_after_del(self, no: int):
         """削除後にNGと同様にレスを非表示化（設定保存のみ、reload_threadは呼び出し元任せ）"""
