@@ -1739,6 +1739,13 @@ def _elapsed(datetime_str: str) -> str:
 
 _UL_IMG_EXTS = re.compile(r'\.(jpe?g|png|gif|webp|bmp)$', re.IGNORECASE)
 
+# うｐろだのパターンを当てる時のフラグ。
+# Python3 の \w \d は既定で日本語も拾うため、"f355239.mp4前半" のような
+# 書き方だと r"f\d+\.\w+" が「前半」まで飲み込んでURLが壊れ、動画も画像も
+# 開けなくなっていた。re.ASCII を付けると \w が [A-Za-z0-9_] だけになり、
+# 拡張子の直後で止まる。ファイル名は半角なので既存のパターンのまま直る。
+_UL_FLAGS = re.IGNORECASE | re.ASCII
+
 
 def uploader_image_urls(text: str, uploaders: list,
                         include_video: bool = False) -> list:
@@ -1754,7 +1761,7 @@ def uploader_image_urls(text: str, uploaders: list,
     matches = []
     for ul in uploaders:
         try:
-            for m in re.finditer(ul["pattern"], text, re.IGNORECASE):
+            for m in re.finditer(ul["pattern"], text, _UL_FLAGS):
                 matches.append((m.start(), m.end(), m.group(0), ul))
         except Exception:
             pass
@@ -1790,7 +1797,7 @@ def _apply_uploaders(text: str, uploaders: list,
     matches = []
     for ul in uploaders:
         try:
-            for m in re.finditer(ul["pattern"], text, re.IGNORECASE):
+            for m in re.finditer(ul["pattern"], text, _UL_FLAGS):
                 matches.append((m.start(), m.end(), m.group(0), ul))
         except Exception:
             pass
