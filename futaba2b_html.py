@@ -964,6 +964,27 @@ document.addEventListener('click', function(e) {
         if (_k) { window._shownImgs = window._shownImgs || {}; window._shownImgs[_k] = 1; }
     } catch (er) {}
 }, true);
+/* うｐろだ動画の1コマ目が出せなかった時に「▶＋拡張子」の絵へ差し替える。
+   組み込みブラウザが持っていない形式（mp4/H.264など）や、取得に失敗した
+   場合に呼ばれる。<img> に置き換えるので、ぼかし・右クリックメニューなど
+   既存の仕組みはそのまま効く。 */
+function _giVidFallback(vd) {
+    try {
+        if (!vd || !vd.parentNode) return;
+        var ext = (vd.getAttribute('data-ext') || '動画').slice(0, 6)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 72">'
+                + '<rect width="80" height="72" rx="3" fill="#3a3a3a"/>'
+                + '<path d="M31 20 L57 36 L31 52 Z" fill="#e8e8e8"/>'
+                + '<text x="40" y="67" fill="#bbb" font-size="10" text-anchor="middle" '
+                + 'font-family="sans-serif">' + ext + '</text></svg>';
+        var img = document.createElement('img');
+        img.className = 'gv-ph thumb-shown';
+        img.setAttribute('data-full', vd.getAttribute('data-full') || '');
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        vd.parentNode.replaceChild(img, vd);
+    } catch (e) {}
+}
 /* 作り直した後に、解除済みの画像へ印を戻す */
 function restoreShownImgs() {
     var m = window._shownImgs;

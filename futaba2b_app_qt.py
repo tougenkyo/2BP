@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.389"
+APP_VER = "0.9.390"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1187,6 +1187,31 @@ _QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
                 ".qt-row.new-res{border-left:4px solid #cc1105;padding-left:4px;}"
                 ".qt-row.self-res{border-left:4px solid #1a6fd4;padding-left:4px;}"
                 ".del-done{color:#cc1105;font-weight:bold;font-size:8pt;}")
+
+def _video_ph_svg(ext: str) -> str:
+    """うｐろだ動画の代わりに出す絵（▶と拡張子）のSVG。
+
+    組み込みブラウザ(QtWebEngine)はH.264を持たないため、mp4は <video> に
+    しても1コマ目すら出ない（error code 4）。ファイルを取りに行くだけ無駄
+    なので、最初からこの絵を出す。<img> なので、ぼかし・右クリックメニュー
+    など既存の仕組みがそのまま効く。"""
+    _e = (ext or "動画")[:6]
+    _e = _e.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 72">'
+        '<rect width="80" height="72" rx="3" fill="#3a3a3a"/>'
+        '<path d="M31 20 L57 36 L31 52 Z" fill="#e8e8e8"/>'
+        '<text x="40" y="67" fill="#bbb" font-size="10" text-anchor="middle" '
+        'font-family="sans-serif">' + _e + '</text>'
+        '</svg>'
+    )
+
+
+def _video_ph_src(ext: str) -> str:
+    """上のSVGを img src に入れられる data: URI にする"""
+    from urllib.parse import quote as _q
+    return "data:image/svg+xml;charset=utf-8," + _q(_video_ph_svg(ext), safe="")
+
 
 def _img_mode_css(cols: int) -> str:
     return (".wrap{display:flex;justify-content:center;padding:8px}.grid{display:inline-grid;"
@@ -7351,13 +7376,23 @@ class ThreadView(_MouseGestureMixin, QWidget):
             if r.res_idx == 0 and not it.get('is_ul'):
                 _gi_cls += " gi-op"
             _gi_del = '<div class="gi-del">del済</div>' if r.no in _delnos else ''
-            # うｐろだの動画はサムネ画像が無いので、<video> の1コマ目を出す。
-            # #t=0.1 を付けるとChromiumがその位置まで読んで絵を出してくれる。
-            # ふたばの動画は thumb_url に本物のサムネがあるので従来どおり <img>。
+            # うｐろだの動画はサムネ画像が無い。組み込みブラウザ(QtWebEngine)は
+            # H.264を持っていないので mp4 は <video> にしても真っ黒のままになる。
+            # webm(VP8/VP9)だけは1コマ目が出せるので <video>、それ以外は
+            # 「▶＋拡張子」の絵を出す。読めなかった時も onerror で同じ絵に差し替える。
             if it.get('is_video'):
-                _media = ('<video src="'+_esc(it['thumb'], quote=True)+'#t=0.1"'
-                          ' preload="metadata" muted playsinline'
-                          ' data-full="'+_ua+'"></video>')
+                _ext_v = (it['name'].rsplit('.', 1)[-1].upper()
+                          if '.' in it['name'] else '動画')
+                if it['url'].lower().split('?')[0].endswith('.webm'):
+                    _media = ('<video src="'+_esc(it['thumb'], quote=True)+'#t=0.1"'
+                              ' preload="metadata" muted playsinline'
+                              ' data-ext="'+_esc(_ext_v, quote=True)+'"'
+                              ' data-full="'+_ua+'"'
+                              ' onerror="_giVidFallback(this)"></video>')
+                else:
+                    _media = ('<img class="gv-ph thumb-shown" src="'
+                              + _video_ph_src(_ext_v) + '"'
+                              ' data-full="'+_ua+'">')
             else:
                 _media = ('<img src="'+_esc(it['thumb'], quote=True)+'" loading="lazy"'
                           ' data-full="'+_ua+'">')
