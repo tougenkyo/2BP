@@ -2659,7 +2659,10 @@ def thread_to_html(thread, show_deleted: bool = False,
     # rp-* はポップアップ用（返信モードの設定）。このページ自体が返信モードなので
     # 同じ値になるが、画像/引用モードでも同じクラスが付く（そちらは _page_body_class）。
     _lv = blur_level or "mid"
+    # show_deleted: 「削除:見る」の状態。作り直しでも消えないよう最初から付ける
+    # （付けないと、NGの使う/解除など全体を描き直すたびに勝手に隠れる）
     _bc = (["m-reply", f"blur-{_lv}", f"rp-{_lv}"]
+           + (["show-deleted"] if show_deleted else [])
            + (["blur-res", "rp-res"] if blur_res else [])
            + (["blur-ul", "rp-ul"] if blur_ul else []))
     _add = " ".join(_bc)

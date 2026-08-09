@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.395"
+APP_VER = "0.9.396"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4833,13 +4833,18 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return
         def _go():
             self._known_res_count = 0
-            self._del_showing = False
+            # 「削除:見る」の状態は触らない。作り直したHTMLに show-deleted を
+            # 載せるので、NGの使う/解除で勝手に隠れることはない
             self._show_impl(self._thread)
         self._capture_scroll_anchor(_go)
 
     def _on_del_toggle(self):
         """削除:見る/隠す トグル"""
         self._del_showing = not self._del_showing
+        # 返信モードのHTML(_last_html)は body に show-deleted を持たせてあるので、
+        # 状態を変えたら作り直させる。そうしないと画像/引用モードから戻った時に
+        # 「ボタンは隠す・実際は隠れている」と食い違う。
+        self._last_html_dirty = True
         self._view.page().runJavaScript("toggleDeleted()")
         deleted_count = sum(1 for r in self._thread.res_list[1:] if r.is_deleted) if self._thread else 0
         lbl = "削除:隠す" if self._del_showing else "削除:見る"
@@ -4888,16 +4893,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._del_btn_action.setVisible(False)
 
     def _sync_del_btn_after_full_render(self):
-        """画像/引用モードを全描画した直後の状態同期。全描画ではbodyが作り直され
-        show-deletedクラスが消える（=削除レス非表示）ので、_del_showingとボタン表示も
-        「見る」に揃える（_on_del_toggle のトグルが反転しないようにする）。"""
-        self._del_showing = False
-        try:
-            _dc = sum(1 for r in self._thread.res_list[1:] if r.is_deleted) if self._thread else 0
-            if hasattr(self, '_del_btn'):
-                self._del_btn.setText(f"削除:見る({_dc}件)")
-        except Exception:
-            pass
+        """画像/引用モードを全描画した直後の状態同期。
+        以前は作り直しで show-deleted クラスが落ちていたため「見る」に戻して
+        いたが、今は _page_body_class が状態を載せ直すので、ボタンの文字だけ
+        今の状態に合わせる（勝手に隠す状態へ戻さない）。"""
+        self._refresh_del_btn_count()
 
     def _on_bouyomi_chk_changed(self, state):
         """棒読みチェックボックス変更 → ARエントリに即反映"""
@@ -5341,6 +5341,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             _html, self._img_list = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                                    ng_filter=_ng, ng_settings=self._settings,
                                                    hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal,
+                                                   show_deleted=self._del_showing,
                                                    scroll_bottom_count=_sbc,
                                                    scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                                    footer_html=_make_thread_footer(thread),
@@ -5368,6 +5369,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         html, self._img_list = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                               ng_filter=_ng, ng_settings=self._settings,
                                               hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal,
+                                              show_deleted=self._del_showing,
                                               scroll_bottom_count=_sbc,
                                               scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                               footer_html=_make_thread_footer(thread),
@@ -5404,7 +5406,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
 
         # 一時ファイル経由でロード（setContentはHTTPS URLナビゲーションで白画面になるため禁止）
         base_url = QUrl(thread.url or "https://www.2chan.net/")
-        self._del_showing = False  # 全体再描画でshow-deletedクラスが消えるためリセット
+        # 「削除:見る」の状態はリセットしない。作り直すHTMLの body に
+        # show-deleted を載せてあるので、見ていた状態がそのまま続く。
         # そうだね通知用キャッシュを現在値で初期化（全体再描画時）
         _my_nos = set(self._settings.my_post_nos.get(thread.url or "", []))
         self._my_sodane_cache = {r.no: r.sodane for r in thread.res_list if r.no in _my_nos}
@@ -6605,6 +6608,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             thread, user_css=_ucss, uploaders=_ul,
             ng_filter=_ng, ng_settings=self._settings,
             hidden_nos=_hidden_nos, del_nos=_del_nos, ng_reveal=_ng_reveal, scroll_bottom_count=_sbc,
+            show_deleted=self._del_showing,
             footer_html=_footer(thread),
             my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
             pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
@@ -6888,6 +6892,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         _rr, _ru = self._blur_flags("reply")     # ポップアップ用（rp-*）
         _c = ([f"m-{mode or 'reply'}", f"blur-{self._blur_level(mode)}",
                f"rp-{self._blur_level('reply')}"]
+              # 「削除:見る」の状態を作り直しても保つ
+              + (["show-deleted"] if getattr(self, "_del_showing", False) else [])
               + (["blur-res"] if _res else []) + (["blur-ul"] if _ul else [])
               + (["rp-res"] if _rr else []) + (["rp-ul"] if _ru else []))
         return f' class="{" ".join(_c)}"'
