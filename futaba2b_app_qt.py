@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.396"
+APP_VER = "0.9.397"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -171,7 +171,10 @@ _FETCH_POOL = _TPE(max_workers=3, thread_name_prefix='2BP_fetch')
 # JSON差分API(futaba.php?mode=json)は新着しか返さず削除が分からないため、
 # 表示中のタブに限りこの間隔でHTMLをフルGETして突き合わせる。
 # 裏のタブはリクエストを増やさないため対象外（開いた時の再描画で消える）。
-_DEL_CHECK_SEC = 300
+# これはスケジュールではなく下限。確認は自動更新のサイクル内でしか走らないので、
+# 更新間隔がこれより長い場合は毎サイクル（＝更新1回につき確認1回）になる。
+# フルGETはHTML全体で重いため、間隔は長めに取ってある。
+_DEL_CHECK_SEC = 1800
 
 class _NoWheelSpinBox(QSpinBox):
     """スクロールで値が変わらない QSpinBox"""
