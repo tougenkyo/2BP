@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.392"
+APP_VER = "0.9.393"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4091,6 +4091,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._scroll_bottom_after_update = False  # 投稿後: 更新完了時に最下部へ送る
         self._prev_scroll_y   = 0   # 前回のスクロール位置 (前回のレス位置に移動 用)
         self._known_res_count = 0   # 差分更新: 前回表示済みレス数
+        # 取得直前に控える「今表示している側で削除済みだったレスNo」。
+        # _fetch が self._thread を差し替えてから表示処理が走るため、これが
+        # 無いと「新たに削除されたレス」を割り出せない。
+        self._prev_deleted_nos: set = set()
         self._manual_reload   = False  # 手動/スクロール更新か（新着なしトースト用）
         self._ng_enabled = True          # NG:使う/わない トグル
         self._del_showing = False        # 削除:見る/隠す 状態
@@ -5105,6 +5109,14 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._reload_again.emit()
         if thread:
             res_n = len(thread.res_list)
+            # 「今表示している側で削除済みだったレス」をここで控える。
+            # すぐ下で self._thread を差し替えてしまうため、控えずに後段
+            # (_show_impl / _show_diff) で比べると同じオブジェクト同士の比較に
+            # なり、新たな削除が絶対に検出できない。上の削除件数だけ増えて
+            # レスは残ったまま、という症状の原因。
+            self._prev_deleted_nos = (
+                {r.no for r in self._thread.res_list if r.is_deleted}
+                if self._thread else set())
             # 削除で本文が消えた新レスに、旧スレッドが持つ削除前の本文を引き継ぐ
             _carry_over_deleted_content(self._thread, thread)
             self._thread = thread
@@ -5298,9 +5310,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
                     self._show_no_new_toast()
                 # → 削除済みレスがあればDOMを書き換え、なければUIのみ更新
                 deleted_nos = [r.no for r in thread.res_list if r.is_deleted]
-                if deleted_nos and self._thread:
-                    # 旧スレと比較して新たに削除されたレスのみ書き換え
-                    old_deleted = {r.no for r in self._thread.res_list if r.is_deleted}
+                if deleted_nos:
+                    # 取得時に控えた「前回の削除済み」と比べる。self._thread は
+                    # すでに新しい方に差し替わっているので比較には使えない。
+                    old_deleted = self._prev_deleted_nos
                     newly_deleted = [no for no in deleted_nos if no not in old_deleted]
                     if newly_deleted:
                         self._update_deleted_res_dom(thread, newly_deleted, _ng, _ul, _hidden_nos, _del_nos, _ng_reveal)
@@ -5437,15 +5450,14 @@ class ThreadView(_MouseGestureMixin, QWidget):
         prev_count = self._known_res_count
         new_res = thread.res_list[prev_count:]   # 新着分のみ
 
-        # 新着と同時に削除されたレスを拾っておく。self._thread を差し替える前に
-        # 比べる必要がある。従来は「レス数が変わらない時」しか削除を反映して
-        # おらず、新着が1件でもあるとこの経路に来て削除が無視されていた
+        # 新着と同時に削除されたレスを拾う。従来は「レス数が変わらない時」しか
+        # 削除を反映しておらず、新着が1件でもあるとこの経路に来て無視されていた
         # （上の削除件数だけ増えて、レスは消えないまま残る）。
-        _newly_deleted = []
-        if self._thread is not None:
-            _was_del = {r.no for r in self._thread.res_list if r.is_deleted}
-            _newly_deleted = [r.no for r in thread.res_list[:prev_count]
-                              if r.is_deleted and r.no not in _was_del]
+        # 比較には _fetch が控えた前回の削除済みを使う。self._thread はここに
+        # 来る時点で既に新しい方へ差し替わっており、比較には使えない。
+        _was_del = self._prev_deleted_nos
+        _newly_deleted = [r.no for r in thread.res_list[:prev_count]
+                          if r.is_deleted and r.no not in _was_del]
 
         # id_counts を全レスで再計算（引用インジケータ用）
         id_counts: dict[str, int] = {}
