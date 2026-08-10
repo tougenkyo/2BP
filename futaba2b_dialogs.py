@@ -5757,8 +5757,8 @@ class AppSettingsDialog(QDialog):
         self._cat_hover_delay.setValue(getattr(s, "catalog_hover_delay_ms", 300))
         self._cat_hover_comment.setChecked(getattr(s, "catalog_hover_comment", False))
         self._cat_mail_badge.setChecked(getattr(s, "catalog_show_mail_badge", True))
-        self._cat_quarantine.setChecked(getattr(s, "catalog_quarantine_bottom", True))
-        self._cat_common_id_bottom.setChecked(getattr(s, "catalog_common_id_bottom", True))
+        self._cat_quarantine.setChecked(getattr(s, "catalog_quarantine_bottom", False))
+        self._cat_common_id_bottom.setChecked(getattr(s, "catalog_common_id_bottom", False))
         self._hist_self_mode.setCurrentIndex(
             max(0, min(2, int(getattr(s, "history_self_mode", 0) or 0))))
 

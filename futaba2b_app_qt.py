@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.401"
+APP_VER = "0.9.402"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9479,7 +9479,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 self._quar_nos = self._catalog_json_nos - _real_cat_nos
             # 隔離スレ = json にあって cat に無い（隔離されるとカタログから消えてjsonに残る）
             if (self._catalog_json_nos
-                    and getattr(self._settings, 'catalog_quarantine_bottom', True)):
+                    and getattr(self._settings, 'catalog_quarantine_bottom', False)):
                 _cat_nos = {e.no for e in entries}
                 for _qno in sorted(self._catalog_json_nos - _cat_nos):
                     entries.append(self._make_quarantine_entry(
@@ -9644,7 +9644,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 if _cm and e.op_comment != _cm:
                     e.op_comment = _cm; changed = True
         # 2) 隔離スレ（json∖cat）を合成して最下部用に同期
-        if getattr(self._settings, 'catalog_quarantine_bottom', True):
+        if getattr(self._settings, 'catalog_quarantine_bottom', False):
             real = [e for e in self._all_entries if not getattr(e, 'is_quarantine', False)]
             cat_nos = {e.no for e in real}
             quar_nos = jnos - cat_nos
@@ -9844,7 +9844,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 # 「本文空のみNG」: 画像なし かつ タイトルも空のスレのみ除外
                 entries = [e for e in entries if (e.thumb_url or "").strip() or (e.title or "").strip()]
             # 3.5 IDが出た(共通ID)スレ: 「最下部に表示」OFF なら非表示にする
-            if not getattr(self._settings, "catalog_common_id_bottom", True):
+            if not getattr(self._settings, "catalog_common_id_bottom", False):
                 entries = [e for e in entries if not (getattr(e, 'op_id', '') or '').strip()]
         # 4. 検索: ヒットを上に隔離して表示 (正規表現対応)
         kw = self._search.text().strip()
@@ -10377,9 +10377,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
                             # 履歴表示は隔離合成もID最下部送りも行わない
                             # （履歴の並びをそのまま見せるのが目的）
                             quarantine_section=(False if _hist_render else
-                                getattr(self._settings, "catalog_quarantine_bottom", True)),
+                                getattr(self._settings, "catalog_quarantine_bottom", False)),
                             common_id_section=(False if _hist_render else
-                                getattr(self._settings, "catalog_common_id_bottom", True)),
+                                getattr(self._settings, "catalog_common_id_bottom", False)),
                             history_mode=_hist_render,
                             # 履歴表示のみ: 自書スレを上部にまとめる（1のとき）
                             text_right=_text_right,
