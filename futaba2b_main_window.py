@@ -253,6 +253,8 @@ class MainWindow(QMainWindow):
         # 右ボタン＋ホイールのタブ移動。WebEngineの中のウィジェットが受け取る
         # ホイールも拾えるよう、アプリ全体のフィルタとして入れる
         self._rb_wheel_armed = 0.0   # タブ移動直後（右クリックメニュー抑止）の時刻
+        self._ctx_policy_view = None   # 右クリックメニューを一時禁止中のビュー
+        self._ctx_policy_saved = Qt.ContextMenuPolicy.DefaultContextMenu
         QApplication.instance().installEventFilter(self)
         self._ng_filter    = self._settings.ng_filter  # シングルトン参照
         self._bbsmenu_cats = []
@@ -2459,6 +2461,9 @@ class MainWindow(QMainWindow):
                     and isinstance(obj, QWidget) and self.isAncestorOf(obj)):
                 dy = ev.angleDelta().y()
                 if dy:
+                    # 押した時点で既にメニューが開いていることがある
+                    # （QtWebEngineの「ソースを表示」等）。まず閉じる。
+                    self._close_open_popup()
                     self._step_tab(1 if dy < 0 else -1)   # 下=次 / 上=前
                     self._arm_context_menu_block()
                 return True      # ページはスクロールさせない
@@ -2471,6 +2476,7 @@ class MainWindow(QMainWindow):
             if (_t == QEvent.Type.MouseButtonPress
                     and ev.button() == Qt.MouseButton.RightButton):
                 self._rb_wheel_armed = 0.0
+                self._restore_ctx_policy()
         except (AttributeError, RuntimeError):
             pass
         return super().eventFilter(obj, ev)
@@ -2498,6 +2504,54 @@ class MainWindow(QMainWindow):
                 view.page().runJavaScript("window._mgSuppressCtx=true;")
             except (AttributeError, RuntimeError):
                 pass
+            # QtWebEngine が自前で出すメニュー（「ソースを表示」等）は
+            # ContextMenu イベントの握り潰しだけでは止まらないことがある。
+            # 表示そのものを禁じておき、少ししたら元に戻す。
+            self._set_ctx_policy_blocked(view)
+
+    def _close_open_popup(self):
+        """開いているポップアップメニューがあれば閉じる"""
+        try:
+            from PySide6.QtWidgets import QApplication as _QA
+            p = _QA.activePopupWidget()
+            while p is not None:
+                p.close()
+                _p2 = _QA.activePopupWidget()
+                if _p2 is p:
+                    break
+                p = _p2
+        except (AttributeError, RuntimeError):
+            pass
+
+    def _set_ctx_policy_blocked(self, view):
+        """ビューの右クリックメニューを一時的に禁止する（元の設定は控える）"""
+        try:
+            if self._ctx_policy_view is None:
+                self._ctx_policy_saved = view.contextMenuPolicy()
+                self._ctx_policy_view = view
+            view.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
+        except (AttributeError, RuntimeError):
+            self._ctx_policy_view = None
+            return
+        # 押しっぱなしの間は効かせ、離してしばらくしたら戻す
+        QTimer.singleShot(700, self._restore_ctx_policy)
+
+    def _restore_ctx_policy(self):
+        """一時的に禁止した右クリックメニューを元に戻す"""
+        view, saved = self._ctx_policy_view, self._ctx_policy_saved
+        self._ctx_policy_view = None
+        if view is None:
+            return
+        try:
+            from shiboken6 import isValid
+            if not isValid(view):
+                return
+        except Exception:
+            pass
+        try:
+            view.setContextMenuPolicy(saved)
+        except (AttributeError, RuntimeError):
+            pass
 
     def _close_current_tab(self):
         """Ctrl+W / メニュー / マウスジェスチャーで今のタブを閉じる。
