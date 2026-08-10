@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.403"
+APP_VER = "0.9.404"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10381,6 +10381,10 @@ class CatalogView(_MouseGestureMixin, QWidget):
                                 getattr(self._settings, "catalog_quarantine_bottom", False)),
                             common_id_section=(False if _hist_render else
                                 getattr(self._settings, "catalog_common_id_bottom", False)),
+                            # 逆NG（ピックアップ）を最上部にまとめる。履歴表示は並びを
+                            # そのまま見せるのが目的なので対象外
+                            reverse_ng_section=(False if _hist_render else
+                                getattr(self._settings, "catalog_reverse_ng_top", True)),
                             history_mode=_hist_render,
                             # 履歴表示のみ: 自書スレを上部にまとめる（1のとき）
                             text_right=_text_right,

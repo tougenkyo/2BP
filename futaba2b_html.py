@@ -667,6 +667,11 @@ body.cat-text-right .entry-title {
     color: #10457f; background: #E7F0FB;
     border-bottom: 2px solid #1a6fd4;
 }
+/* 逆NG（ピックアップ）まとめセクション見出し。エントリと同じ紫系で揃える */
+.sec-hdr.rev-hdr {
+    color: #6C3483; background: #F4ECF7;
+    border-bottom: 2px solid #9B59B6;
+}
 /* ─ 逆NGエントリハイライト ─ */
 .entry.reverse-ng {
     border: 2px solid #9B59B6;
@@ -2773,6 +2778,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                      show_badge: bool = False,
                      quarantine_section: bool = False,
                      common_id_section: bool = False,
+                     reverse_ng_section: bool = False,
                      history_mode: bool = False,
                      self_post_section: bool = False,
                      text_right: bool = False) -> str:
@@ -2816,6 +2822,47 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             return ng_filter.is_ng_catalog(e)
         return False
 
+    _rev_memo: dict = {}
+
+    def _is_reverse_ng(e) -> bool:
+        """逆NG（ピックアップ）に当たるスレか。件名と本文、スレ画の両方を見る。
+        まとめ表示と色付けの両方から呼ぶので、エントリ単位で覚えておく。"""
+        if ng_filter is None:
+            return False
+        _k = id(e)
+        _v = _rev_memo.get(_k)
+        if _v is not None:
+            return _v
+        _v = bool(ng_filter.is_reverse_ng_catalog(e, title_chars=char_limit))
+        if not _v:
+            # スレ画が逆NG画像でもピックアップする（件名と同じ扱い）
+            try:
+                _v = (ng_filter.classify_catalog_image(e) == "reverse_ng")
+            except Exception:
+                _v = False
+        _rev_memo[_k] = _v
+        return _v
+
+    def _pull_reverse_ng(elist):
+        """reverse_ng_section=True のとき逆NGスレを分離して上部送りにする。
+        戻り値: (rest, [逆NGentries...])（元の並び順を維持）"""
+        if not reverse_ng_section or ng_filter is None:
+            return elist, []
+        rest, rev = [], []
+        for e in elist:
+            (rev if _is_reverse_ng(e) else rest).append(e)
+        return rest, rev
+
+    def _reverse_ng_section(rev):
+        """逆NGスレを最上部にまとめて表示する"""
+        if not rev:
+            return ""
+        parts = [f'<div class="sec-hdr rev-hdr">'
+                 f'↓ ピックアップ（逆NG） ({len(rev)}件)</div>']
+        parts.extend(_make_entry(e) for e in rev)
+        parts.append('<div class="sec-div"></div>')
+        return "".join(parts)
+
     def _make_entry(e) -> str:
         title    = (e.title or "")[:char_limit]
         tu       = _e(e.thumb_url or "")
@@ -2846,13 +2893,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         # 逆NGチェック（デフォルト色ONならCSSに任せ、OFFなら既読/未読で色を切り替え）
         _extra_style = ""
         if ng_filter is not None:
-            is_rev_ng = ng_filter.is_reverse_ng_catalog(e, title_chars=char_limit)
-            if not is_rev_ng:
-                # スレ画が逆NG画像でもピックアップする（件名と同じ扱い）
-                try:
-                    is_rev_ng = (ng_filter.classify_catalog_image(e) == "reverse_ng")
-                except Exception:
-                    pass
+            is_rev_ng = _is_reverse_ng(e)
             if is_rev_ng:
                 ecls += " reverse-ng"
                 if not _use_default:
@@ -3033,6 +3074,8 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         # 共通IDを隔離より優先で抽出（隔離かつ共通IDのスレは共通ID側へ）
         unmatched, ucid = _pull_common_id(unmatched)
         unmatched, uq = _pull_quar(unmatched)
+        # 検索中は「見つけたスレ」を最優先にしたいので、逆NGは残りから抜く
+        unmatched, urev = _pull_reverse_ng(unmatched)
         parts = []
         if matched:
             parts.append(
@@ -3041,6 +3084,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             )
             parts.extend(_make_entry(e) for e in matched)
         parts.append('<div class="sec-div"></div>')
+        parts.append(_reverse_ng_section(urev))
         parts.extend(_make_entry(e) for e in unmatched)
         parts.append(_common_id_section(ucid))
         parts.append(_quar_section(mq + uq))
@@ -3051,7 +3095,9 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         filtered, cid_groups = _pull_common_id(filtered)
         filtered, quar = _pull_quar(filtered)
         filtered, mine = _pull_self_post(filtered)   # 自書は最上部へ
-        inner = (_self_post_section(mine)
+        filtered, rev  = _pull_reverse_ng(filtered)  # ピックアップも最上部へ
+        inner = (_reverse_ng_section(rev)
+                 + _self_post_section(mine)
                  + "".join(_make_entry(e) for e in filtered)
                  + _common_id_section(cid_groups)
                  + _quar_section(quar))

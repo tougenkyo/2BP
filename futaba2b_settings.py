@@ -508,6 +508,8 @@ class AppSettings:
         self.catalog_quarantine_bottom: bool = False  # 隔離スレ(json非存在)を最下部表示
         # 既定OFF＝カタログに出さない（ONで最下部にまとめて表示）
         self.catalog_common_id_bottom:  bool = False  # IDが出た(共通ID)スレを最下部に表示(OFFで非表示)
+        # 逆NG（ピックアップ）に当たったスレをカタログ最上部にまとめる
+        self.catalog_reverse_ng_top: bool = True
         # 履歴表示で「自書」スレをどう扱うか 0=そのまま / 1=上部にまとめる / 2=自書のみ
         self.history_self_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
@@ -991,6 +993,7 @@ class AppSettings:
             self.catalog_show_mail_badge  = bool(raw.get("catalog_show_mail_badge",  True))
             self.catalog_quarantine_bottom = bool(raw.get("catalog_quarantine_bottom", False))
             self.catalog_common_id_bottom = bool(raw.get("catalog_common_id_bottom", False))
+            self.catalog_reverse_ng_top = bool(raw.get("catalog_reverse_ng_top", True))
             self.history_self_mode = int(raw.get("history_self_mode", 0))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
@@ -1209,6 +1212,7 @@ class AppSettings:
                         "catalog_show_mail_badge":  self.catalog_show_mail_badge,
                         "catalog_quarantine_bottom": self.catalog_quarantine_bottom,
                         "catalog_common_id_bottom":  self.catalog_common_id_bottom,
+                        "catalog_reverse_ng_top":    self.catalog_reverse_ng_top,
                         "history_self_mode":         self.history_self_mode,
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
