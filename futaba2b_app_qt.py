@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.402"
+APP_VER = "0.9.403"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2840,23 +2840,24 @@ class BoardPane(QWidget):
         if w in self._pinned: return
         self.tab_closing.emit(w)     # 閉じる前にビューを通知
 
-        # 履歴から戻り先を決定（表示中の画像タブを閉じた時のみ前のタブに戻る）。
-        # 裏の画像タブを×で閉じただけで画面が動くのは不自然なので、
+        # 履歴から戻り先を決定（今見ているタブを閉じた時だけ動かす）。
+        # 裏のタブを×で閉じただけで画面が動くのは不自然なので、
         # 閉じたのが今見ているタブのときに限る。
         target = -1
-        if isinstance(w, ImageTabView) and idx == self._tabs.currentIndex():
-            # 開いた元のタブ（_src_thread_view）が同じinner内にあればそこへ戻る
+        if idx == self._tabs.currentIndex():
+            # 画像タブは、開いた元のスレタブ（_src_thread_view）へ優先して戻る
             src_view = getattr(w, '_src_thread_view', None)
             if src_view is not None:
                 for i in range(self._tabs.count()):
                     if i != idx and self._tabs.widget(i) is src_view:
                         target = i if i < idx else i - 1
                         break
-            # 元スレが見つからない場合は履歴から探す
+            # それ以外（スレタブなど）は「直前に開いていたタブ」へ戻る。
+            # 履歴は末尾が直近。閉じたタブ自身と、既に無いものは飛ばす。
             if target < 0:
                 while self._tab_history:
                     h = self._tab_history.pop()
-                    if h == idx:
+                    if h == idx or not (0 <= h < self._tabs.count()):
                         continue
                     target = h if h < idx else h - 1
                     break
