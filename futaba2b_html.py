@@ -667,6 +667,17 @@ body.cat-text-right .entry-title {
     color: #10457f; background: #E7F0FB;
     border-bottom: 2px solid #1a6fd4;
 }
+/* NGで隠したスレ まとめセクション見出し（誤爆の確認用） */
+.sec-hdr.ng-hdr {
+    color: #4a4a4a; background: #EFEFEF;
+    border-bottom: 2px solid #888;
+}
+.entry.ng-hidden-entry { opacity: .72; border: 2px dashed #999; }
+.entry-ngnote {
+    font-size: 7pt; color: #7a3b3b; line-height: 1.2;
+    padding: 0 2px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+}
 /* 逆NG（ピックアップ）まとめセクション見出し。エントリと同じ紫系で揃える */
 .sec-hdr.rev-hdr {
     color: #6C3483; background: #F4ECF7;
@@ -2789,6 +2800,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                      quarantine_section: bool = False,
                      common_id_section: bool = False,
                      reverse_ng_section: bool = False,
+                     ng_section: bool = False,
                      history_mode: bool = False,
                      self_post_section: bool = False,
                      text_right: bool = False) -> str:
@@ -2809,6 +2821,8 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
     _rev_read_bg       = getattr(ng_settings, "ng_reverse_read_bg",       "#E8E8E8") if ng_settings else "#E8E8E8"
     _rev_read_border   = getattr(ng_settings, "ng_reverse_read_border",   "")        if ng_settings else ""
     _use_default       = getattr(ng_settings, "ng_reverse_use_default_color", True)  if ng_settings else True
+
+    _ng_hidden: list = []   # NGで隠したスレ（最下部にまとめる用）
 
     def _is_ng_entry(e) -> bool:
         """エントリがNGかどうか判定（ng_catalog_emptyモードに従う）"""
@@ -2873,7 +2887,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         parts.append('<div class="sec-div"></div>')
         return "".join(parts)
 
-    def _make_entry(e) -> str:
+    def _make_entry(e, extra_cls: str = "", note: str = "") -> str:
         title    = (e.title or "")[:char_limit]
         tu       = _e(e.thumb_url or "")
         url      = _e(e.thread_url or "")
@@ -2917,6 +2931,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                     if _bg:     styles.append(f"background:{_bg}")
                     if styles:  _extra_style = ";".join(styles)
 
+        ecls += extra_cls
         style_attr = f' style="{_extra_style}"' if _extra_style else ""
         _title_style = (
             ' style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"'
@@ -3005,16 +3020,44 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
             f'<div class="entry-img">{img_elem}{_thumb_badge}{_quar_badge}'
             f'{_dead_badge}{_cache_badge}{_self_badge}</div>' +
             f'<div class="entry-title"{_title_style}>{_e(title)}</div>' +
+            (f'<div class="entry-ngnote" title="{_e(note)}">{_e(note)}</div>'
+             if note else '') +
             f'<div class="entry-foot"><span>{_rc_disp}</span><span>{delta_s}</span>'
             f'{_email_badge}</div>' +
             f'</div>'
         )
 
     def _filter_entries(elist):
-        """NGエントリを詰める（ng_catalog_packがTrueの場合のみ除外）"""
+        """NGエントリを詰める（ng_catalog_packがTrueの場合のみ除外）。
+        ng_section=True のときは捨てずに集めて、最下部にまとめて出す。"""
         if not _ng_pack or ng_filter is None:
             return elist
-        return [e for e in elist if not _is_ng_entry(e)]
+        rest = []
+        for e in elist:
+            if _is_ng_entry(e):
+                if ng_section:
+                    _ng_hidden.append(e)
+            else:
+                rest.append(e)
+        return rest
+
+    def _ng_hidden_section(ngs):
+        """NGで隠したスレを最下部にまとめて出す。誤爆に気づけるよう理由も添える。"""
+        if not ngs:
+            return ""
+        parts = ['<div class="sec-div"></div>',
+                 f'<div class="sec-hdr ng-hdr">'
+                 f'↓ NGで隠したスレ ({len(ngs)}件)</div>']
+        for e in ngs:
+            _reason = ""
+            try:
+                _reason = ng_filter.get_ng_reason_catalog(
+                    e, title_chars=char_limit, ng_settings=ng_settings) or ""
+            except Exception:
+                _reason = ""
+            parts.append(_make_entry(e, extra_cls=" ng-hidden-entry",
+                                     note=_reason))
+        return "".join(parts)
 
     def _quar_section(quar):
         """隔離スレを最下部セクションとして描画"""
@@ -3102,6 +3145,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         parts.extend(_make_entry(e) for e in unmatched)
         parts.append(_common_id_section(ucid))
         parts.append(_quar_section(mq + uq))
+        parts.append(_ng_hidden_section(_ng_hidden))
         inner = "".join(parts)
     else:
         filtered = _filter_entries(entries)
@@ -3114,7 +3158,8 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                  + _self_post_section(mine)
                  + "".join(_make_entry(e) for e in filtered)
                  + _common_id_section(cid_groups)
-                 + _quar_section(quar))
+                 + _quar_section(quar)
+                 + _ng_hidden_section(_ng_hidden))
 
     # 文字位置=右: サムネの大きさは保ったまま、右に文字ぶんの幅を足してセルを広げる
     _text_w  = max(80, min(160, img_size)) if text_right else 0

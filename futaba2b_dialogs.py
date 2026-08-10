@@ -4821,6 +4821,10 @@ class AppSettingsDialog(QDialog):
         self._cat_quarantine    = QCheckBox("隔離スレを最下部に表示する")
         self._cat_common_id_bottom = QCheckBox("IDが出たスレを最下部に表示する")
         self._cat_rev_top = QCheckBox("ピックアップ（逆NG）を最上部にまとめる")
+        self._cat_ng_section = QCheckBox("NGで隠したスレを最下部にまとめて見せる")
+        self._cat_ng_section.setToolTip(
+            "NGで消えたスレを最下部にまとめ、NGになった理由も添えて表示します。\n"
+            "誤ってNGにしていないか確認するための表示です。")
         self._cat_rev_top.setToolTip(
             "逆NGに当たったスレを、カタログの一番上にまとめて表示します。\n"
             "OFFにすると今までどおり、元の位置で色だけ変えて表示します。")
@@ -4842,6 +4846,7 @@ class AppSettingsDialog(QDialog):
         cat_hover_lay.addWidget(self._cat_mail_badge)
         cat_hover_lay.addWidget(self._cat_common_id_bottom)
         cat_hover_lay.addWidget(self._cat_rev_top)
+        cat_hover_lay.addWidget(self._cat_ng_section)
         cat_hover_lay.addWidget(self._cat_quarantine)
         # 並び替え=履歴 のときの「自書」スレの扱い
         _hs_lay = QHBoxLayout(); _hs_lay.setContentsMargins(0, 0, 0, 0)
@@ -5808,6 +5813,7 @@ class AppSettingsDialog(QDialog):
         self._cat_quarantine.setChecked(getattr(s, "catalog_quarantine_bottom", False))
         self._cat_common_id_bottom.setChecked(getattr(s, "catalog_common_id_bottom", False))
         self._cat_rev_top.setChecked(getattr(s, "catalog_reverse_ng_top", True))
+        self._cat_ng_section.setChecked(getattr(s, "catalog_ng_section", False))
         self._hist_self_mode.setCurrentIndex(
             max(0, min(2, int(getattr(s, "history_self_mode", 0) or 0))))
 
@@ -5981,6 +5987,7 @@ class AppSettingsDialog(QDialog):
         s.catalog_quarantine_bottom = self._cat_quarantine.isChecked()
         s.catalog_common_id_bottom = self._cat_common_id_bottom.isChecked()
         s.catalog_reverse_ng_top = self._cat_rev_top.isChecked()
+        s.catalog_ng_section = self._cat_ng_section.isChecked()
         s.history_self_mode        = self._hist_self_mode.currentIndex()
         s.catalog_show_email      = False  # メール欄バッジは常にOFF
 

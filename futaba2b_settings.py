@@ -510,6 +510,8 @@ class AppSettings:
         self.catalog_common_id_bottom:  bool = False  # IDが出た(共通ID)スレを最下部に表示(OFFで非表示)
         # 逆NG（ピックアップ）に当たったスレをカタログ最上部にまとめる
         self.catalog_reverse_ng_top: bool = True
+        # NGで隠したスレをカタログ最下部にまとめる（誤爆の確認用）
+        self.catalog_ng_section: bool = False
         # 履歴表示で「自書」スレをどう扱うか 0=そのまま / 1=上部にまとめる / 2=自書のみ
         self.history_self_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
@@ -994,6 +996,7 @@ class AppSettings:
             self.catalog_quarantine_bottom = bool(raw.get("catalog_quarantine_bottom", False))
             self.catalog_common_id_bottom = bool(raw.get("catalog_common_id_bottom", False))
             self.catalog_reverse_ng_top = bool(raw.get("catalog_reverse_ng_top", True))
+            self.catalog_ng_section = bool(raw.get("catalog_ng_section", False))
             self.history_self_mode = int(raw.get("history_self_mode", 0))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
@@ -1213,6 +1216,7 @@ class AppSettings:
                         "catalog_quarantine_bottom": self.catalog_quarantine_bottom,
                         "catalog_common_id_bottom":  self.catalog_common_id_bottom,
                         "catalog_reverse_ng_top":    self.catalog_reverse_ng_top,
+                        "catalog_ng_section":        self.catalog_ng_section,
                         "history_self_mode":         self.history_self_mode,
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
@@ -1767,6 +1771,39 @@ class NgFilter:
     def is_reverse_ng_catalog(self, entry, title_chars: int = -1) -> bool:
         return self.classify_catalog(entry, title_chars) == "reverse_ng"
 
+
+    def get_ng_reason_catalog(self, entry, title_chars: int = -1,
+                              ng_settings=None) -> str:
+        """カタログのスレがNGになった理由を短い文で返す。当たっていなければ空文字。
+
+        誤爆したNGを見つけて直せるようにするための表示用。判定の順序は
+        futaba2b_html の _is_ng_entry と同じにしてある。"""
+        _url = getattr(entry, "thread_url", "") or ""
+        if _url and ng_settings is not None:
+            if _url in getattr(ng_settings, "ng_thread_urls", []):
+                return "このスレをNGにする（手動）"
+        try:
+            if self.classify_catalog_image(entry) == "ng":
+                _e = self._find_matched_ng_image_catalog(entry, is_reverse=False)
+                _d = (_e or {}).get("description", "") if _e else ""
+                return f"NG画像: {_d}" if _d else "NG画像"
+        except Exception:
+            pass
+        # NGワード（カタログの文字で判定）
+        self._ensure_flat()
+        _title = entry.title or ""
+        if _title:
+            for rxp, pat, ng_type, scope in self._flat_words:
+                if ng_type != "ng":
+                    continue
+                if not scope[0] and not scope[6]:
+                    continue
+                hit = bool(rxp.search(_title)) if rxp else pat.lower() in _title.lower()
+                if hit:
+                    return f"NGワード: {pat}"
+        if not _title.strip():
+            return "本文が空"
+        return ""
 
     def get_matched_reverse_ng_words_catalog(self, entry, title_chars: int = -1) -> list[dict]:
         """逆NGにマッチしたワード辞書（notify/notify_type含む）のリストを返す（カタログエントリ用）。
