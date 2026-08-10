@@ -450,6 +450,9 @@ class AppSettings:
         # ペン/消しゴムは色・太さを別々に保持する。キーは TEGAKI_DEFAULTS を参照。
         self.tegaki_state: dict = dict(TEGAKI_DEFAULTS)
         self.del_hide_checked: bool = True # 「delしたレスを非表示にする」の記憶状態（既定ON）
+        # 「投稿後に最下部へ」の記憶状態（既定ON）。以前は宣言も保存もされておらず、
+        # 投稿成功時に動的属性へ入れていただけだったため、起動し直すと戻っていた。
+        self.scroll_after_post: bool = True
         # ── ログ保存 ──────────────────────────────────────────────────────────
         self.log_save_dir: str = ""        # 保存先ディレクトリ（空=プログラム隣の logs/）
         self.log_save_images: bool = True  # アーカイブに画像を含める
@@ -968,6 +971,7 @@ class AppSettings:
                     _tg[_k] = _v
             self.tegaki_state = _tg
             self.del_hide_checked = raw.get("del_hide_checked", True)
+            self.scroll_after_post = raw.get("scroll_after_post", True)
             self.post_rules_open = raw.get("post_rules_open", {})
             self.pin_after_post  = raw.get("pin_after_post",  False)
             self.show_tab_icon      = raw.get("show_tab_icon",      True)
@@ -1189,6 +1193,7 @@ class AppSettings:
                         "post_dialog_pin": self.post_dialog_pin,
                         "tegaki_state":    self.tegaki_state,
                         "del_hide_checked": self.del_hide_checked,
+                        "scroll_after_post": self.scroll_after_post,
                         "post_rules_open": self.post_rules_open,
                         "pin_after_post":  self.pin_after_post,
                         "show_tab_icon":        self.show_tab_icon,

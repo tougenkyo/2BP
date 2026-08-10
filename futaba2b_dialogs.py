@@ -1721,8 +1721,19 @@ class PostDialog(QDialog):
             self._chk_scroll_bottom = QCheckBox("投稿後に最下部へ")
             self._chk_scroll_bottom.setToolTip("投稿成功後にスレッドの最下部へスクロールする")
             self._chk_scroll_bottom.setChecked(getattr(settings, 'scroll_after_post', True))
+            # 切り替えた時点で覚える。投稿が成功した時だけ保存していたため、
+            # 変えて閉じたり投稿しなかった場合に元へ戻っていた。
+            self._chk_scroll_bottom.toggled.connect(self._on_scroll_bottom_toggled)
             btn_row.addWidget(self._chk_scroll_bottom)
         lay.addLayout(btn_row)
+
+    def _on_scroll_bottom_toggled(self, on: bool):
+        """「投稿後に最下部へ」を切り替えたら即保存する"""
+        self._settings.scroll_after_post = bool(on)
+        try:
+            self._settings.save()
+        except Exception as e:
+            print(f"[PostDialog] 投稿後スクロール設定の保存に失敗: {e}")
 
     # ── 手書きjsタブ ────────────────────────────────────────────────────────
     def _build_tegaki_tab(self) -> QWidget:
