@@ -40,6 +40,10 @@ class BoardInfo:
     board_rules_html: str = ""   # 同上HTML版
     has_name_field:   bool = True  # 名前欄が存在する板かどうか（img板等はFalse）
     max_file_bytes:   int  = 0    # 添付ファイルサイズ上限（MAX_FILE_SIZE, バイト。0=不明）
+    # 返信フォームに upfile 欄があるか＝レスに画像を添付できる板か。
+    # img板の返信フォームには upfile が無く、送っても捨てられる（本文が空だと
+    # 「何か書いてください」で弾かれる）。未確認のうちは True 扱い。
+    can_upload_res:   bool = True
 
     @property
     def base_url(self) -> str:

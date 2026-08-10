@@ -1869,6 +1869,15 @@ class FutabaFetcher:
         if not soup.find("span", class_="cnm"):
             board.has_name_field = False
 
+        # ── レスに画像を添付できる板かどうか ──────────────────────────────
+        # 返信フォーム(id="fm")に upfile 欄があるかで判断する。img板には
+        # 無く、送っても捨てられる（手描きだけで投稿すると本文が空扱いになり
+        # 「何か書いてください」で弾かれる）。
+        _fm = soup.find("form", attrs={"id": "fm"})
+        if _fm is not None:
+            board.can_upload_res = _fm.find(
+                "input", attrs={"type": "file"}) is not None
+
         # global_max_no = スレOPのNo.最大値（レスNoは使わない）
         # OP No.＝そのスレが作成された時点のカウンタ値 → 板の現在位置の正確な指標
         # 板別 global_max_no を更新（OP No. および最新レスNo の大きい方を使用）

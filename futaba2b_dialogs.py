@@ -1445,12 +1445,25 @@ class PostDialog(QDialog):
         img_w = QWidget()
         img_lay = QHBoxLayout(img_w)
         img_lay.setContentsMargins(0, 2, 0, 2)
-        img_lay.addWidget(QLabel("添付File"))
+        self._img_label = QLabel("添付File")
+        img_lay.addWidget(self._img_label)
         self._img_edit = QLineEdit()
         self._img_edit.setPlaceholderText("画像ファイルのパス (任意・直接入力可)")
         self._img_edit.setToolTip(
             "ファイルのパスを直接入力できます。\n"
             "Enter またはフォーカスを外すと、存在するファイルをプレビューに表示します。")
+        # レスに画像を添付できない板（img板など）は、描いてから弾かれると
+        # 分かりにくいので最初から知らせておく。うｐろだ経由なら貼れる。
+        if self._resto and not getattr(board, "can_upload_res", True):
+            self._img_label.setText("添付File（この板は不可）")
+            self._img_label.setStyleSheet("color:#a00;")
+            self._img_edit.setPlaceholderText(
+                "この板はレスに画像を添付できません（「うｐする」なら本文に貼れます）")
+            _nt = ("この板の返信フォームには画像の添付欄がありません。\n"
+                   "添付しても捨てられるため、投稿時に止めます。\n"
+                   "「うｐする」でうｐろだへ上げると本文にファイル名が貼られます。")
+            self._img_label.setToolTip(_nt)
+            self._img_edit.setToolTip(_nt)
         # 直接入力対応: 入力確定（Enter / フォーカスアウト）でパスを反映
         self._img_edit.editingFinished.connect(self._on_img_edit_finished)
         img_lay.addWidget(self._img_edit, 1)
@@ -2658,6 +2671,26 @@ document.addEventListener('keydown',function(e){{
                     img = _strip_tmp
             except Exception as _e:
                 print(f"[POST] 埋め込みサムネ削除に失敗（元画像で投稿）: {_e}")
+        # ── この板はレスに画像を添付できるか ────────────────────────────
+        # img板の返信フォームには upfile 欄が無く、送っても捨てられる。
+        # 手描きだけで投稿すると本文が空扱いになり「何か書いてください」で
+        # 弾かれるだけなので、ここで止めてうｐろだ経由を案内する。
+        if (img and self._resto
+                and not getattr(self._board, "can_upload_res", True)):
+            if _strip_tmp:
+                try:
+                    import os as _os3; _os3.unlink(_strip_tmp)
+                except Exception:
+                    pass
+            self._btn_post.setEnabled(True)   # 手書き経路で無効化済みのため戻す
+            QMessageBox.warning(
+                self, "この板はレスに画像を添付できません",
+                "この板の返信フォームには画像の添付欄がありません。\n"
+                "そのまま送っても画像は捨てられ、本文が空だと\n"
+                "「何か書いてください」で弾かれます。\n\n"
+                "「うｐする」でうｐろだに上げると、ファイル名が本文に\n"
+                "貼られるので、そのまま投稿できます。")
+            return
         # ── 添付サイズ上限チェック（超過ならふたばに弾かれるので事前に中止）──
         _mx = self._max_file_bytes()
         if img and _mx:
