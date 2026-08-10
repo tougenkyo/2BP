@@ -1169,13 +1169,22 @@ class FutabaFetcher:
         comment: str,
         image_path: str = "",
         delete_key: str = "",
+        oekaki_b64: str = "",
     ) -> tuple[bool, str, int]:
         """
         レス / スレ立て投稿。
 
         fetch_post_form() でサーバー発行の hash/ptua 等を取得してから
         multipart/form-data で送信する。
-        """
+
+        oekaki_b64: ふたばの手書き(お絵かき)として送る画像のbase64（PNG、
+        "data:image/png;base64," は含めない）。img板のようにレスへファイルを
+        添付できない板でも、この経路なら画像を貼れる。
+        ふたば側のJS(base4esc.js)は canvas を
+          dataUri = oejs.toDataURL('image/png').replace(/^.*,/, '')
+          document.getElementById("baseform").value = dataUri
+        として baseform に入れて送っている（js=on / scsz / pthb / pthc は
+        fetch_post_form が既に埋めている）。"""
         # ── 添付ファイルの実在チェック ──
         # 添付を指定しているのに実体が無い状態でそのまま送ると、本文だけが
         # 投稿されて「画像が貼れていない」レスになる（従来は黙って本文のみ送信
@@ -1207,6 +1216,11 @@ class FutabaFetcher:
             data["resto"] = str(resto)
         if delete_key:
             data["pwd"] = delete_key
+        if oekaki_b64:
+            # 手書きは upfile ではなく baseform で送る（ふたばのJSと同じ）
+            data["baseform"] = oekaki_b64
+            data["js"] = "on"
+            print(f"[POST] 手書き（baseform）で送信 base64={len(oekaki_b64)}文字")
 
         headers = self._build_post_headers(board, thread_no=resto)
 

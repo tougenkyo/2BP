@@ -1314,6 +1314,7 @@ class PostDialog(QDialog):
         self._settings   = settings; self._resto = resto
         self._img_path   = ""
         self._img_is_tmp = False
+        self._img_is_tegaki = False  # 手書き由来か（お絵かき送信の対象）
         self._clip_image = None      # クリップボード貼付時の元QImage（品質再適用用）
         self._post_inflight = False  # POST送信スレッドが動作中か（二重投稿防止）
         self._upload_inflight = False  # うｐろだ送信中か（二重アップロード防止）
@@ -1455,13 +1456,14 @@ class PostDialog(QDialog):
         # レスに画像を添付できない板（img板など）は、描いてから弾かれると
         # 分かりにくいので最初から知らせておく。うｐろだ経由なら貼れる。
         if self._resto and not getattr(board, "can_upload_res", True):
-            self._img_label.setText("添付File（この板は不可）")
+            self._img_label.setText("添付File（ファイル不可）")
             self._img_label.setStyleSheet("color:#a00;")
             self._img_edit.setPlaceholderText(
-                "この板はレスに画像を添付できません（「うｐする」なら本文に貼れます）")
+                "この板はファイルを添付できません（手書きは可・「うｐする」でも貼れます）")
             _nt = ("この板の返信フォームには画像の添付欄がありません。\n"
-                   "添付しても捨てられるため、投稿時に止めます。\n"
-                   "「うｐする」でうｐろだへ上げると本文にファイル名が貼られます。")
+                   "ファイルは添付しても捨てられるため、投稿時に止めます。\n"
+                   "手書きはお絵かき機能として送るのでそのまま貼れます。\n"
+                   "ファイルは「うｐする」でうｐろだへ上げれば本文に貼れます。")
             self._img_label.setToolTip(_nt)
             self._img_edit.setToolTip(_nt)
         # 直接入力対応: 入力確定（Enter / フォーカスアウト）でパスを反映
@@ -2092,6 +2094,7 @@ document.addEventListener('keydown',function(e){{
                 self._cleanup_tmp()
                 self._img_path = ""
                 self._img_is_tmp = False
+                self._img_is_tegaki = False
                 self._img_edit.clear()
                 self._clear_btn.hide()
                 self._preview_lbl.clear_preview()
@@ -2127,6 +2130,7 @@ document.addEventListener('keydown',function(e){{
                 self._cleanup_tmp()
                 self._img_path   = tf.name
                 self._img_is_tmp = True
+                self._img_is_tegaki = True   # 手書き由来（お絵かき送信の対象）
                 img_q = QImage()
                 if img_q.loadFromData(raw):
                     sz = img_q.width(), img_q.height()
@@ -2441,6 +2445,7 @@ document.addEventListener('keydown',function(e){{
         self._cleanup_tmp()
         self._img_path   = ""
         self._img_is_tmp = False
+        self._img_is_tegaki = False
         self._clip_image = None
         self._has_embedded_thumb = False
         self._chk_strip_thumb.setVisible(False)      # ③ 添付なし → 非表示
@@ -2523,6 +2528,7 @@ document.addEventListener('keydown',function(e){{
         self._cleanup_tmp()
         self._img_path   = path
         self._img_is_tmp = False
+        self._img_is_tegaki = False
         self._clip_image = None
         self._update_clip_ui()               # ① ファイル添付は形式/品質を隠す
         self._refresh_thumb_checkbox(path)   # ③ jpg+埋め込みサムネならチェック表示
@@ -2671,26 +2677,40 @@ document.addEventListener('keydown',function(e){{
                     img = _strip_tmp
             except Exception as _e:
                 print(f"[POST] 埋め込みサムネ削除に失敗（元画像で投稿）: {_e}")
-        # ── この板はレスに画像を添付できるか ────────────────────────────
-        # img板の返信フォームには upfile 欄が無く、送っても捨てられる。
-        # 手描きだけで投稿すると本文が空扱いになり「何か書いてください」で
-        # 弾かれるだけなので、ここで止めてうｐろだ経由を案内する。
+        # ── レスに添付欄が無い板（img板など）の扱い ──────────────────────
+        # 手書きは upfile ではなく baseform（ふたばのお絵かき）で送れば貼れる。
+        # 外部ブラウザが手書きを貼れるのはこの経路のため。
+        # 手書き以外のファイルはこの板では貼れないので、送る前に止める。
+        _oekaki = ""
         if (img and self._resto
                 and not getattr(self._board, "can_upload_res", True)):
-            if _strip_tmp:
+            if getattr(self, "_img_is_tegaki", False):
+                import base64 as _b64
                 try:
-                    import os as _os3; _os3.unlink(_strip_tmp)
-                except Exception:
-                    pass
-            self._btn_post.setEnabled(True)   # 手書き経路で無効化済みのため戻す
-            QMessageBox.warning(
-                self, "この板はレスに画像を添付できません",
-                "この板の返信フォームには画像の添付欄がありません。\n"
-                "そのまま送っても画像は捨てられ、本文が空だと\n"
-                "「何か書いてください」で弾かれます。\n\n"
-                "「うｐする」でうｐろだに上げると、ファイル名が本文に\n"
-                "貼られるので、そのまま投稿できます。")
-            return
+                    with open(img, "rb") as _f:
+                        _oekaki = _b64.b64encode(_f.read()).decode("ascii")
+                    img = ""            # upfile では送らない
+                except OSError as _e:
+                    self._btn_post.setEnabled(True)
+                    QMessageBox.warning(self, "手書きの読み込みに失敗",
+                                        f"手書き画像を読み込めませんでした:\n{_e}")
+                    return
+            else:
+                if _strip_tmp:
+                    try:
+                        import os as _os3; _os3.unlink(_strip_tmp)
+                    except Exception:
+                        pass
+                self._btn_post.setEnabled(True)   # 手書き経路で無効化済みのため戻す
+                QMessageBox.warning(
+                    self, "この板はレスにファイルを添付できません",
+                    "この板の返信フォームには画像の添付欄がありません。\n"
+                    "そのまま送っても画像は捨てられ、本文が空だと\n"
+                    "「何か書いてください」で弾かれます。\n\n"
+                    "手書きならそのまま投稿できます。\n"
+                    "ファイルを貼りたい場合は「うｐする」でうｐろだに上げると、\n"
+                    "ファイル名が本文に貼られるので、そのまま投稿できます。")
+                return
         # ── 添付サイズ上限チェック（超過ならふたばに弾かれるので事前に中止）──
         _mx = self._max_file_bytes()
         if img and _mx:
@@ -2719,7 +2739,8 @@ document.addEventListener('keydown',function(e){{
                 ok, msg, new_no = self._fetcher.post_res(
                     self._board, self._resto,
                     name=name, email=mail, subject=sub,
-                    comment=text, image_path=img, delete_key=key)
+                    comment=text, image_path=img, delete_key=key,
+                    oekaki_b64=_oekaki)
             except Exception as _e:
                 ok, msg, new_no = False, str(_e), 0
             finally:
