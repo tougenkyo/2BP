@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.406"
+APP_VER = "0.9.407"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1198,28 +1198,14 @@ _QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
                 ".del-done{color:#cc1105;font-weight:bold;font-size:8pt;}")
 
 def _video_ph_svg(ext: str) -> str:
-    """うｐろだ動画の代わりに出す絵（▶と拡張子）のSVG。
-
-    組み込みブラウザ(QtWebEngine)はH.264を持たないため、mp4は <video> に
-    しても1コマ目すら出ない（error code 4）。ファイルを取りに行くだけ無駄
-    なので、最初からこの絵を出す。<img> なので、ぼかし・右クリックメニュー
-    など既存の仕組みがそのまま効く。"""
-    _e = (ext or "動画")[:6]
-    _e = _e.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 72">'
-        '<rect width="80" height="72" rx="3" fill="#3a3a3a"/>'
-        '<path d="M31 20 L57 36 L31 52 Z" fill="#e8e8e8"/>'
-        '<text x="40" y="67" fill="#bbb" font-size="10" text-anchor="middle" '
-        'font-family="sans-serif">' + _e + '</text>'
-        '</svg>'
-    )
+    """動画のサムネ代わりの絵。実体は futaba2b_html 側（返信モードと共用）"""
+    from futaba2b_html import video_placeholder_svg
+    return video_placeholder_svg(ext)
 
 
 def _video_ph_src(ext: str) -> str:
-    """上のSVGを img src に入れられる data: URI にする"""
-    from urllib.parse import quote as _q
-    return "data:image/svg+xml;charset=utf-8," + _q(_video_ph_svg(ext), safe="")
+    from futaba2b_html import video_placeholder_src
+    return video_placeholder_src(ext)
 
 
 def _img_mode_css(cols: int) -> str:

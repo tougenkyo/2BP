@@ -276,6 +276,12 @@ a.nm:hover { text-decoration: underline; }
 .ul-thumb    { display: block; max-width: 200px; max-height: 160px;
                border: 1px solid #888; cursor: pointer; }
 .ul-thumb:hover { opacity: 0.85; }
+/* うｐろだ動画のサムネ。画像と同じ枠に▶を重ねる */
+.ul-video    { position: relative; display: inline-block; }
+.ul-video .play-btn { width: 48px; height: 48px; font-size: 26px; padding-left: 4px; }
+.ul-video:hover .play-btn { background: rgba(0, 0, 0, 0.65); }
+/* mp4等の「▶＋拡張子」の絵は寸法を持たないので、ここで大きさを決める */
+.ul-thumb.gv-ph { width: 120px; height: 108px; }
 
 /* ─ フッター ─ */
 .footer {
@@ -995,7 +1001,9 @@ function _giVidFallback(vd) {
                 + '<text x="40" y="67" fill="#bbb" font-size="10" text-anchor="middle" '
                 + 'font-family="sans-serif">' + ext + '</text></svg>';
         var img = document.createElement('img');
-        img.className = 'gv-ph thumb-shown';
+        /* 返信モードのうｐろだ動画は ul-thumb の見た目を引き継ぐ */
+        img.className = 'gv-ph thumb-shown'
+                      + (vd.classList.contains('ul-thumb') ? ' ul-thumb' : '');
         img.setAttribute('data-full', vd.getAttribute('data-full') || '');
         img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
         vd.parentNode.replaceChild(img, vd);
@@ -1880,10 +1888,29 @@ def _apply_uploaders(text: str, uploaders: list,
                 f'</span>'
             )
         elif _is_video(url):
-            # うｐろだ動画: ファイル名クリックで VideoPlayerWindow を開く
+            # うｐろだ動画: 画像と同じようにサムネを出し、クリックで再生する。
+            # webm は1コマ目を出せるが、mp4(H.264) は組み込みブラウザが
+            # デコードできないので「▶＋拡張子」の絵にする（取りに行かない）。
+            # 読み込みに失敗した時も onerror で同じ絵へ差し替える。
+            _ext_v = (match_str.rsplit(".", 1)[-1].upper()
+                      if "." in match_str else "動画")
+            if url.lower().split('?')[0].endswith(".webm"):
+                _media = (f'<video class="ul-thumb" src="{eu}#t=0.1"'
+                          f' preload="metadata" muted playsinline'
+                          f' data-ext="{_e(_ext_v)}" data-full="{eu}"'
+                          f' onerror="_giVidFallback(this)"></video>')
+            else:
+                _media = (f'<img class="ul-thumb gv-ph thumb-shown"'
+                          f' src="{video_placeholder_src(_ext_v)}"'
+                          f' data-full="{eu}">')
             link = (
-                f'<a href="{eu}" class="ul-link" title="{en}" '
-                f'onclick="playVideoInline_footer(\'{eu}\');return false;">&#9654; {em}</a>'
+                f'<span class="ul-img-wrap">'
+                f'<span class="ul-fname">{em}</span>'
+                f'<a href="{eu}" class="ul-link ul-video" title="{en}" '
+                f'onclick="playVideoInline_footer(\'{eu}\');return false;">'
+                f'{_media}<span class="play-btn">&#9654;</span>'
+                f'</a>'
+                f'</span>'
             )
         else:
             link = (
@@ -2075,6 +2102,31 @@ def _is_video(url: str) -> bool:
     """URLが動画ファイルかどうかを判定"""
     lo = url.lower().split('?')[0]
     return any(lo.endswith(ext) for ext in _VIDEO_EXTS)
+
+
+def video_placeholder_svg(ext: str) -> str:
+    """動画のサムネ代わりに出す絵（▶と拡張子）のSVG。
+
+    組み込みブラウザ(QtWebEngine)はH.264を持たないため、mp4は <video> に
+    しても1コマ目すら出ない（error code 4）。ファイルを取りに行くだけ無駄
+    なので、最初からこの絵を出す。<img> なので、ぼかし・右クリックメニュー
+    など既存の仕組みがそのまま効く。画像モードと返信モードで共用する。"""
+    _x = (ext or "動画")[:6]
+    _x = _x.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 72">'
+        '<rect width="80" height="72" rx="3" fill="#3a3a3a"/>'
+        '<path d="M31 20 L57 36 L31 52 Z" fill="#e8e8e8"/>'
+        '<text x="40" y="67" fill="#bbb" font-size="10" text-anchor="middle" '
+        'font-family="sans-serif">' + _x + '</text>'
+        '</svg>'
+    )
+
+
+def video_placeholder_src(ext: str) -> str:
+    """上のSVGを img src に入れられる data: URI にする"""
+    from urllib.parse import quote as _q
+    return "data:image/svg+xml;charset=utf-8," + _q(video_placeholder_svg(ext), safe="")
 
 
 def _media_type_label(image_url: str, image_name: str, thumb_url: str) -> str:
