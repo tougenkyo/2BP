@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.404"
+APP_VER = "0.9.405"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8896,6 +8896,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._bridge.add_thread_ng_requested.connect(self._on_add_thread_ng)
         self._bridge.catalog_del_requested.connect(self._on_catalog_del)
         self._bridge.catalog_ng_image_requested.connect(self._on_catalog_ng_image)
+        self._bridge.catalog_ng_word_requested.connect(self._on_catalog_ng_word)
         self._cat_ng_img_ready.connect(self._on_cat_ng_img_ready)
         self._catalog_del_result.connect(self._on_catalog_del_result)
         self._catalog_err_sig.connect(self._on_catalog_err)
@@ -9227,6 +9228,44 @@ class CatalogView(_MouseGestureMixin, QWidget):
             self._settings.save()
         # カタログを再描画してNGスレを除外
         self._re_render()
+
+    def _on_catalog_ng_word(self, thread_url: str, text: str):
+        """カタログのスレ文からNGワードを登録する。
+
+        文面を選んでから登録できるよう、まず本文を見せて語句を切り出させ、
+        そのままNGワード追加ダイアログへ渡す。誤爆した時に直せるよう、
+        登録内容は通常のNGワードと同じ扱い（NG設定から編集・削除できる）。"""
+        text = (text or "").strip()
+        if not text:
+            return
+        from futaba2b_dialogs import NgWordPickDialog, NgWordEditDialog
+        pick = NgWordPickDialog(text, parent=self)
+        if pick.exec() != pick.DialogCode.Accepted:
+            return
+        _word = (pick.get_word() or "").strip()
+        if not _word:
+            return
+        # scope_catalog: カタログの文字（＝OP本文の先頭N文字）で判定する。
+        # scope_body: 開いたスレの本文でも効かせる。
+        entry = {
+            "pattern": _word, "is_regex": False, "enabled": True,
+            "ng_type": "ng", "scope_catalog": True, "scope_body": True,
+        }
+        dlg = NgWordEditDialog(entry, parent=self)
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        result = dlg.get_result()
+        if not result:
+            return
+        self._settings.ng_words.append(result)
+        self._settings.invalidate_ng_cache()
+        self._settings.save()
+        self._re_render()
+        _p = self
+        while _p is not None and not hasattr(_p, "mark_all_threads_ng_dirty"):
+            _p = _p.parent()
+        if _p is not None:
+            _p.mark_all_threads_ng_dirty()
 
     def _on_catalog_ng_image(self, thread_url: str, thumb_url: str):
         """カタログのスレ画をNG登録する。

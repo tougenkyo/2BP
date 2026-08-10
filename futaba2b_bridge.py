@@ -225,6 +225,7 @@ class CatalogBridge(QObject):
     add_thread_ng_requested  = Signal(str)   # スレッドURLをNGに追加
     catalog_del_requested    = Signal(str)   # 削除依頼(del) → スレッドURL
     catalog_ng_image_requested = Signal(str, str)  # スレ画NG登録 (スレURL, サムネURL)
+    catalog_ng_word_requested  = Signal(str, str)  # スレ文からNGワード登録 (スレURL, 本文)
     scroll_bottom_reached    = Signal()      # スクロール末尾 → 更新トリガー
     scroll_top_reached       = Signal()      # スクロール先頭 → 更新トリガー
     cat_hover_enter          = Signal(str, str, str)  # (url, thumb_url, comment)
@@ -263,6 +264,11 @@ class CatalogBridge(QObject):
     def catalogNgImage(self, thread_url: str, thumb_url: str):
         """カタログのスレ画をNG登録する（スレURL・サムネURL）"""
         self.catalog_ng_image_requested.emit(thread_url, thumb_url)
+
+    @Slot(str, str)
+    def catalogNgWord(self, thread_url: str, text: str):
+        """カタログのスレ文からNGワードを登録する（スレURL・件名/本文）"""
+        self.catalog_ng_word_requested.emit(thread_url, text)
 
     @Slot()
     def scrollBottom(self):

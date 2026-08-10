@@ -1130,6 +1130,16 @@ document.addEventListener('contextmenu', function(e) {
     ctxAddItem(menu, 'URLをコピーする',    function(){
         if(typeof _b==='function') _b('copyToClipboard',[url]);
     });
+    /* スレ文（OP本文。無い板は件名）を使うもの */
+    var _com = el.getAttribute('data-com') || '';
+    if (_com) {
+        ctxAddItem(menu, 'スレ文をコピーする', function(){
+            if(typeof _b==='function') _b('copyToClipboard',[_com]);
+        });
+        ctxAddItem(menu, 'スレ文からNGワードを登録する…', function(){
+            if(typeof _b==='function') _b('catalogNgWord',[url, _com]);
+        });
+    }
     ctxAddSep(menu);
     ctxAddItem(menu, 'このスレをNGにする', function(){ addThreadNg(url); });
     ctxAddItem(menu, '削除依頼(del)', function(){
@@ -2983,8 +2993,12 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                 f' onmouseleave="{_e(_leave_js)}"'
             )
 
+        # 右クリックの「スレ文をコピー」「スレ文からNGワード」用に本文を持たせる。
+        # mode=json のOP本文が無い板・スレでは件名で代用する。
+        _com_attr = _e((getattr(e, 'op_comment', '') or e.title or "")[:1000])
         return (
             f'<div class="{ecls}"{style_attr} data-url="{url}" '
+            f'data-com="{_com_attr}" '
             f'onclick="handleCatClick(\'{url}\',event)" '
             f'onmousedown="handleCatMouseDown(\'{url}\',event)"'
             f'{_hover_attrs}>' +

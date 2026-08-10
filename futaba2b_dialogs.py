@@ -3336,6 +3336,49 @@ class NgWordBulkEditDialog(QDialog):
 # NGワード追加/修正ダイアログ
 # ══════════════════════════════════════════════════════════════════════════════
 
+class NgWordPickDialog(QDialog):
+    """スレ文を見せて、NGにする語句を切り出させるダイアログ。
+
+    カタログの右クリックから使う。スレ文をそのままNGワードにすると効きすぎる
+    ので、本文から選んだ部分だけを次のNGワード追加ダイアログへ渡す。"""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("NGにする語句を選ぶ")
+        self.resize(460, 300)
+        self._text = text or ""
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("スレ文の中から、NGにしたい部分を選んでください。\n"
+                             "選ばずにOKすると、下の入力欄の内容を使います。"))
+        self._view = QTextEdit()
+        self._view.setPlainText(self._text)
+        self._view.setReadOnly(True)
+        self._view.selectionChanged.connect(self._on_selection)
+        lay.addWidget(self._view, 1)
+        _row = QHBoxLayout()
+        _row.addWidget(QLabel("NGワード:"))
+        self._edit = QLineEdit()
+        self._edit.setPlaceholderText("本文をドラッグで選ぶか、直接入力")
+        _row.addWidget(self._edit, 1)
+        lay.addLayout(_row)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel)
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("キャンセル(C)")
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+        QTimer.singleShot(0, self._edit.setFocus)
+
+    def _on_selection(self):
+        _s = self._view.textCursor().selectedText().strip()
+        if _s:
+            # QTextEdit の選択は改行が U+2029 になるので戻す
+            self._edit.setText(_s.replace(" ", "\n"))
+
+    def get_word(self) -> str:
+        return self._edit.text().strip()
+
+
 class NgWordEditDialog(QDialog):
     """NGワードの追加・修正ダイアログ"""
     def __init__(self, ng_entry: dict | None = None, parent=None):
