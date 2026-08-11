@@ -5274,6 +5274,59 @@ class AppSettingsDialog(QDialog):
         note.setStyleSheet("font-size:8pt;color:#888;"); note.setWordWrap(True)
         f_ca.addWidget(note)
 
+        # ── まとめて削除（保持日数の設定はいじらず、今回だけ実行） ──────────
+        g_purge = QGroupBox("まとめて削除"); f_ca.addWidget(g_purge)
+        gp_lay = QVBoxLayout(g_purge)
+        _pn = QLabel("上の保持日数・サイズ上限の設定は変えずに、今この場で消します。")
+        _pn.setStyleSheet("font-size:8pt;color:#888;"); _pn.setWordWrap(True)
+        gp_lay.addWidget(_pn)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("対象:"))
+        self._purge_img    = QCheckBox("画像");       self._purge_img.setChecked(True)
+        self._purge_video  = QCheckBox("動画");       self._purge_video.setChecked(True)
+        self._purge_thread = QCheckBox("スレHTML")
+        self._purge_hthumb = QCheckBox("履歴のサムネ")
+        self._purge_thread.setToolTip(
+            "過去ログ表示に使います。消すと落ちたスレのログが開けなくなります。")
+        self._purge_hthumb.setToolTip(
+            "履歴表示のサムネ保管庫 (data/histthumb)。保持日数の対象外で消えません。")
+        for _c in (self._purge_img, self._purge_video,
+                   self._purge_thread, self._purge_hthumb):
+            row.addWidget(_c)
+        row.addStretch(); gp_lay.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("範囲:"))
+        self._purge_range = _NoWheelComboBox()
+        for _t in ("全期間（すべて消す）", "◯日以上前", "指定した日より前"):
+            self._purge_range.addItem(_t)
+        row.addWidget(self._purge_range)
+        self._purge_days = _spin(1, 3650, " 日以上前", width=120)
+        self._purge_days.setValue(30)
+        row.addWidget(self._purge_days)
+        from PySide6.QtWidgets import QDateEdit
+        from PySide6.QtCore import QDate
+        self._purge_date = QDateEdit()
+        self._purge_date.setCalendarPopup(True)
+        self._purge_date.setDisplayFormat("yyyy/MM/dd")
+        self._purge_date.setDate(QDate.currentDate().addDays(-30))
+        row.addWidget(self._purge_date)
+        row.addStretch(); gp_lay.addLayout(row)
+
+        def _purge_range_changed(idx: int):
+            self._purge_days.setVisible(idx == 1)
+            self._purge_date.setVisible(idx == 2)
+        self._purge_range.currentIndexChanged.connect(_purge_range_changed)
+        _purge_range_changed(0)
+
+        row = QHBoxLayout()
+        _btn_purge = QPushButton("削除する…")
+        _btn_purge.clicked.connect(self._purge_cache_now)
+        row.addWidget(_btn_purge)
+        self._purge_result = QLabel("")
+        self._purge_result.setStyleSheet("font-size:9pt;")
+        row.addWidget(self._purge_result, 1)
+        gp_lay.addLayout(row)
+
         f_ca.addStretch(); nb.addTab(_scroll(w_ca), "キャッシュ")
 
         # ══════════════════════════════════════════════════════════════════
@@ -6162,6 +6215,70 @@ class AppSettingsDialog(QDialog):
         # 2秒後に使用量を再計測して表示を更新
         from PySide6.QtCore import QTimer
         QTimer.singleShot(2000, self._update_cache_info)
+
+    def _purge_targets(self) -> list:
+        """「まとめて削除」で選ばれている種別 → [(表示名, ディレクトリ), ...]"""
+        from futaba2b_network import (IMAGE_CACHE_DIR, VIDEO_CACHE_DIR,
+                                      THREAD_CACHE_DIR, HISTORY_THUMB_DIR)
+        out = []
+        for chk, label, cdir in (
+                (self._purge_img,    "画像",         IMAGE_CACHE_DIR),
+                (self._purge_video,  "動画",         VIDEO_CACHE_DIR),
+                (self._purge_thread, "スレHTML",     THREAD_CACHE_DIR),
+                (self._purge_hthumb, "履歴のサムネ", HISTORY_THUMB_DIR)):
+            if chk.isChecked():
+                out.append((label, cdir))
+        return out
+
+    def _purge_before_ts(self) -> float:
+        """「まとめて削除」の範囲 → この時刻より古いものが対象（0=全期間）"""
+        import time as _t
+        idx = self._purge_range.currentIndex()
+        if idx == 1:
+            return _t.time() - self._purge_days.value() * 86400
+        if idx == 2:
+            _d = self._purge_date.date()
+            return _t.mktime((_d.year(), _d.month(), _d.day(), 0, 0, 0, 0, 0, -1))
+        return 0.0
+
+    def _purge_cache_now(self):
+        """「まとめて削除」: 保持日数の設定とは別に、選んだ範囲を今すぐ消す。
+        戻せない操作なので、件数と容量を出して確認してから実行する。"""
+        from futaba2b_network import purge_cache_dir
+        targets = self._purge_targets()
+        if not targets:
+            self._purge_result.setText("対象が選ばれていません")
+            return
+        before = self._purge_before_ts()
+        _hits = []
+        _n_all = _b_all = 0
+        for label, cdir in targets:
+            cnt, sz = purge_cache_dir(cdir, before_ts=before, dry_run=True)
+            if cnt:
+                _hits.append((label, cdir, cnt, sz))
+                _n_all += cnt; _b_all += sz
+        if not _n_all:
+            self._purge_result.setText("消すものはありませんでした")
+            return
+        _range = self._purge_range.currentText()
+        _detail = "\n".join(f"　{l}: {c}件 / {self._fmt_size(s)}"
+                            for l, _d, c, s in _hits)
+        if QMessageBox.question(
+                self, "キャッシュの削除",
+                f"{_range} を対象に、次のファイルを削除します。\n\n{_detail}\n\n"
+                f"合計 {_n_all}件 / {self._fmt_size(_b_all)}\n\n"
+                "元に戻せません。よろしいですか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                ) != QMessageBox.StandardButton.Yes:
+            self._purge_result.setText("中止しました")
+            return
+        _n = _b = 0
+        for label, cdir, _c, _s in _hits:
+            cnt, sz = purge_cache_dir(cdir, before_ts=before)
+            _n += cnt; _b += sz
+        self._purge_result.setText(f"{_n}件 / {self._fmt_size(_b)} を削除しました")
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(500, self._update_cache_info)
 
 
 

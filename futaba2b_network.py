@@ -193,6 +193,51 @@ def cleanup_cache_dir(cache_dir, max_days: int = 0,
     return deleted_count, deleted_bytes
 
 
+def purge_cache_dir(cache_dir, before_ts: float = 0.0,
+                    dry_run: bool = False) -> tuple[int, int]:
+    """キャッシュを手で片付ける用。保持日数の設定とは関係なく消す。
+
+    before_ts > 0: その時刻より古いファイルだけを対象にする
+    before_ts = 0: 全部
+    dry_run=True なら数えるだけで消さない（確認ダイアログの件数表示用）。
+    Returns: (対象/削除ファイル数, バイト数)
+    """
+    from pathlib import Path
+    cache_dir = Path(cache_dir)
+    if not cache_dir.exists():
+        return 0, 0
+    count = 0
+    total = 0
+    for f in cache_dir.rglob("*"):
+        if not f.is_file():
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        if before_ts > 0 and st.st_mtime >= before_ts:
+            continue
+        if dry_run:
+            count += 1
+            total += st.st_size
+            continue
+        try:
+            f.unlink()
+            count += 1
+            total += st.st_size
+        except OSError:
+            pass
+    if not dry_run:
+        # 空になったディレクトリを片付ける
+        for d in sorted(cache_dir.rglob("*"), reverse=True):
+            if d.is_dir():
+                try:
+                    d.rmdir()   # 空でなければ例外
+                except OSError:
+                    pass
+    return count, total
+
+
 def get_dir_size(cache_dir) -> tuple[int, int]:
     """ディレクトリの合計サイズを返す汎用関数。Returns: (ファイル数, バイト数)"""
     from pathlib import Path
