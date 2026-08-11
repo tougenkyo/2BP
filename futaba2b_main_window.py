@@ -1304,7 +1304,11 @@ class MainWindow(QMainWindow):
             try:
                 if not dlg.isVisible():
                     continue
-                if active_no and resto == active_no:
+                # 対応するスレタブが無いウインドウは畳まない。畳むと戻す
+                # きっかけ（そのタブを選ぶ）が無くなり、畳んだままのウインドウが
+                # 画面に残り続けるため。
+                if ((active_no and resto == active_no)
+                        or not self._thread_tab_exists(resto)):
                     if hasattr(dlg, "roll_restore"):
                         dlg.roll_restore()
                 else:
@@ -2159,10 +2163,64 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _thread_tab_exists(self, no: int, exclude=None) -> bool:
+        """そのスレ番号のタブが開いているか（exclude のタブは数えない）"""
+        if not no:
+            return False
+        for ti in range(self._outer_tabs.count()):
+            pane = self._outer_tabs.widget(ti)
+            if not isinstance(pane, BoardPane):
+                continue
+            for i in range(pane._tabs.count()):
+                w = pane._tabs.widget(i)
+                if (w is not exclude and isinstance(w, ThreadView)
+                        and (getattr(w, "_thread_no", 0) or 0) == no):
+                    return True
+        return False
+
+    def _close_post_dialog_for(self, view):
+        """閉じるスレタブに紐づく返信ウインドウの後始末をする。
+
+        返信ウインドウは表示中のスレタブに合わせて畳んだり戻したりしている
+        （_sync_post_dialog_roll）。元のタブが無くなると戻す相手がいなくなり、
+        畳んだままのウインドウが画面に残り続ける。書きかけがある時だけ
+        確認してから閉じる（黙って捨てない）。"""
+        dlgs = getattr(self, "_post_dialogs", None)
+        no = (getattr(view, "_thread_no", 0) or 0) if dlgs else 0
+        dlg = dlgs.get(no) if no else None
+        if dlg is None:
+            return
+        # 同じスレを別のタブでも開いていれば、そちらで使い続ける
+        if self._thread_tab_exists(no, exclude=view):
+            return
+        try:
+            _txt = dlg._comment.toPlainText().strip()
+        except (AttributeError, RuntimeError):
+            _txt = ""
+        if _txt:
+            # 畳んだままだと中身が見えないので、聞く前に元へ戻す
+            try:
+                dlg.roll_restore()
+                dlg.raise_(); dlg.activateWindow()
+            except (AttributeError, RuntimeError):
+                pass
+            if QMessageBox.question(
+                    self, "返信ウインドウ",
+                    "書きかけの返信があります。返信ウインドウも閉じますか？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    ) != QMessageBox.StandardButton.Yes:
+                return           # 残す場合も畳んだままにはしない
+        dlgs.pop(no, None)
+        try:
+            dlg.close()
+        except RuntimeError:
+            pass
+
     def _on_tab_closing(self, view):
         """タブが閉じられる直前に情報をスタックに積む"""
         if not isinstance(view, ThreadView):
             return
+        self._close_post_dialog_for(view)
         board = view._board
         if not board:
             return
