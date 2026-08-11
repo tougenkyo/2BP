@@ -1548,6 +1548,10 @@ class NgFilter:
         self._dhash_memo: dict[str, str] = {}
         self._dhash_loaded  = False
         self._dhash_pending: set[str] = set()
+        # カタログのスレ画は本文と違ってディスクに落ちていないため、判定に
+        # 必要なものだけ裏で取りに行く。取得口はアプリ側から差し込む。
+        self._dhash_fetch_ok: set[str] = set()
+        self.fetch_bytes = None         # 画像取得関数（FutabaFetcher.fetch_image_bytes）
         import threading as _threading
         self._dhash_lock    = _threading.Lock()
         self._dhash_worker  = None
@@ -1948,23 +1952,33 @@ class NgFilter:
         カタログには本画像URL・ファイルサイズ・寸法が無いため、MD5や
         「種類/サイズ指定」では判定できない。登録時に控えている本画像URL
         (known_urls) とサムネのファイル名の数字を突き合わせる。
-        ディスクI/Oを伴わないので、カタログ150件×エントリ数でも軽い。"""
-        _no = self._futaba_img_no(getattr(entry, "thumb_url", "") or "")
-        if not _no:
-            return None
+        ディスクI/Oを伴わないので、カタログ150件×エントリ数でも軽い。
+
+        類似画像（似ている画像）はファイル名が違っても消したいので、
+        サムネのdHashでも照合する。サムネと本画像のdHashはほぼ一致する
+        （実測で中央値1・最大6）ため、同じしきい値がそのまま使える。
+        ハッシュは裏で作るので、この回に間に合わなければ次の描画で効く。"""
+        _thumb = getattr(entry, "ng_thumb_url", "") or getattr(entry, "thumb_url", "") or ""
+        _no = self._futaba_img_no(_thumb)
         for img_ng in self._settings.ng_images:
             if not img_ng.get("enabled", True):
                 continue
             if bool(img_ng.get("is_reverse_ng", False)) != is_reverse:
                 continue
-            if img_ng.get("method", "md5") == "type_size":
+            _method = img_ng.get("method", "md5")
+            if _method == "type_size":
                 continue          # 寸法・サイズはカタログでは分からない
             if self._is_expired(img_ng):
                 continue
-            for u in img_ng.get("known_urls", []) or []:
-                if self._futaba_img_no(u) == _no:
-                    self._mark_hit(img_ng)
-                    return img_ng
+            if _no:
+                for u in img_ng.get("known_urls", []) or []:
+                    if self._futaba_img_no(u) == _no:
+                        self._mark_hit(img_ng)
+                        return img_ng
+            if (_method == "similar" and _thumb
+                    and self._similar_hit(img_ng, _thumb, allow_fetch=True)):
+                self._mark_hit(img_ng)
+                return img_ng
         return None
 
     def _known_url_hit(self, img_ng: dict, url: str) -> bool:
@@ -2193,19 +2207,27 @@ class NgFilter:
             except Exception as e:
                 print(f"[類似画像] ハッシュ保存に失敗: {e}")
 
-    def _file_dhash_for(self, url: str) -> str | None:
+    def _file_dhash_for(self, url: str, allow_fetch: bool = False) -> str | None:
         """URLのディスクキャッシュ画像のdHashを返す。
 
         まだ計算していなければ裏のスレッドへ積んで None を返す（この回は
         「一致しない」扱い）。UIスレッドを止めないための作りで、計算が
-        一段落したら dhash_batch_done 経由で再描画してもらう。"""
+        一段落したら dhash_batch_done 経由で再描画してもらう。
+
+        allow_fetch=True なら、ディスクに無い画像は裏のスレッドで取りに行く。
+        カタログのスレ画（サムネ）は数KBと小さく、判定に必要な分だけ・
+        一度きり（結果は保存される）なので通信量はほとんど増えない。"""
         self._load_dhash_memo()
         hit = self._dhash_memo.get(url)
         if hit is not None:
             return hit or None          # "" = 読めなかった画像（再計算しない）
-        if not self._get_cached_path(url):
+        _cached = bool(self._get_cached_path(url))
+        if not _cached and not (allow_fetch and self.fetch_bytes is not None
+                                and url[:5].lower() in ("http:", "https")):
             return None                 # 未ダウンロード。落ちてきたら計算する
         with self._dhash_lock:
+            if not _cached:
+                self._dhash_fetch_ok.add(url)
             if url in self._dhash_pending:
                 return None
             self._dhash_pending.add(url)
@@ -2219,6 +2241,7 @@ class NgFilter:
         重なって落ちる余地が残る。今の1枚を終えたら畳ませる。"""
         with self._dhash_lock:
             self._dhash_pending.clear()
+            self._dhash_fetch_ok.clear()
 
     def _start_dhash_worker(self) -> None:
         """ハッシュ計算スレッドを起こす（呼び出し元は _dhash_lock 保持中）"""
@@ -2240,7 +2263,19 @@ class NgFilter:
                     self._dhash_worker = None
                     break
                 url = self._dhash_pending.pop()
+                _may_fetch = url in self._dhash_fetch_ok
+                self._dhash_fetch_ok.discard(url)
             path = self._get_cached_path(url)
+            if path is None and _may_fetch and self.fetch_bytes is not None:
+                # カタログのスレ画など、ディスクに無いものだけ取りに行く。
+                # 取れたものはディスクキャッシュに入るので次回以降は通信しない。
+                # カタログ1枚で百件単位になりうるので、間隔を空けて畳みかけない。
+                try:
+                    if self.fetch_bytes(url):
+                        path = self._get_cached_path(url)
+                    time.sleep(0.12)
+                except Exception as e:
+                    print(f"[類似画像] サムネ取得に失敗: {e}")
             val = compute_dhash_file(path) if path else ""
             # 上限は save_dhash_memo 側で「新しい方を残す」形に間引く。
             # ここで丸ごと捨てると保存済みの分まで作り直しになる。
@@ -2256,12 +2291,13 @@ class NgFilter:
                 except Exception as e:
                     print(f"[類似画像] 再描画通知に失敗: {e}")
 
-    def _similar_hit(self, img_ng: dict, url: str) -> bool:
+    def _similar_hit(self, img_ng: dict, url: str,
+                     allow_fetch: bool = False) -> bool:
         """類似画像NGの照合。ハッシュが未計算なら False（次の描画で効く）"""
         stored = (img_ng.get("dhash") or "").strip().lower()
         if not stored:
             return False
-        mine = self._file_dhash_for(url)
+        mine = self._file_dhash_for(url, allow_fetch=allow_fetch)
         if not mine:
             return False
         return hamming_hex(mine, stored) <= similar_threshold(img_ng)

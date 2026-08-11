@@ -275,6 +275,9 @@ class MainWindow(QMainWindow):
         try:
             self._settings.ng_filter.dhash_batch_done = (
                 lambda: self._main_thread_call.emit(self._on_dhash_batch_done))
+            # カタログのスレ画（サムネ）はディスクに落ちていないので、
+            # 類似画像NGの判定に要るぶんだけ裏で取りに行けるようにする
+            self._settings.ng_filter.fetch_bytes = self._fetcher.fetch_image_bytes
         except Exception as e:
             print(f"[類似画像] 通知の接続に失敗: {e}")
         # カタログアイコンキャッシュ
@@ -5772,6 +5775,7 @@ class MainWindow(QMainWindow):
             # 破棄中のビューを触らせない。計算済みハッシュは書き出しておく
             _nf = self._settings.ng_filter
             _nf.dhash_batch_done = None
+            _nf.fetch_bytes = None       # 終了中に取りに行かせない
             _nf.stop_dhash_worker()
             _nf.save_dhash_memo()
         except Exception:
