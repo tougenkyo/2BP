@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.409"
+APP_VER = "0.9.410"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -355,6 +355,36 @@ def clear_context_menu_suppress():
 def context_menu_suppressed() -> bool:
     """今は右クリックメニューを出さない場面か。"""
     return time.monotonic() < _CTX_SUPPRESS_UNTIL
+
+
+# ── ショートカットキー ────────────────────────────────────────────────────
+def enter_alt_key(key: str) -> str:
+    """Enter と Return を入れ替えたキー文字列を返す（対象外なら空文字）。
+
+    Qt では本体のEnter(Return)とテンキーのEnter(Enter)が別のキーで、
+    「Ctrl+Enter」を登録しても本体のEnterでは効かない。どちらを指定しても
+    両方で効かせるために使う。"""
+    key = (key or "").strip()
+    if not key:
+        return ""
+    head, sep, last = key.rpartition("+")
+    swapped = {"enter": "Return", "return": "Enter"}.get(last.strip().lower(), "")
+    if not swapped:
+        return ""
+    return (head + sep + swapped) if sep else swapped
+
+
+def key_sequences(key: str) -> list:
+    """設定のキー文字列 → 実際に登録する QKeySequence の一覧。
+    Enter 系は本体・テンキーの両方を登録する（enter_alt_key 参照）。"""
+    key = (key or "").strip()
+    if not key:
+        return []
+    out = [QKeySequence(key)]
+    alt = enter_alt_key(key)
+    if alt:
+        out.append(QKeySequence(alt))
+    return out
 
 
 class _ImageWebView(QWebEngineView):
@@ -2773,6 +2803,7 @@ class BoardPane(QWidget):
         for aid, fn in _sc_actions:
             _key = _saved_sc.get(aid, "") or _sc_defaults[aid]
             sc = QShortcut(QKeySequence(_key), self, fn)
+            sc.setKeys(key_sequences(_key))   # Enter は本体/テンキー両方
             # 板タブ(BoardPane)ごとに同じキーが登録されるため、既定の
             # WindowShortcut のままだと板を複数開いた時点で同一キーが重複し、
             # Qt が Ambiguous と判定してどれも発火しなくなる。
@@ -2812,7 +2843,7 @@ class BoardPane(QWidget):
         _saved = getattr(settings, 'shortcuts', {}) or {}
         for aid, sc in self._sc_map.items():
             _key = _saved.get(aid, "") or _sc_defaults.get(aid, "")
-            sc.setKey(QKeySequence(_key))
+            sc.setKeys(key_sequences(_key))   # Enter は本体/テンキー両方
 
     # ── タブ操作の委譲 ────────────────────────────────────────────────────────
     def addTab(self, w, l):

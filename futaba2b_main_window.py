@@ -44,6 +44,8 @@ from futaba2b_app_qt import (
     _JapaneseLineEdit,
     suppress_context_menu as _suppress_ctx_menu,
     clear_context_menu_suppress as _clear_ctx_suppress,
+    enter_alt_key as _enter_alt_key,
+    key_sequences as _key_seqs,
 )
 from futaba2b_dialogs import (
     ThreadHistoryPane, PostDialog, NgSettingsDialog, AppSettingsDialog,
@@ -678,6 +680,23 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
         self._sc_find = QShortcut(QKeySequence(_sc("find_in_view") or QKeySequence("Ctrl+F")), self, self._find_in_view)
+        self._sc_find.setKeys(_key_seqs(self._sc_find.key().toString()))
+        self._apply_enter_alt_shortcuts()
+
+    def _apply_enter_alt_shortcuts(self):
+        """Enter を割り当てた項目を、本体のEnterとテンキーのEnterのどちらでも
+        効くようにする。Qt では別のキー扱いで、「Ctrl+Enter」と書いても本体の
+        Enterでは反応しないため、もう一方も一緒に登録しておく。"""
+        for act in self.findChildren(QAction):
+            try:
+                cur = act.shortcut()
+                if cur.isEmpty():
+                    continue
+                alt = _enter_alt_key(cur.toString())
+                if alt:
+                    act.setShortcuts([cur, QKeySequence(alt)])
+            except RuntimeError:
+                pass
 
     # ── ブックマーク ─────────────────────────────────────────────────────────
     def _build_bookmark_menu(self):

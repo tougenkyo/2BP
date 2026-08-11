@@ -10,7 +10,7 @@ import configparser
 
 from PySide6.QtCore    import (Qt, QTimer, Signal, QSize, QPoint, QRect, QEvent,
                                QObject, Slot, QFile, QIODevice)
-from PySide6.QtGui     import QPixmap, QIcon, QImage, QColor, QTextCursor
+from PySide6.QtGui     import QPixmap, QIcon, QImage, QColor, QTextCursor, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QGroupBox,
     QLabel, QLineEdit, QTextEdit, QPushButton, QFileDialog, QMessageBox,
@@ -5487,8 +5487,10 @@ class AppSettingsDialog(QDialog):
         w_sc = QWidget(); f_sc = QVBoxLayout(w_sc)
 
         _sc_hint = QLabel(
-            "キーシーケンスを入力してください（例: Ctrl+D, F5, Shift+F2）\n"
-            "空欄にするとデフォルトのキーに戻ります。変更は再起動不要で即時反映されます。")
+            "「カスタムキー」の枠をクリックして、割り当てたいキーをそのまま押してください"
+            "（例: Ctrl+D, F5, Shift+F2, Ctrl+Enter）。\n"
+            "右の×で消すとデフォルトのキーに戻ります。変更は再起動不要で即時反映されます。\n"
+            "Enter は本体・テンキーのどちらでも効きます。")
         _sc_hint.setStyleSheet("color: gray; font-size: 11px;")
         _sc_hint.setWordWrap(True)
         f_sc.addWidget(_sc_hint)
@@ -5532,6 +5534,10 @@ class AppSettingsDialog(QDialog):
 
         self._sc_defs = _SC_DEFS
         self._sc_table = _sc_table
+        # カスタムキーは押したキーをそのまま取り込む欄にする。文字で打たせると
+        # Enter のように「打てないキー」が指定できないため。
+        from PySide6.QtWidgets import QKeySequenceEdit
+        self._sc_edits = []
         for row, (aid, label, default) in enumerate(_SC_DEFS):
             lbl_item = QTableWidgetItem(label)
             lbl_item.setFlags(lbl_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -5540,15 +5546,24 @@ class AppSettingsDialog(QDialog):
             def_item.setForeground(QColor(_TM.ui("text_muted", "#888")))
             _sc_table.setItem(row, 0, lbl_item)
             _sc_table.setItem(row, 1, def_item)
-            _sc_table.setItem(row, 2, QTableWidgetItem(""))  # カスタムキー（_loadで埋める）
+            _kse = QKeySequenceEdit()
+            _kse.setMinimumWidth(150)
+            try:
+                # 「Ctrl+D, Ctrl+E」のような続き打ちは使わないので1キーに限る
+                _kse.setMaximumSequenceLength(1)
+                _kse.setClearButtonEnabled(True)
+            except (AttributeError, TypeError):
+                pass
+            _sc_table.setCellWidget(row, 2, _kse)
+            self._sc_edits.append(_kse)
 
         f_sc.addWidget(_sc_table, 1)
 
         _sc_reset_btn = QPushButton("全てデフォルトに戻す")
         _sc_reset_btn.setFixedWidth(180)
         def _reset_shortcuts():
-            for row in range(_sc_table.rowCount()):
-                _sc_table.item(row, 2).setText("")
+            for _e in self._sc_edits:
+                _e.clear()
         _sc_reset_btn.clicked.connect(_reset_shortcuts)
         _sc_btn_lay = QHBoxLayout()
         _sc_btn_lay.addWidget(_sc_reset_btn)
@@ -5879,7 +5894,7 @@ class AppSettingsDialog(QDialog):
         _saved_sc = getattr(s, "shortcuts", {})
         for row, (aid, label, default) in enumerate(self._sc_defs):
             custom = _saved_sc.get(aid, "")
-            self._sc_table.item(row, 2).setText(custom)
+            self._sc_edits[row].setKeySequence(QKeySequence(custom))
 
         # マウスジェスチャー（未設定なら既定を表示）
         _mg_on = bool(getattr(s, "mouse_gesture_enabled", False))
@@ -6033,7 +6048,7 @@ class AppSettingsDialog(QDialog):
         # ショートカット
         sc_map = {}
         for row, (aid, label, default) in enumerate(self._sc_defs):
-            val = self._sc_table.item(row, 2).text().strip()
+            val = self._sc_edits[row].keySequence().toString().strip()
             if val:
                 sc_map[aid] = val
         s.shortcuts = sc_map
