@@ -16,6 +16,24 @@ if TYPE_CHECKING:
 
 SETTINGS_FILE = Path(SETTINGS_FILE_NAME)
 
+# 設定の保存は50箇所以上から呼ばれ、自動更新・先読み・ハッシュ計算など
+# 裏のスレッドからも走る。同じ一時ファイル名を使っていたため、2つの保存が
+# 重なると片方が書いている最中にもう片方が同じ名前で開き直し（切り詰め）、
+# 置き換えの時点で相手の一時ファイルが消えていて WinError 2 で失敗していた
+# （実ログで22セッション中18セッション・計38回）。失敗した回の変更は
+# 書かれないため、直後に終了すると設定が戻ったように見える。
+# 保存そのものを1本にし、一時ファイル名も呼び出しごとに分ける。
+import threading as _threading_s
+_SAVE_LOCK = _threading_s.RLock()
+_SAVE_SEQ = 0
+
+
+def _unique_tmp(path: Path) -> Path:
+    """保存用の一時ファイル名（呼び出しごとに別名にする）"""
+    global _SAVE_SEQ
+    _SAVE_SEQ += 1
+    return path.with_name(f"{path.name}.{_os2.getpid()}-{_SAVE_SEQ}.tmp")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 類似画像NG（見た目のハッシュ）
@@ -257,6 +275,10 @@ class BoardSettings:
 
     def save(self) -> None:
         """自分の設定を futaba2b_boards.json に書き込む（他板のキーは保持）"""
+        with _SAVE_LOCK:
+            self._save_locked()
+
+    def _save_locked(self) -> None:
         try:
             all_boards: dict = {}
             if _BOARDS_FILE.exists():
@@ -295,11 +317,15 @@ class BoardSettings:
             "blur_image_level":       self.blur_image_level,
             "catalog_few_res_count":  self.catalog_few_res_count,
             }
-            _tmp_b = _BOARDS_FILE.with_suffix(".tmp")
-            with open(_tmp_b, "w", encoding="utf-8") as f:
-                json.dump(all_boards, f, ensure_ascii=False, indent=2)
-            import os as _os2
-            _os2.replace(_tmp_b, _BOARDS_FILE)
+            _tmp_b = _unique_tmp(_BOARDS_FILE)
+            try:
+                with open(_tmp_b, "w", encoding="utf-8") as f:
+                    json.dump(all_boards, f, ensure_ascii=False, indent=2)
+                _os2.replace(_tmp_b, _BOARDS_FILE)
+            except Exception:
+                try: _tmp_b.unlink()
+                except OSError: pass
+                raise
         except Exception as e:
             print(f"[BoardSettings] save error: {e}")
 
@@ -824,6 +850,14 @@ class AppSettings:
         return None
 
     def load(self) -> None:
+        # 落ちた時などに残った書きかけの一時ファイルを片付ける
+        try:
+            _cut = time.time() - 3600
+            for _t in SETTINGS_FILE.parent.glob(SETTINGS_FILE.name + ".*.tmp"):
+                if _t.stat().st_mtime < _cut:
+                    _t.unlink()
+        except OSError:
+            pass
         raw = self._read_settings_json()
         if raw is None:
             return
@@ -1135,6 +1169,12 @@ class AppSettings:
     # ── セーブ ──────────────────────────────────────────────────────────────
 
     def save(self) -> None:
+        # 保存は同時に走らせない（同じファイルを奪い合って失敗するため）
+        with _SAVE_LOCK:
+            self._save_locked()
+
+    def _save_locked(self) -> None:
+        _tmp = None
         try:
             # イテレーション中に別スレッドから変更される可能性のある辞書はコピーを取る
             _thread_read  = dict(self.thread_read_counts)
@@ -1148,7 +1188,7 @@ class AppSettings:
             # 前にプロセスが落ちると全設定を失う。save() は投稿・カタログ描画・
             # 自動更新のフラッシュなど50箇所以上から高頻度で呼ばれるため、
             # クラッシュと重なる可能性は無視できない。
-            _tmp = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".tmp")
+            _tmp = _unique_tmp(SETTINGS_FILE)
             with open(_tmp, "w", encoding="utf-8") as f:
                 json.dump(
                     {
@@ -1374,10 +1414,9 @@ class AppSettings:
         except Exception as e:
             print(f"[Settings] 保存エラー: {e}")
             try:
-                _tmp = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".tmp")
-                if _tmp.exists():
+                if _tmp is not None and _tmp.exists():
                     _tmp.unlink()
-            except OSError:
+            except (OSError, NameError, UnboundLocalError):
                 pass
 
     def _dump_app_config(self) -> dict:
