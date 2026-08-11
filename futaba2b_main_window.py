@@ -42,6 +42,8 @@ from futaba2b_app_qt import (
     _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
     _schedule_gc,
     _JapaneseLineEdit,
+    suppress_context_menu as _suppress_ctx_menu,
+    clear_context_menu_suppress as _clear_ctx_suppress,
 )
 from futaba2b_dialogs import (
     ThreadHistoryPane, PostDialog, NgSettingsDialog, AppSettingsDialog,
@@ -253,8 +255,6 @@ class MainWindow(QMainWindow):
         # 右ボタン＋ホイールのタブ移動。WebEngineの中のウィジェットが受け取る
         # ホイールも拾えるよう、アプリ全体のフィルタとして入れる
         self._rb_wheel_armed = 0.0   # タブ移動直後（右クリックメニュー抑止）の時刻
-        self._ctx_policy_view = None   # 右クリックメニューを一時禁止中のビュー
-        self._ctx_policy_saved = Qt.ContextMenuPolicy.DefaultContextMenu
         QApplication.instance().installEventFilter(self)
         self._ng_filter    = self._settings.ng_filter  # シングルトン参照
         self._bbsmenu_cats = []
@@ -2476,7 +2476,13 @@ class MainWindow(QMainWindow):
             if (_t == QEvent.Type.MouseButtonPress
                     and ev.button() == Qt.MouseButton.RightButton):
                 self._rb_wheel_armed = 0.0
-                self._restore_ctx_policy()
+                _clear_ctx_suppress()
+            # 右ボタンを離した＝ジェスチャー終了。QtWebEngineのメニュー要求は
+            # ここから少し遅れて届くので、それだけ捨ててすぐ普段どおりに戻す。
+            if (_t == QEvent.Type.MouseButtonRelease
+                    and ev.button() == Qt.MouseButton.RightButton
+                    and self._ctx_block_armed()):
+                _suppress_ctx_menu(0.8)
         except (AttributeError, RuntimeError):
             pass
         return super().eventFilter(obj, ev)
@@ -2489,13 +2495,18 @@ class MainWindow(QMainWindow):
         return bool(_armed) and (_t.monotonic() - _armed) < 5.0
 
     def _arm_context_menu_block(self):
-        """タブ移動後の右クリックメニューを1回だけ抑止する準備をする。
+        """タブ移動後の右クリックメニューを抑止する。
 
-        Qt側（メニュー要求の握り潰し）とページ側（JSで作る独自メニュー）の
-        両方を止める。ページ側はJSが未注入のことがあり、Qt側だけでは
-        ページが自前で出すメニューを止められないため、両方に効かせる。"""
+        Qt側（メニュー要求の握り潰し）・ページ側（JSで作る独自メニュー）・
+        アプリ側（スレ/カタログ/画像のメニュー組み立て）の3つに効かせる。
+        QtWebEngine が自前で出すメニュー（「ソースを表示」等）は、要求が
+        ボタンを離した後に非同期で届くうえ、押したビューと移動先のビューが
+        別物になるため、ビューを狙わず時刻で見張って作らせない。"""
         import time as _t
         self._rb_wheel_armed = _t.monotonic()
+        # 押しっぱなしのまま何回でも送れるよう長めに掛ける。離した時点で
+        # 0.8秒に縮め、押し直した時は即解除する（eventFilter を参照）。
+        _suppress_ctx_menu(10.0)
         inner = self._active_inner()
         w = inner.currentWidget() if inner else None
         view = getattr(w, "_view", None)
@@ -2504,10 +2515,6 @@ class MainWindow(QMainWindow):
                 view.page().runJavaScript("window._mgSuppressCtx=true;")
             except (AttributeError, RuntimeError):
                 pass
-            # QtWebEngine が自前で出すメニュー（「ソースを表示」等）は
-            # ContextMenu イベントの握り潰しだけでは止まらないことがある。
-            # 表示そのものを禁じておき、少ししたら元に戻す。
-            self._set_ctx_policy_blocked(view)
 
     def _close_open_popup(self):
         """開いているポップアップメニューがあれば閉じる"""
@@ -2520,36 +2527,6 @@ class MainWindow(QMainWindow):
                 if _p2 is p:
                     break
                 p = _p2
-        except (AttributeError, RuntimeError):
-            pass
-
-    def _set_ctx_policy_blocked(self, view):
-        """ビューの右クリックメニューを一時的に禁止する（元の設定は控える）"""
-        try:
-            if self._ctx_policy_view is None:
-                self._ctx_policy_saved = view.contextMenuPolicy()
-                self._ctx_policy_view = view
-            view.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
-        except (AttributeError, RuntimeError):
-            self._ctx_policy_view = None
-            return
-        # 押しっぱなしの間は効かせ、離してしばらくしたら戻す
-        QTimer.singleShot(700, self._restore_ctx_policy)
-
-    def _restore_ctx_policy(self):
-        """一時的に禁止した右クリックメニューを元に戻す"""
-        view, saved = self._ctx_policy_view, self._ctx_policy_saved
-        self._ctx_policy_view = None
-        if view is None:
-            return
-        try:
-            from shiboken6 import isValid
-            if not isValid(view):
-                return
-        except Exception:
-            pass
-        try:
-            view.setContextMenuPolicy(saved)
         except (AttributeError, RuntimeError):
             pass
 

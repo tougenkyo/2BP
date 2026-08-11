@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.407"
+APP_VER = "0.9.408"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -329,6 +329,34 @@ class _DebugPage(QWebEnginePage):
             _save_js_error_source(src, line, _m)
 
 
+# ── 右ボタン＋ホイールでタブを送った直後の右クリックメニュー抑止 ──────────
+# QtWebEngine のメニュー要求はボタンを離した後に非同期で届くので、押したビュー
+# を狙って表示を禁じるやり方では取りこぼす（掛け直しの取りこぼしで、逆に元へ
+# 戻らないビューも出た）。メニューを組み立てているのは全てこのファイルの中
+# （スレ/カタログ/画像）なので、時刻で見張って作らせない方が確実。
+_CTX_SUPPRESS_UNTIL = 0.0
+
+
+def suppress_context_menu(sec: float = 10.0):
+    """これから sec 秒のあいだ右クリックメニューを作らない。
+
+    押しっぱなしのまま何回でも送れるようホイールのたびに長めに掛け直し、
+    ボタンを離した時点で短く縮める（離した直後に届く要求だけを捨てる）。"""
+    global _CTX_SUPPRESS_UNTIL
+    _CTX_SUPPRESS_UNTIL = time.monotonic() + max(0.0, sec)
+
+
+def clear_context_menu_suppress():
+    """抑止をすぐ解除する（右ボタンを押し直した＝新しい操作の始まり）。"""
+    global _CTX_SUPPRESS_UNTIL
+    _CTX_SUPPRESS_UNTIL = 0.0
+
+
+def context_menu_suppressed() -> bool:
+    """今は右クリックメニューを出さない場面か。"""
+    return time.monotonic() < _CTX_SUPPRESS_UNTIL
+
+
 class _ImageWebView(QWebEngineView):
     """ImageTabView 用 QWebEngineView：右クリックメニューをカスタマイズする。"""
     copy_image_requested = Signal(str)   # 画像URLを親に通知
@@ -349,6 +377,8 @@ class _ImageWebView(QWebEngineView):
     def contextMenuEvent(self, event):
         from PySide6.QtWebEngineCore import QWebEngineContextMenuRequest
         from PySide6.QtWidgets import QMenu
+        if context_menu_suppressed():
+            return                    # 右ボタン＋ホイールでタブを送った直後
         req = self.lastContextMenuRequest()
         on_image = (req is not None and
                     req.mediaType() == QWebEngineContextMenuRequest.MediaType.MediaTypeImage)
@@ -469,6 +499,8 @@ class _CatalogWebView(QWebEngineView):
 
     def contextMenuEvent(self, event):
         from PySide6.QtWidgets import QMenu
+        if context_menu_suppressed():
+            return                    # 右ボタン＋ホイールでタブを送った直後
         std = self.createStandardContextMenu()
         menu = QMenu(self)
         for act in std.actions():
@@ -6365,6 +6397,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """スレッドビュー右クリックメニュー"""
         from PySide6.QtWidgets import QMenu
         from PySide6.QtWebEngineCore import QWebEngineContextMenuRequest
+        if context_menu_suppressed():
+            return                    # 右ボタン＋ホイールでタブを送った直後
         req = self._view.lastContextMenuRequest()
         on_image = (req is not None and
                     req.mediaType() == QWebEngineContextMenuRequest.MediaType.MediaTypeImage)
