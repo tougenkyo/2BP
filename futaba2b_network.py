@@ -2269,6 +2269,11 @@ class FutabaFetcher:
                 file_size_bytes=rd.get("fsize", 0),
                 id_str=rd.get("id", ""),
                 ip_str=rd.get("ip", ""),
+                # 感情欄（無念など）。差分APIには入っていないので空にする。
+                # ResData の既定値は "無念" で、そのままだと感情欄が無い板
+                # （img板等）でも自動更新で足したレスにだけ「無念」が出る。
+                # 空にしておけば描画側が板に合わせて出し分ける。
+                csb=str(rd.get("csb", "") or ""),
             )
             new_res.append(res)
             if rsc:
