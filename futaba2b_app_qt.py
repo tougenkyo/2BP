@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.413"
+APP_VER = "0.9.414"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5092,9 +5092,14 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._show_impl(self._thread)
 
     def _reload_with_scroll_diff(self, scroll_y: float):
-        """差分更新候補の場合: prev_scroll_y のみ記録、pending は立てない"""
-        self._prev_scroll_y = int(scroll_y)
-        # _pending_scroll は設定しない（差分更新ならスクロール不要）
+        """差分更新候補の場合も現在位置を控えておく。
+
+        差分更新できた回は _show_impl が _pending_scroll を捨てるので影響しない。
+        控えないと、差分更新の条件（同じスレ・エラーでない・通常モード）を
+        満たさず全体再描画に落ちた回に位置が分からず、先頭に戻ってしまう。
+        通信エラーから復帰した更新がこれに当たる（＝たまに先頭へ飛ぶ）。"""
+        self._prev_scroll_y  = int(scroll_y)
+        self._pending_scroll = int(scroll_y)
         self.load_thread(self._board, self._thread_no)
 
     def _reload_with_scroll(self, scroll_y: float):
@@ -5385,6 +5390,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             # 画像・引用モード中の同スレッド更新
             # → スレッドHTMLをロードせず、現在のスクロール位置を保持しながらモード再描画
             _res_increased = len(thread.res_list) > self._known_res_count
+            self._pending_scroll = 0   # ページを読み直さないので位置合わせは不要
             self._thread = thread
             self._known_res_count = len(thread.res_list)
             # _last_html / _img_list を更新しておく（返信モードに戻った時に使う）
