@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.412"
+APP_VER = "0.9.413"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10075,6 +10075,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # 履歴用サムネ保管庫（ディレクトリ走査1回でまとめて引く）
         hthumb = self._fetcher.history_thumb_map(base)
         out = []
+        # NG画像を1件も登録していなければ、サムネURLの拾い直し（1件ずつの
+        # ディスク読み）は要らない。履歴は数百件になるのでここで打ち切る。
+        _need_ng_thumb = any(
+            e.get("enabled", True) and e.get("method", "md5") != "type_size"
+            for e in (self._settings.ng_images or []))
         _hist_all = list(self._settings.thread_history)
         # ── 診断ログ用の内訳カウンタ ──
         _sk_nourl = _sk_board = _sk_no = 0
@@ -10102,6 +10107,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             # jinfo が取れなかった時は落ち判定不能 → 落ちバッジは付けない
             alive = (no in jnos) if jnos else True
             thumb = ""
+            _ng_thumb = ""      # NG画像の照合用（ふたば上のサムネURL）
             if ji:
                 thumb = (ji.get("thumb", "") or "")
             if not thumb:
@@ -10111,7 +10117,13 @@ class CatalogView(_MouseGestureMixin, QWidget):
             if not thumb:
                 _t = self._fetcher.cached_op_thumb(turl)
                 if _t:
+                    _ng_thumb = _t
                     thumb = self._fetcher.cached_image_file_url(_t) or ""
+            # 保管庫やディスクキャッシュから出したサムネは file:// になり、
+            # ふたばのファイル名（＝画像の番号）が失われてNG画像と照合できない。
+            # スレHTMLキャッシュから元のサムネURLを拾い直しておく。
+            if _need_ng_thumb and not _ng_thumb and not thumb.startswith(("http:", "https:")):
+                _ng_thumb = self._fetcher.cached_op_thumb(turl)
             # thread_read_counts はOP込みの件数。カタログのレス数は返信数
             # （OP除く）なので揃える。落ちて記録が消えたスレは0のままにして
             # おき、あとでキャッシュから埋める。
@@ -10124,6 +10136,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             out.append(CatalogEntry(
                 no         = no,
                 thumb_url  = thumb,
+                ng_thumb_url = _ng_thumb,
                 res_count  = _res_cnt,
                 thread_url = turl,
                 title      = str(h.get("title", "") or ""),

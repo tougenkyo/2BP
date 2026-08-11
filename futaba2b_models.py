@@ -137,6 +137,10 @@ class CatalogEntry:
     # title はカタログHTML由来で板の「文字数」までしか無いため、ホバー表示だけ
     # こちらを使う。NG判定・カタログのセル文字は従来どおり title を使う。
     op_comment: str = ""
+    # NG画像の照合に使うスレ画URL。履歴表示ではサムネがローカルキャッシュの
+    # file:// になり、ふたばのファイル名（＝画像の番号）が失われて照合できない
+    # ため、元のふたば上のサムネURLをここに残す。空なら thumb_url を使う。
+    ng_thumb_url: str = ""
     board: Optional[BoardInfo] = None
 
 
