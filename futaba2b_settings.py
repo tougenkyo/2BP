@@ -514,6 +514,10 @@ class AppSettings:
         self.catalog_ng_section: bool = False
         # 履歴表示で「自書」スレをどう扱うか 0=そのまま / 1=上部にまとめる / 2=自書のみ
         self.history_self_mode: int = 0
+        # 履歴表示（並び替え=履歴）の並び基準
+        #   0=最後に開いた順（従来） / 1=履歴に登録した順 / 2=スレ立て順（スレ番号）
+        # 0 は古いスレを開き直すたびに最上部へ来るため、1/2 を選べるようにした。
+        self.history_sort_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
         self.recent_closed_max: int = 30     # 最近閉じたスレの保持件数
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
@@ -998,6 +1002,7 @@ class AppSettings:
             self.catalog_reverse_ng_top = bool(raw.get("catalog_reverse_ng_top", True))
             self.catalog_ng_section = bool(raw.get("catalog_ng_section", False))
             self.history_self_mode = int(raw.get("history_self_mode", 0))
+            self.history_sort_mode = max(0, min(2, int(raw.get("history_sort_mode", 0))))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
             self.recent_images_max = min(100, max(1, int(raw.get("recent_images_max", 30))))
@@ -1218,6 +1223,7 @@ class AppSettings:
                         "catalog_reverse_ng_top":    self.catalog_reverse_ng_top,
                         "catalog_ng_section":        self.catalog_ng_section,
                         "history_self_mode":         self.history_self_mode,
+                        "history_sort_mode":         self.history_sort_mode,
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
                         "recent_images_max": self.recent_images_max,
@@ -1433,13 +1439,18 @@ class AppSettings:
     def add_history(self, board_name: str, no: int, title: str, board_url: str = "") -> None:
         # 既存エントリの「最後に書き込んだ日時」を引き継ぐ（再オープンで消さない）
         _prev_posted = ""
+        _prev_added  = ""
         for h in self.thread_history:
             if h.get("board") == board_name and h.get("no") == no:
                 _prev_posted = h.get("posted", "")
+                # 「最初に履歴へ入れた日時」は開き直しても更新しない
+                _prev_added  = h.get("added", "") or h.get("time", "")
                 break
+        _now = time.strftime("%Y/%m/%d %H:%M:%S")
         entry = {
             "board": board_name, "no": no, "title": title,
-            "time": time.strftime("%Y/%m/%d %H:%M:%S"),
+            "time": _now,
+            "added": _prev_added or _now,
             "url":  board_url,
             "posted": _prev_posted,
         }

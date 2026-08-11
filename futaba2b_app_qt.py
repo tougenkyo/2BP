@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.416"
+APP_VER = "0.9.417"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10100,6 +10100,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # 履歴用サムネ保管庫（ディレクトリ走査1回でまとめて引く）
         hthumb = self._fetcher.history_thumb_map(base)
         out = []
+        _added_at: dict = {}     # スレNo → 履歴に最初に登録した日時（並び替え用）
         # NG画像を1件も登録していなければ、サムネURLの拾い直し（1件ずつの
         # ディスク読み）は要らない。履歴は数百件になるのでここで打ち切る。
         _need_ng_thumb = any(
@@ -10128,6 +10129,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
             if no <= 0:
                 continue
             turl = base + f"res/{no}.htm"
+            # 「最初に履歴へ入れた日時」。古い記録には無いので開いた日時で代用する
+            _added_at[no] = str(h.get("added", "") or h.get("time", "") or "")
             ji = jmap.get(no)
             # jinfo が取れなかった時は落ち判定不能 → 落ちバッジは付けない
             alive = (no in jnos) if jnos else True
@@ -10174,6 +10177,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 # 返信成功時と自分で立てたスレの両方で記録される。
                 has_posted = bool(str(h.get("posted", "") or "").strip()),
             ))
+        # ── 並び基準 ────────────────────────────────────────────────────────
+        # 既定（0）は履歴そのままの順＝最後に開いた順。古いスレを開き直すたびに
+        # 最上部へ来てしまうので、変わらない基準も選べるようにする。
+        _sort_mode = int(getattr(self._settings, "history_sort_mode", 0) or 0)
+        if _sort_mode == 1:      # 履歴に登録した順（新しく登録したものが上）
+            out.sort(key=lambda e: (_added_at.get(e.no, ""), e.no), reverse=True)
+        elif _sort_mode == 2:    # スレ立て順（ふたばのスレ番号は立てた順に増える）
+            out.sort(key=lambda e: e.no, reverse=True)
         # ── レス数が取れなかったスレをHTMLキャッシュから埋める ──────────────
         # 板から落ちたスレは thread_read_counts が掃除で消えるため0になる。
         # 「キャ有」のスレはキャッシュに全レスが残っているのでそこから数える。

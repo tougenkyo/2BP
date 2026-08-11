@@ -4863,6 +4863,22 @@ class AppSettingsDialog(QDialog):
         _hs_lay.addWidget(self._hist_self_mode)
         _hs_lay.addStretch()
         cat_hover_lay.addLayout(_hs_lay)
+        # 並び替え=履歴 のときの並び基準
+        _ho_lay = QHBoxLayout(); _ho_lay.setContentsMargins(0, 0, 0, 0)
+        self._hist_sort_mode = _NoWheelComboBox()
+        for _t in ("最後に開いた順", "履歴に登録した順", "スレ立て順"):
+            self._hist_sort_mode.addItem(_t)
+        self._hist_sort_mode.setToolTip(
+            "並び替えを「履歴」にした時の並び基準。\n"
+            "  最後に開いた順   … 従来どおり。古いスレを開くたびに最上部へ来る\n"
+            "  履歴に登録した順 … 最初に履歴へ入った順。開き直しても動かない\n"
+            "  スレ立て順       … スレ番号順（＝スレが立った順）\n"
+            "「履歴に登録した順」は、この設定より前から履歴にあるスレは\n"
+            "最後に開いた日時で代用します。履歴表示以外には影響しません。")
+        _ho_lay.addWidget(QLabel("履歴表示の並び基準:"))
+        _ho_lay.addWidget(self._hist_sort_mode)
+        _ho_lay.addStretch()
+        cat_hover_lay.addLayout(_ho_lay)
 
         # スレ落ち時のタブ自動クローズ
         g_close = QGroupBox("スレ落ち時のタブ自動クローズ"); f0.addWidget(g_close); clf2 = QVBoxLayout(g_close)
@@ -5831,6 +5847,8 @@ class AppSettingsDialog(QDialog):
         self._cat_ng_section.setChecked(getattr(s, "catalog_ng_section", False))
         self._hist_self_mode.setCurrentIndex(
             max(0, min(2, int(getattr(s, "history_self_mode", 0) or 0))))
+        self._hist_sort_mode.setCurrentIndex(
+            max(0, min(2, int(getattr(s, "history_sort_mode", 0) or 0))))
 
         # 外観
         _theme_idx = self._theme_combo.findText(_TM.name())
@@ -6004,6 +6022,7 @@ class AppSettingsDialog(QDialog):
         s.catalog_reverse_ng_top = self._cat_rev_top.isChecked()
         s.catalog_ng_section = self._cat_ng_section.isChecked()
         s.history_self_mode        = self._hist_self_mode.currentIndex()
+        s.history_sort_mode        = self._hist_sort_mode.currentIndex()
         s.catalog_show_email      = False  # メール欄バッジは常にOFF
 
         # 外観
