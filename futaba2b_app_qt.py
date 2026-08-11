@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.419"
+APP_VER = "0.9.420"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9425,8 +9425,6 @@ class CatalogView(_MouseGestureMixin, QWidget):
         結果メッセージ（例「登録しました」）をカタログ下部にトースト表示する。"""
         if not url or not self._board:
             return
-        if not hasattr(self, "_del_hidden_urls"):
-            self._del_hidden_urls = set()
         # スレ番号を URL から抽出
         m = re.search(r'res/(\d+)\.htm', url)
         if not m:
@@ -9468,10 +9466,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         結果はWebView下部にトースト表示する（レスdelと同等）。"""
         if url:
             if ok:
-                # セッション用ハイド集合（再描画・自動更新でも除外を維持）
-                if not hasattr(self, "_del_hidden_urls"):
-                    self._del_hidden_urls = set()
-                self._del_hidden_urls.add(url)
+                self._add_del_hidden(url)
             _u = url.replace("\\", "\\\\").replace('"', '\\"')
             _safe_run_js(self._view,
                          'if(window.catalogDelDone)catalogDelDone("%s",%s);'
@@ -9545,7 +9540,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             # 低スペック機で取得が遅いほど起きやすい＝「スレッド: 50件」の原因。
             print(f"[History] カタログ受領を破棄（現在は履歴モード）: {len(entries)}件")
             return
-        _delh = getattr(self, "_del_hidden_urls", None)
+        _delh = self._del_hidden_urls()
         if _delh:
             entries = [e for e in entries if (e.thread_url or "") not in _delh]
         self._showing_history = False   # ふたばのカタログ由来のエントリ
@@ -9699,17 +9694,33 @@ class CatalogView(_MouseGestureMixin, QWidget):
             board      = board,
         )
 
+    def _del_hidden_urls(self) -> set:
+        """削除依頼(del)を出して隠したスレのURL集合。
+
+        以前はビューごとのセッション用集合だったため、履歴表示では効かず、
+        再起動すると復活していた。設定に持たせて板・表示をまたいで効かせる。"""
+        return set(getattr(self._settings, "del_hidden_thread_urls", []) or [])
+
+    def _add_del_hidden(self, url: str):
+        """削除依頼が受理されたスレを「隠す」リストへ入れて覚える"""
+        _l = getattr(self._settings, "del_hidden_thread_urls", None)
+        if _l is None:
+            _l = self._settings.del_hidden_thread_urls = []
+        if url in _l:
+            return
+        _l.append(url)
+        if len(_l) > 3000:                  # 肥大防止（新しい方を残す）
+            del _l[:-3000]
+        self._settings.save()
+
     def _del_hidden_nos(self) -> set:
         """削除依頼を出して隠したスレのNo集合。
 
         隠したスレはカタログ一覧から抜いている。そのままだと「jsonにあって
         カタログに無い」＝隔離スレとして合成し直され、更新のたびに隔離枠へ
         現れてしまうため、隔離判定からも外すのに使う。"""
-        _urls = getattr(self, "_del_hidden_urls", None)
-        if not _urls:
-            return set()
         out = set()
-        for _u in _urls:
+        for _u in self._del_hidden_urls():
             _m = re.search(r'res/(\d+)\.htm', _u or "")
             if _m:
                 out.add(int(_m.group(1)))
@@ -10226,6 +10237,13 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._clear_error_band()
         self.error_band_changed.emit("")
         self._showing_history = True   # 描画側の分岐はこのフラグを見る
+        # 削除依頼(del)で隠したスレは履歴表示でも出さない
+        _delh = self._del_hidden_urls()
+        if _delh:
+            _before = len(entries)
+            entries = [e for e in entries if (e.thread_url or "") not in _delh]
+            if len(entries) != _before:
+                print(f"[History] delで隠したスレを除外: {_before - len(entries)}件")
         self._all_entries = entries
         self._quar_nos = set()
         self._re_render()

@@ -28,6 +28,14 @@ _SAVE_LOCK = _threading_s.RLock()
 _SAVE_SEQ = 0
 
 
+# 「まとめて削除」で選んだ対象と範囲（設定に覚えて次回もそのまま出す）
+#   range: 0=全期間 / 1=◯日以上前 / 2=指定した日より前
+CACHE_PURGE_DEFAULTS: dict = {
+    "img": True, "video": True, "thread": False, "hthumb": False,
+    "history": False, "range": 0, "days": 30,
+}
+
+
 def _unique_tmp(path: Path) -> Path:
     """保存用の一時ファイル名（呼び出しごとに別名にする）"""
     global _SAVE_SEQ
@@ -552,6 +560,8 @@ class AppSettings:
         self.thread_history_max: int = 500
         self.history_pane_height: int = 120  # スレッド履歴パネルの高さ(px・ヘッダードラッグで調整)
         self.cache_max_days: int = 7         # 画像キャッシュ保持日数（0=無制限）
+        # 「まとめて削除」で前回選んだ対象と範囲（毎回選び直さなくて済むように）
+        self.cache_purge: dict = dict(CACHE_PURGE_DEFAULTS)
         # ── キャッシュクリーンアップ設定（種別ごとに 日数 / サイズ上限） ──
         self.cache_img_days_enabled:    bool = True   # 画像: 日数で削除
         self.cache_img_size_enabled:    bool = False  # 画像: サイズ上限で削除
@@ -793,6 +803,11 @@ class AppSettings:
         # NGスレッドURL直接登録リスト
         self.ng_thread_urls: list[str] = []
 
+        # カタログで削除依頼(del)を出して隠したスレのURL。
+        # 以前はビューごとのセッション用集合だったため、履歴表示では消えず、
+        # 再起動でも復活していた。設定に持たせて両方に効かせる。
+        self.del_hidden_thread_urls: list[str] = []
+
         # レス内NGボタンで非表示にしたレスNo（キー=スレッドURL、値=レスNoリスト）
         self.ng_hidden_res_nos: dict[str, list[int]] = {}
 
@@ -973,6 +988,7 @@ class AppSettings:
             self.ng_reverse_opened_urls = set(_rev_list)
             self._ng_reverse_opened_list = list(_rev_list)  # FIFO順序管理用
             self.ng_thread_urls = raw.get("ng_thread_urls", [])
+            self.del_hidden_thread_urls = raw.get("del_hidden_thread_urls", [])
             self.ng_hidden_res_nos = {
                 k: list(map(int, v))
                 for k, v in raw.get("ng_hidden_res_nos", {}).items()
@@ -1043,6 +1059,10 @@ class AppSettings:
             self.thread_history_max = min(5000, max(100, int(raw.get("thread_history_max", 500))))
             self.history_pane_height = min(800, max(60, int(raw.get("history_pane_height", 120))))
             self.cache_max_days = max(0, int(raw.get("cache_max_days", 7)))
+            _cp = dict(CACHE_PURGE_DEFAULTS)
+            _cp.update({k: v for k, v in (raw.get("cache_purge", {}) or {}).items()
+                        if k in CACHE_PURGE_DEFAULTS})
+            self.cache_purge = _cp
             self.cache_img_days_enabled    = bool(raw.get("cache_img_days_enabled", True))
             self.cache_img_size_enabled    = bool(raw.get("cache_img_size_enabled", False))
             self.cache_img_size_mb         = max(1, int(raw.get("cache_img_size_mb", 500)))
@@ -1216,6 +1236,7 @@ class AppSettings:
                         "ng_reverse_use_default_color": self.ng_reverse_use_default_color,
                         "ng_reverse_opened_urls": self._ng_reverse_opened_list[-2000:],
                         "ng_thread_urls": self.ng_thread_urls,
+                        "del_hidden_thread_urls": self.del_hidden_thread_urls[-3000:],
                         "ng_hidden_res_nos": _ng_hidden,
                         "del_res_nos": _del_res,
                         "my_post_nos": {k: list(v) for k, v in self.my_post_nos.items() if v},
@@ -1270,6 +1291,7 @@ class AppSettings:
                         "thread_history_max": self.thread_history_max,
                         "history_pane_height": self.history_pane_height,
                         "cache_max_days": self.cache_max_days,
+                        "cache_purge":    self.cache_purge,
                         "cache_img_days_enabled":    self.cache_img_days_enabled,
                         "cache_img_size_enabled":    self.cache_img_size_enabled,
                         "cache_img_size_mb":         self.cache_img_size_mb,

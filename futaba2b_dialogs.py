@@ -4222,6 +4222,12 @@ class NgSettingsDialog(QDialog):
         self._clear_ng_btn = QPushButton("NGスレッドリストをクリアする(0件)…")
         self._clear_ng_btn.clicked.connect(self._clear_ng_threads)
         bottom.addWidget(self._clear_ng_btn)
+        self._clear_delhide_btn = QPushButton("delで隠したスレをクリアする(0件)…")
+        self._clear_delhide_btn.setToolTip(
+            "カタログで削除依頼を出して非表示にしたスレの記録。\n"
+            "クリアするとカタログ・履歴表示にまた出るようになります。")
+        self._clear_delhide_btn.clicked.connect(self._clear_del_hidden)
+        bottom.addWidget(self._clear_delhide_btn)
         self._reset_reverse_btn = QPushButton("開いた記録をリセット（0件）")
         self._reset_reverse_btn.clicked.connect(self._reset_reverse_ng_opened)
         bottom.addWidget(self._reset_reverse_btn)
@@ -4705,6 +4711,24 @@ class NgSettingsDialog(QDialog):
     def _update_clear_btn(self):
         count = len(self._settings.ng_thread_urls)
         self._clear_ng_btn.setText(f"NGスレッドリストをクリアする({count}件)…")
+        _dc = len(getattr(self._settings, "del_hidden_thread_urls", []) or [])
+        self._clear_delhide_btn.setText(f"delで隠したスレをクリアする({_dc}件)…")
+
+    def _clear_del_hidden(self):
+        """削除依頼(del)で隠したスレの記録を消す（また表示されるようになる）"""
+        _l = getattr(self._settings, "del_hidden_thread_urls", None) or []
+        if not _l:
+            QMessageBox.information(self, "delで隠したスレ",
+                                    "記録されているスレはありません。")
+            return
+        if QMessageBox.question(
+                self, "delで隠したスレのクリア",
+                f"削除依頼を出して隠したスレの記録（{len(_l)}件）を消します。\n"
+                "カタログ・履歴表示にまた出るようになります。よろしいですか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                ) == QMessageBox.StandardButton.Yes:
+            self._settings.del_hidden_thread_urls = []
+            self._update_clear_btn()
 
     def _clear_ng_threads(self):
         count = len(self._settings.ng_thread_urls)
@@ -5282,16 +5306,21 @@ class AppSettingsDialog(QDialog):
         gp_lay.addWidget(_pn)
         row = QHBoxLayout()
         row.addWidget(QLabel("対象:"))
-        self._purge_img    = QCheckBox("画像");       self._purge_img.setChecked(True)
-        self._purge_video  = QCheckBox("動画");       self._purge_video.setChecked(True)
+        self._purge_img    = QCheckBox("画像")
+        self._purge_video  = QCheckBox("動画")
         self._purge_thread = QCheckBox("スレHTML")
         self._purge_hthumb = QCheckBox("履歴のサムネ")
+        self._purge_history = QCheckBox("履歴の記録")
         self._purge_thread.setToolTip(
             "過去ログ表示に使います。消すと落ちたスレのログが開けなくなります。")
         self._purge_hthumb.setToolTip(
             "履歴表示のサムネ保管庫 (data/histthumb)。保持日数の対象外で消えません。")
-        for _c in (self._purge_img, self._purge_video,
-                   self._purge_thread, self._purge_hthumb):
+        self._purge_history.setToolTip(
+            "スレッド履歴そのもの（どのスレを開いたかの記録）。\n"
+            "スレHTMLキャッシュを消しても履歴の一覧には残り続けるので、\n"
+            "一覧から消したい時はこちらも一緒に選んでください。")
+        for _c in (self._purge_img, self._purge_video, self._purge_thread,
+                   self._purge_hthumb, self._purge_history):
             row.addWidget(_c)
         row.addStretch(); gp_lay.addLayout(row)
         row = QHBoxLayout()
@@ -5300,9 +5329,10 @@ class AppSettingsDialog(QDialog):
         for _t in ("全期間（すべて消す）", "◯日以上前", "指定した日より前"):
             self._purge_range.addItem(_t)
         row.addWidget(self._purge_range)
-        self._purge_days = _spin(1, 3650, " 日以上前", width=120)
+        self._purge_days = _spin(1, 3650, " 日以上前", width=130)
         self._purge_days.setValue(30)
         row.addWidget(self._purge_days)
+        self._purge_range.setCurrentIndex(0)
         from PySide6.QtWidgets import QDateEdit
         from PySide6.QtCore import QDate
         self._purge_date = QDateEdit()
@@ -5861,6 +5891,17 @@ class AppSettingsDialog(QDialog):
         self._recent_images_max.setValue(getattr(s, "recent_images_max", 30))
         self._thread_history_max.setValue(getattr(s, "thread_history_max", 500))
         self._id_warn_count.setValue(getattr(s, "id_warn_count", 5))
+        # まとめて削除: 前回選んだ対象と範囲を復元する
+        from futaba2b_settings import CACHE_PURGE_DEFAULTS as _CPD
+        _cp = dict(_CPD); _cp.update(getattr(s, "cache_purge", {}) or {})
+        self._purge_img.setChecked(bool(_cp.get("img", True)))
+        self._purge_video.setChecked(bool(_cp.get("video", True)))
+        self._purge_thread.setChecked(bool(_cp.get("thread", False)))
+        self._purge_hthumb.setChecked(bool(_cp.get("hthumb", False)))
+        self._purge_history.setChecked(bool(_cp.get("history", False)))
+        self._purge_days.setValue(max(1, int(_cp.get("days", 30) or 30)))
+        self._purge_range.setCurrentIndex(max(0, min(2, int(_cp.get("range", 0) or 0))))
+
         self._cache_max_days.setValue(max(1, getattr(s, "cache_max_days", 7)))
         self._cache_img_days_chk.setChecked(
             getattr(s, "cache_img_days_enabled", True) and getattr(s, "cache_max_days", 7) > 0)
@@ -6042,6 +6083,7 @@ class AppSettingsDialog(QDialog):
         s.thread_history_max      = self._thread_history_max.value()
         s.id_warn_count           = self._id_warn_count.value()
         s.cache_max_days          = self._cache_max_days.value()
+        self._store_purge_choice()
         s.cache_img_days_enabled    = self._cache_img_days_chk.isChecked()
         s.cache_img_size_enabled    = self._cache_img_size_chk.isChecked()
         s.cache_img_size_mb         = self._cache_img_size_mb.value()
@@ -6230,6 +6272,34 @@ class AppSettingsDialog(QDialog):
                 out.append((label, cdir))
         return out
 
+    def _store_purge_choice(self):
+        """「まとめて削除」で選んだ対象と範囲を覚える（次回もそのまま出す）"""
+        self._settings.cache_purge = {
+            "img":     self._purge_img.isChecked(),
+            "video":   self._purge_video.isChecked(),
+            "thread":  self._purge_thread.isChecked(),
+            "hthumb":  self._purge_hthumb.isChecked(),
+            "history": self._purge_history.isChecked(),
+            "range":   self._purge_range.currentIndex(),
+            "days":    self._purge_days.value(),
+        }
+
+    def _purge_history_hits(self, before_ts: float) -> list:
+        """「履歴の記録」で消える対象の履歴エントリ（before_ts=0 なら全部）"""
+        import time as _t
+        out = []
+        for h in getattr(self._settings, "thread_history", []) or []:
+            if before_ts <= 0:
+                out.append(h); continue
+            _s = str(h.get("time", "") or h.get("added", "") or "").strip()
+            try:
+                _ts = _t.mktime(_t.strptime(_s, "%Y/%m/%d %H:%M:%S"))
+            except (ValueError, TypeError):
+                continue          # 日時が読めないものは触らない
+            if _ts < before_ts:
+                out.append(h)
+        return out
+
     def _purge_before_ts(self) -> float:
         """「まとめて削除」の範囲 → この時刻より古いものが対象（0=全期間）"""
         import time as _t
@@ -6245,8 +6315,10 @@ class AppSettingsDialog(QDialog):
         """「まとめて削除」: 保持日数の設定とは別に、選んだ範囲を今すぐ消す。
         戻せない操作なので、件数と容量を出して確認してから実行する。"""
         from futaba2b_network import purge_cache_dir
+        self._store_purge_choice()      # 選んだ内容は実行の可否によらず覚える
         targets = self._purge_targets()
-        if not targets:
+        _hist_on = self._purge_history.isChecked()
+        if not targets and not _hist_on:
             self._purge_result.setText("対象が選ばれていません")
             return
         before = self._purge_before_ts()
@@ -6257,16 +6329,20 @@ class AppSettingsDialog(QDialog):
             if cnt:
                 _hits.append((label, cdir, cnt, sz))
                 _n_all += cnt; _b_all += sz
-        if not _n_all:
+        _hist_hits = self._purge_history_hits(before) if _hist_on else []
+        if not _n_all and not _hist_hits:
             self._purge_result.setText("消すものはありませんでした")
             return
         _range = self._purge_range.currentText()
-        _detail = "\n".join(f"　{l}: {c}件 / {self._fmt_size(s)}"
-                            for l, _d, c, s in _hits)
+        _lines = [f"　{l}: {c}件 / {self._fmt_size(s)}" for l, _d, c, s in _hits]
+        if _hist_hits:
+            _lines.append(f"　履歴の記録: {len(_hist_hits)}件")
+        _detail = "\n".join(_lines)
         if QMessageBox.question(
                 self, "キャッシュの削除",
-                f"{_range} を対象に、次のファイルを削除します。\n\n{_detail}\n\n"
-                f"合計 {_n_all}件 / {self._fmt_size(_b_all)}\n\n"
+                f"{_range} を対象に、次のものを削除します。\n\n{_detail}\n\n"
+                f"合計 {_n_all}件 / {self._fmt_size(_b_all)}"
+                + (f"（＋履歴 {len(_hist_hits)}件）" if _hist_hits else "") + "\n\n"
                 "元に戻せません。よろしいですか？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 ) != QMessageBox.StandardButton.Yes:
@@ -6276,7 +6352,18 @@ class AppSettingsDialog(QDialog):
         for label, cdir, _c, _s in _hits:
             cnt, sz = purge_cache_dir(cdir, before_ts=before)
             _n += cnt; _b += sz
-        self._purge_result.setText(f"{_n}件 / {self._fmt_size(_b)} を削除しました")
+        _hn = 0
+        if _hist_hits:
+            _drop = {id(h) for h in _hist_hits}
+            _before_n = len(self._settings.thread_history)
+            self._settings.thread_history = [
+                h for h in self._settings.thread_history if id(h) not in _drop]
+            _hn = _before_n - len(self._settings.thread_history)
+        _msg = f"{_n}件 / {self._fmt_size(_b)} を削除しました"
+        if _hn:
+            _msg += f"（履歴 {_hn}件も削除）"
+        self._purge_result.setText(_msg)
+        self._settings.save()
         from PySide6.QtCore import QTimer
         QTimer.singleShot(500, self._update_cache_info)
 
