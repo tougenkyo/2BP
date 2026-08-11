@@ -1921,6 +1921,16 @@ class NgFilter:
         """逆NG画像にマッチした最初のエントリを返す（ピックアップの通知判定用）"""
         return self._find_matched_ng_image(res, is_reverse=True)
 
+    @staticmethod
+    def _mark_hit(img_ng: dict) -> None:
+        """NG画像エントリの「最終HIT」を今日にする（同じ日なら触らない）。
+        レスの画像だけでなくカタログのスレ画で当たった時も記録する。
+        カタログでしか当たらない登録は、これが無いと空欄のままになる。"""
+        import datetime
+        today = datetime.date.today().strftime("%Y/%m/%d")
+        if img_ng.get("last_hit") != today:
+            img_ng["last_hit"] = today
+
     # ── カタログのNG画像 ──────────────────────────────────────────────────
     @staticmethod
     def _futaba_img_no(url: str) -> str:
@@ -1953,6 +1963,7 @@ class NgFilter:
                 continue
             for u in img_ng.get("known_urls", []) or []:
                 if self._futaba_img_no(u) == _no:
+                    self._mark_hit(img_ng)
                     return img_ng
         return None
 
@@ -2037,7 +2048,6 @@ class NgFilter:
 
     # ── 内部: 画像マッチ（LastHit更新） ──────────────────────────────────────
     def _check_image(self, res: "ResData", is_reverse: bool) -> bool:
-        import datetime
         url = res.image_url
         ext = (url.rsplit(".", 1)[-1].upper() if "." in url else "")
         size, width, height = res.file_size_bytes, res.thumb_w, res.thumb_h
@@ -2105,8 +2115,7 @@ class NgFilter:
                             img_ng["size"] = size
 
             if matched:
-                # LastHit 日時を更新
-                img_ng["last_hit"] = datetime.date.today().strftime("%Y/%m/%d")
+                self._mark_hit(img_ng)      # 最終HITを更新
                 return True
 
         return False
