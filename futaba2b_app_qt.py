@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.415"
+APP_VER = "0.9.416"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9571,14 +9571,15 @@ class CatalogView(_MouseGestureMixin, QWidget):
                     _e_ent.op_comment = _json_com_to_text(_ji.get("com", ""))
             # 隔離スレNo集合（json∖cat）を算出。タブのオレンジ判定用で、
             # 「最下部にまとめる」表示設定(catalog_quarantine_bottom)とは独立に持つ。
+            _delno = self._del_hidden_nos()
             if self._catalog_json_nos:
                 _real_cat_nos = {e.no for e in entries}  # この時点では実カタログのみ
-                self._quar_nos = self._catalog_json_nos - _real_cat_nos
+                self._quar_nos = self._catalog_json_nos - _real_cat_nos - _delno
             # 隔離スレ = json にあって cat に無い（隔離されるとカタログから消えてjsonに残る）
             if (self._catalog_json_nos
                     and getattr(self._settings, 'catalog_quarantine_bottom', False)):
                 _cat_nos = {e.no for e in entries}
-                for _qno in sorted(self._catalog_json_nos - _cat_nos):
+                for _qno in sorted(self._catalog_json_nos - _cat_nos - _delno):
                     entries.append(self._make_quarantine_entry(
                         _qno, self._catalog_json_cache.get(_qno, {})))
         # エントリ数 = 現在の保存スレッド数（隔離スレは実カタログ件数に含めない）
@@ -9698,6 +9699,22 @@ class CatalogView(_MouseGestureMixin, QWidget):
             board      = board,
         )
 
+    def _del_hidden_nos(self) -> set:
+        """削除依頼を出して隠したスレのNo集合。
+
+        隠したスレはカタログ一覧から抜いている。そのままだと「jsonにあって
+        カタログに無い」＝隔離スレとして合成し直され、更新のたびに隔離枠へ
+        現れてしまうため、隔離判定からも外すのに使う。"""
+        _urls = getattr(self, "_del_hidden_urls", None)
+        if not _urls:
+            return set()
+        out = set()
+        for _u in _urls:
+            _m = re.search(r'res/(\d+)\.htm', _u or "")
+            if _m:
+                out.add(int(_m.group(1)))
+        return out
+
     def _merge_catalog_json(self, jinfo):
         """mode=json取得結果をカタログエントリにマージ。
         jinfo: {"map":{no:{email,id,com,sub,thumb}}, "nos":set} または None（取得失敗）。
@@ -9744,7 +9761,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
         if getattr(self._settings, 'catalog_quarantine_bottom', False):
             real = [e for e in self._all_entries if not getattr(e, 'is_quarantine', False)]
             cat_nos = {e.no for e in real}
-            quar_nos = jnos - cat_nos
+            # 削除依頼を出して隠したスレは「カタログに無い」状態になるが、
+            # 隔離されたわけではないので隔離スレには入れない
+            quar_nos = jnos - cat_nos - self._del_hidden_nos()
             prev_quar_nos = {e.no for e in self._all_entries if getattr(e, 'is_quarantine', False)}
             if quar_nos != prev_quar_nos:
                 new_quar = [self._make_quarantine_entry(no, jmap.get(no, {}))
