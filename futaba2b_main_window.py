@@ -2890,18 +2890,37 @@ class MainWindow(QMainWindow):
         dlg.finished.connect(lambda _, r=resto: self._post_dialogs.pop(r, None))
         # タイトルバークリック → 対応スレタブをアクティブ化
         dlg.activate_tab.connect(lambda r=resto: self._activate_thread_tab(r))
-        # 投稿後ピン留め設定がONなら、投稿成功時に現在のスレタブをピン打ち
-        def _pin_current_tab():
-            _inner = self._active_inner()
-            if not _inner: return
-            w = _inner.currentWidget()
-            if isinstance(w, ThreadView):
-                _inner._pin_tab(w)
-        dlg.pin_after_post.connect(_pin_current_tab)
+        # 投稿後ピン留め設定がONなら、投稿成功時に書き込んだスレのタブをピン打ち
+        dlg.pin_after_post.connect(lambda r=resto: self._pin_posted_tab(r))
         # 投稿後最下部スクロールは ThreadView._scroll_bottom_after_update フラグで
         # 更新完了後に行う（_on_success 内でセット）。旧 scroll_after_post の
         # 固定遅延スクロールは更新完了前に走り最下部に届かないため接続しない。
         dlg.setModal(False); dlg.show()
+
+    def _pin_posted_tab(self, resto: int):
+        """書き込んだスレのタブをピン留めする（投稿後ピン留め設定がONの時）。
+
+        以前は「今表示しているタブ」を留めていた。返信ウインドウを開いたまま
+        別のタブ・別の板を見ていると関係ないタブにピンが付き、書いたスレには
+        マークが出ない（別のタブに切り替えるとそちらに付いている）。
+        書き込んだスレ番号でタブを探して留める。"""
+        for ti in range(self._outer_tabs.count()):
+            pane = self._outer_tabs.widget(ti)
+            if not isinstance(pane, BoardPane):
+                continue
+            for i in range(pane._tabs.count()):
+                w = pane._tabs.widget(i)
+                if isinstance(w, ThreadView) and (w._thread_no or 0) == resto:
+                    pane._pin_tab(w)
+                    return
+        # スレ立て（resto=0）や、タブを閉じた後などで見つからない場合は
+        # 従来どおり表示中のスレタブを留める
+        pane = self._active_inner()
+        if pane is None:
+            return
+        w = pane.currentWidget()
+        if isinstance(w, ThreadView):
+            pane._pin_tab(w)
 
     def _reply_current(self):
         inner = self._active_inner()

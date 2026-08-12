@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.420"
+APP_VER = "0.9.421"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3550,11 +3550,26 @@ class BoardPane(QWidget):
 
     def _pin_tab(self, widget):
         self._pinned.add(widget)
-        self._tabs.tabBar().update()  # 再描画でピンマーク表示
+        self._refresh_tab_bar()       # 再描画でピンマーク表示
 
     def _unpin_tab(self, widget):
         self._pinned.discard(widget)
-        self._tabs.tabBar().update()  # 再描画でピンマーク非表示
+        self._refresh_tab_bar()       # 再描画でピンマーク非表示
+
+    def _refresh_tab_bar(self):
+        """ピン留めの変化をその場でタブバーへ反映する。
+
+        ピンの有無でタブ内の文字位置が変わるため、行分けの計算結果
+        （_tab_rects のキャッシュ）を捨ててから描き直す。キャッシュの鍵には
+        ピンの状態が入っておらず、update() だけだと前の配置のまま描かれる。
+        投稿直後は再読込などで描画要求が重なるので、その場で描いてしまう。"""
+        try:
+            bar = self._tabs.tabBar()
+            bar._tab_rects_cache_key = None
+            bar.update()
+            bar.repaint()
+        except (AttributeError, RuntimeError):
+            pass
 
     def _toggle_pin(self):
         # _ctx_tab_widget を優先 (インデックスより信頼性が高い)
