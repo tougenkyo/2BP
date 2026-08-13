@@ -2563,7 +2563,10 @@ class MainWindow(QMainWindow):
                     and ev.button() == Qt.MouseButton.RightButton
                     and self._ctx_block_armed()):
                 _suppress_ctx_menu(0.8)
-        except (AttributeError, RuntimeError):
+        # SystemError は、別の場所（破棄済みウィジェットに触った等）で出た例外が
+        # Pythonのエラー状態として残っている時に、最初の ev.type() で出る誤報。
+        # ここで死ぬとその回のイベント処理ごと落ちるので飲み込む。
+        except (AttributeError, RuntimeError, SystemError):
             pass
         return super().eventFilter(obj, ev)
 

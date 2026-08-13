@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.421"
+APP_VER = "0.9.422"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5234,13 +5234,20 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 self._show_error(thread)
             return
         def _go(_th=thread):
+            if not self._is_alive():
+                return          # タブを閉じた後に届いた分は捨てる
             try:
                 self._show_impl(_th)
             except Exception as e:
+                if not self._is_alive():
+                    return      # 表示中に閉じられた（破棄済みへの操作は追わない）
                 import traceback
                 traceback.print_exc()
                 _th.error = f"表示エラー: {e}"
-                self._show_error(_th)
+                try:
+                    self._show_error(_th)
+                except RuntimeError:
+                    pass        # 破棄途中。ここで投げると別の場所で誤報になる
         # スレが落ちた後の更新は、キャッシュ（res_list入り）＋エラーバナー付きの
         # フルレンダーに切り替わるため、そのままだと先頭へ飛ぶ。
         # 上の分岐は「キャッシュが無い場合」だけを見ていて、実際に多いのは
@@ -5293,6 +5300,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # thread=None で呼ばれることがある。描画対象が無ければ何もしない。
         if thread is None:
             return
+        if not self._is_alive():
+            return          # タブを閉じた後に届いた描画要求
         import time as _t
         _t0 = _t.time()
         self._maybe_prefetch_images(thread)
@@ -5805,6 +5814,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
 
     def _show_error(self, thread):
         """エラースレッドの表示（キャッシュなし）- 上下にバナーを表示"""
+        if not self._is_alive():
+            return              # 閉じたタブには描かない
         board_name = thread.board.name if thread.board else ""
         url = thread.url or ""
         err = thread.error or "取得に失敗しました"
@@ -6504,9 +6515,29 @@ class ThreadView(_MouseGestureMixin, QWidget):
         "if(m)return m[1]+','+Math.round(r.top);}}"
         "return ','+Math.round(window.scrollY);})()")
 
+    def _is_alive(self) -> bool:
+        """このビューがまだ使えるか（タブを閉じた後は False）。
+
+        タブを閉じても、JSの結果待ちコールバックや積んであるQTimerは後から
+        届く。破棄済みのウィジェットに触ると RuntimeError になり、Qtの
+        コールバックから抜けた例外がPythonのエラー状態を残すため、無関係な
+        場所（アプリ全体のイベントフィルタ等）で SystemError として現れる。"""
+        if getattr(self, "_disposed", False):
+            return False
+        try:
+            from shiboken6 import isValid
+            if not isValid(self):
+                return False
+            _v = getattr(self, "_view", None)
+            return _v is not None and isValid(_v)
+        except Exception:
+            return True         # 判定できない時は従来どおり進める
+
     def _capture_scroll_anchor(self, then):
         """画面最上部のレスを目印として控え、取れたら then() を呼ぶ。"""
         def _cb(v):
+            if not self._is_alive():
+                return          # 待っている間にタブが閉じられた
             _no, _off = "", 0
             try:
                 _a, _b = str(v or ",0").split(",", 1)
