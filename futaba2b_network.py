@@ -54,7 +54,29 @@ try:
     from urllib3.util.retry import Retry
 except ImportError:  # 古い requests 同梱の urllib3
     from requests.packages.urllib3.util.retry import Retry
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Comment
+
+
+def _blockquote_text(bq) -> str:
+    """blockquote から本文のテキストを取り出す。改行にするのは <br> だけ。
+
+    get_text(separator="\\n") は文字ノードの境目すべてに改行を入れるため、
+    行の途中にリンクや <font> があると1行が複数行に割れてしまう。
+    とくに「>https://…」のような引用行は、ふたば側で「>」とリンクが別の
+    ノードになるので「>」だけの行とURLの行に分かれ、そのレスを引用すると
+    「>>」が単独の行として入ってしまっていた。"""
+    if bq is None:
+        return ""
+    parts = []
+    for el in bq.descendants:
+        if isinstance(el, Comment):
+            continue
+        if isinstance(el, NavigableString):
+            parts.append(str(el))
+        elif getattr(el, "name", "") == "br":
+            parts.append("\n")
+    return "".join(parts)
+
 
 # ── レス毎パース用の事前コンパイル済みパターン（_parse_res_node / _parse_op）──
 _THUMB_SRC_RE = re.compile(r"/thumb/")
@@ -2069,7 +2091,7 @@ class FutabaFetcher:
 
         # コメント（blockquote）
         bq_ctx = thre if is_img_board else soup
-        bq=bq_ctx.find("blockquote"); ch=str(bq) if bq else ""; ct=bq.get_text(separator="\n") if bq else ""
+        bq=bq_ctx.find("blockquote"); ch=str(bq) if bq else ""; ct=_blockquote_text(bq)
 
         # そうだね
         sod=0
@@ -2128,7 +2150,7 @@ class FutabaFetcher:
             raw = cnm_el.get_text(strip=True)
             m_trip = _TRIP_RE.search(raw)
             trip = m_trip.group(0) if m_trip else ""
-        bq=node.find("blockquote"); ch=str(bq) if bq else ""; ct=bq.get_text(separator="\n") if bq else ""
+        bq=node.find("blockquote"); ch=str(bq) if bq else ""; ct=_blockquote_text(bq)
         # 削除判定: ① テーブルに class="deleted" がある、または
         # ② blockquote内の <font color="#ff0000"> の前に "[" がない
         _tbl_cls = node.parent.parent.get("class", []) if (
