@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.423"
+APP_VER = "0.9.424"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4143,6 +4143,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._pending_scroll  = 0
         # 再描画をまたいで位置を戻すための目印 (レスNo, そのレス上端からのズレpx)
         self._pending_anchor: "tuple | None" = None
+        # ページの読み込みが進行中か（位置合わせの予約を横から捨てないため）
+        self._load_pending    = False
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
         self._error_banner_html = ""   # エラー(キャッシュ表示)時の赤帯バナーHTML（画像/引用モードでも使用）
         self._pending_redraw  = False  # 非表示時にAR更新が来た→アクティブ化時に再描画する
@@ -5379,7 +5381,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         )
 
         if _is_same_thread:
-            self._pending_scroll = 0  # 全体再描画しないのでpendingは不要
+            self._drop_pending_scroll()  # 全体再描画しないのでpendingは不要
             new_len = len(thread.res_list)
             if new_len > self._known_res_count:
                 # レスが増えた → 差分更新して終了
@@ -5414,7 +5416,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             # 画像・引用モード中の同スレッド更新
             # → スレッドHTMLをロードせず、現在のスクロール位置を保持しながらモード再描画
             _res_increased = len(thread.res_list) > self._known_res_count
-            self._pending_scroll = 0   # ページを読み直さないので位置合わせは不要
+            self._drop_pending_scroll()  # ページを読み直さないので位置合わせは不要
             self._thread = thread
             self._known_res_count = len(thread.res_list)
             # _last_html / _img_list を更新しておく（返信モードに戻った時に使う）
@@ -5531,7 +5533,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         from futaba2b_html import res_fragment_html
         import json, time as _t_mod
         # _pending_scrollが残っていても差分更新ではページロードが発生しないので消費する
-        self._pending_scroll = 0
+        # （別経路のページ読み込みが進行中なら残す。_drop_pending_scroll 参照）
+        self._drop_pending_scroll()
 
         prev_count = self._known_res_count
         new_res = thread.res_list[prev_count:]   # 新着分のみ
@@ -5801,6 +5804,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         tmp.write(html)
         tmp.close()
         self._tmp_html_path = tmp.name
+        # 読み込み完了まで、位置合わせの予約を他の経路に捨てさせない
+        self._load_pending = True
         self._view.load(QUrl.fromLocalFile(tmp.name))
 
 
@@ -6508,12 +6513,15 @@ class ThreadView(_MouseGestureMixin, QWidget):
     # ── スクロール位置の目印（NG切替などの再描画をまたいで位置を保つ） ────────
     # 画面最上部に見えているレスNoと、そのレスの上端からのズレ(px)を覚える。
     # NG切替では表示されるレス数が変わるためピクセル位置だけでは合わない。
+    # 戻り値: "レスNo,そのレスの画面上端からのズレ,今のスクロール位置"
+    # 3つ目は目印のレスが見つからなかった時の保険（NGで隠れた等）。
     _SCROLL_ANCHOR_JS = (
-        "(function(){var es=document.querySelectorAll('.res');"
+        "(function(){var sy=Math.round(window.scrollY);"
+        "var es=document.querySelectorAll('.res');"
         "for(var i=0;i<es.length;i++){var r=es[i].getBoundingClientRect();"
         "if(r.bottom>0){var m=(es[i].id||'').match(/^r(\\d+)$/);"
-        "if(m)return m[1]+','+Math.round(r.top);}}"
-        "return ','+Math.round(window.scrollY);})()")
+        "if(m)return m[1]+','+Math.round(r.top)+','+sy;}}"
+        "return ',0,'+sy;})()")
 
     def _is_alive(self) -> bool:
         """このビューがまだ使えるか（タブを閉じた後は False）。
@@ -6533,20 +6541,36 @@ class ThreadView(_MouseGestureMixin, QWidget):
         except Exception:
             return True         # 判定できない時は従来どおり進める
 
+    def _drop_pending_scroll(self):
+        """ページを読み直さない更新（差分追記・モード再描画）で、位置合わせの
+        予約を捨てる。
+
+        ただし別の経路で始めたページ読み込みが進行中なら残す。捨てると、その
+        読み込みが終わった時に戻り先が分からず先頭に取り残される。
+        （カタログを更新した直後にスレのタブへ移ると再読込が走るので、そこへ
+        　自動更新の差分が重なると時々そうなっていた）"""
+        if getattr(self, "_load_pending", False):
+            return
+        self._pending_scroll = 0
+        self._pending_anchor = None
+
     def _capture_scroll_anchor(self, then):
         """画面最上部のレスを目印として控え、取れたら then() を呼ぶ。"""
         def _cb(v):
             if not self._is_alive():
                 return          # 待っている間にタブが閉じられた
-            _no, _off = "", 0
+            _no, _off, _sy = "", 0, 0
             try:
-                _a, _b = str(v or ",0").split(",", 1)
-                _no, _off = _a.strip(), int(float(_b or 0))
+                _p = str(v or ",0,0").split(",")
+                _no  = _p[0].strip()
+                _off = int(float(_p[1] or 0)) if len(_p) > 1 else 0
+                _sy  = int(float(_p[2] or 0)) if len(_p) > 2 else 0
             except Exception:
                 pass
             self._pending_anchor = (_no, _off) if _no else None
-            if not _no:                       # レスが1つも無い＝素の位置で戻す
-                self._pending_scroll = max(0, _off)
+            # 目印のレスが作り直したHTMLから消えている（NGで隠れた等）時に
+            # 先頭へ取り残されないよう、今の位置も保険として控えておく。
+            self._pending_scroll = max(0, _sy if _no else _off)
             then()
         if not _safe_run_js(getattr(self, "_view", None),
                             self._SCROLL_ANCHOR_JS, _cb):
@@ -6572,9 +6596,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return
         self._set_view_mode("")        # モードボタンの同期はこの中で行われる
 
-    def _restore_scroll_anchor(self):
+    def _restore_scroll_anchor(self, fallback_y: int = 0):
         """控えた目印のレスが画面の同じ位置に来るよう戻す。
-        そのレスが消えている（NGで隠れた等）場合は何もしない。"""
+
+        目印のレスが消えている（NGで隠れた等）場合は、控えておいたピクセル
+        位置へ戻す。以前はここで何もしていなかったため、そういう時だけ
+        先頭に取り残されていた。"""
         _a = getattr(self, "_pending_anchor", None)
         if not _a:
             return False
@@ -6582,17 +6609,21 @@ class ThreadView(_MouseGestureMixin, QWidget):
         _no, _off = _a
         # 画像の読み込みで高さが変わるため、位置が落ち着くまで数回やり直す
         self._view.page().runJavaScript(
-            "(function(){var id='r%s',off=%d,tries=0;"
+            "(function(){var id='r%s',off=%d,fb=%d,tries=0;"
             "function show(){var s=document.getElementById('__anch');"
             "if(s)s.remove();}"
+            "function fbgo(){if(fb<=0){show();return;}"
+            "window.scrollTo(0,fb);show();"
+            "if(window.scrollY<fb-2&&tries++<50){setTimeout(fbgo,33);}}"
             "function go(){var e=document.getElementById(id);"
-            "if(!e){show();return;}"
+            # 目印のレスが消えていたら保険の位置へ
+            "if(!e){fbgo();return;}"
             "var y=e.getBoundingClientRect().top+window.scrollY-off;"
             "window.scrollTo(0,y);show();"
             "if(Math.abs(e.getBoundingClientRect().top-off)>2&&tries++<50)"
             "{setTimeout(go,33);}}"
             "requestAnimationFrame(function(){requestAnimationFrame(go);});"
-            "})();" % (_no, int(_off)))
+            "})();" % (_no, int(_off), max(0, int(fallback_y))))
         return True
 
     def _flush_pending_frags(self):
@@ -6623,7 +6654,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 板設定を変えた後に返信モードへ戻ると、生成済みHTML(_last_html)に
         # 焼かれた古いぼかし設定のまま表示されるため、読込完了時に合わせ直す
         self.apply_blur_setting()
-        if self._restore_scroll_anchor():
+        self._load_pending = False
+        _fb = self._pending_scroll
+        if self._restore_scroll_anchor(_fb):
             self._pending_scroll = 0
             return
         # 戻す目印が無い場合はここで解除する（位置合わせ側では解除されないため）
