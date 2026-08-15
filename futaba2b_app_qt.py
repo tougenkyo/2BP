@@ -121,7 +121,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.424"
+APP_VER = "0.9.425"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4083,6 +4083,34 @@ def _build_error_band_js(text: str) -> str:
             "}catch(_){}})();")
 
 
+# ── 再描画をまたいで表示位置を戻すためのJS ────────────────────────────────
+# 画像の読み込みで高さが伸びるため、位置合わせは1回では決まらず何度かやり直す。
+# その間に利用者が操作したら打ち切る（引き戻され続けるのを防ぐ）。ただし最初の
+# 1回は必ず当てる。そこで打ち切ると戻り先を見失って先頭に取り残されるため。
+_SCROLL_ABORT_JS = (
+    "var stop=false,first=true;"
+    "var evs=['wheel','touchstart','keydown','mousedown'];"
+    "function onUser(){if(!first)stop=true;}"
+    "evs.forEach(function(t){window.addEventListener(t,onUser,{passive:true});});"
+    "function done(){evs.forEach(function(t){"
+    "window.removeEventListener(t,onUser);});}"
+    # 位置が決まるまで画面を隠しているカバーを外す
+    "function show(){var s=document.getElementById('__anch');if(s)s.remove();}"
+)
+
+# ピクセル位置へ戻す本体。呼び出し側が先に「var y=<位置>;」を用意する。
+_SCROLL_KEEP_JS = (
+    _SCROLL_ABORT_JS +
+    "var tries=0;"
+    # 打ち切りは scrollTo より先に見る。あとで見ると、操作された後にもう1回
+    # 引き戻してから止まることになる
+    "function go(){if(stop){show();done();return;}"
+    "window.scrollTo(0,y);show();first=false;"
+    "if(window.scrollY<y-2&&tries++<50){setTimeout(go,33);}else{done();}}"
+    "requestAnimationFrame(function(){requestAnimationFrame(go);});"
+)
+
+
 class ThreadView(_MouseGestureMixin, QWidget):
     open_reply_window = Signal(int, str)
     open_image_tab    = Signal(str, list, int)
@@ -5784,8 +5812,13 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # loadFinished 後に scrollTo すると、その前に先頭が1フレーム描かれて
         # 一瞬ちらつく。本文の直後（要素が揃った時点）で実行すれば最初の描画から
         # 目的の位置になる。画像で高さが変わるぶんは従来どおり後段でも直す。
+        # 目印（レス基準）だけでなく、ピクセル位置で戻す時も隠す。
+        # タブ切り替えの再読込はピクセル位置しか控えないため、以前はここの
+        # 条件から外れて先頭が1フレーム描かれ、そのあと既読位置へ飛んでいた
+        # （「一瞬ガクっとする」の正体）。
         _anchor = getattr(self, "_pending_anchor", None)
-        if _anchor and '</body>' in html and '<head>' in html:
+        if ((_anchor or self._pending_scroll > 0)
+                and '</body>' in html and '<head>' in html):
             # レス数が多いと </body> に届く前に描き始めるため、スクリプトだけでは
             # 先頭が一瞬見える。位置が決まるまでは描かせない。
             # 何かで解除に失敗しても白いままにならないよう、時間切れでも戻す。
@@ -6607,23 +6640,26 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return False
         self._pending_anchor = None
         _no, _off = _a
-        # 画像の読み込みで高さが変わるため、位置が落ち着くまで数回やり直す
+        # 画像の読み込みで高さが変わるため、位置が落ち着くまで数回やり直す。
+        # やり直しの最中に利用者が操作したら打ち切る（_SCROLL_ABORT_JS）。
         self._view.page().runJavaScript(
-            "(function(){var id='r%s',off=%d,fb=%d,tries=0;"
-            "function show(){var s=document.getElementById('__anch');"
-            "if(s)s.remove();}"
-            "function fbgo(){if(fb<=0){show();return;}"
-            "window.scrollTo(0,fb);show();"
-            "if(window.scrollY<fb-2&&tries++<50){setTimeout(fbgo,33);}}"
-            "function go(){var e=document.getElementById(id);"
+            "(function(){var id='r%s',off=%d,fb=%d,tries=0;" % (
+                _no, int(_off), max(0, int(fallback_y)))
+            + _SCROLL_ABORT_JS +
+            "function fbgo(){if(stop||fb<=0){show();done();return;}"
+            "window.scrollTo(0,fb);show();first=false;"
+            "if(window.scrollY<fb-2&&tries++<50){setTimeout(fbgo,33);}"
+            "else{done();}}"
+            "function go(){if(stop){show();done();return;}"
+            "var e=document.getElementById(id);"
             # 目印のレスが消えていたら保険の位置へ
             "if(!e){fbgo();return;}"
             "var y=e.getBoundingClientRect().top+window.scrollY-off;"
-            "window.scrollTo(0,y);show();"
-            "if(Math.abs(e.getBoundingClientRect().top-off)>2&&tries++<50)"
-            "{setTimeout(go,33);}}"
+            "window.scrollTo(0,y);show();first=false;"
+            "if(Math.abs(e.getBoundingClientRect().top-off)>2"
+            "&&tries++<50){setTimeout(go,33);}else{done();}}"
             "requestAnimationFrame(function(){requestAnimationFrame(go);});"
-            "})();" % (_no, int(_off), max(0, int(fallback_y))))
+            "})();")
         return True
 
     def _flush_pending_frags(self):
@@ -6659,9 +6695,6 @@ class ThreadView(_MouseGestureMixin, QWidget):
         if self._restore_scroll_anchor(_fb):
             self._pending_scroll = 0
             return
-        # 戻す目印が無い場合はここで解除する（位置合わせ側では解除されないため）
-        _safe_run_js(self._view,
-                     'var s=document.getElementById("__anch");if(s)s.remove();')
         if self._pending_scroll > 0:
             y = self._pending_scroll
             self._pending_scroll = 0
@@ -6670,13 +6703,15 @@ class ThreadView(_MouseGestureMixin, QWidget):
             # （画像キャッシュ有無で再現が時々になる）。目標位置に届かない間は
             # 高さが伸びるのを待って数回リトライし、到達したら停止する。
             # （ユーザが下方向へ動かした場合は scrollY>=y で停止＝操作を妨げない）
+            # 隠しているカバー(__anch)は最初の1回を当ててから外す。先に外すと
+            # 先頭が見えてしまう。
             self._view.page().runJavaScript(
-                "(function(){var y=" + str(int(y)) + ",tries=0;"
-                "function go(){window.scrollTo(0,y);"
-                "if(window.scrollY<y-2&&tries++<50){setTimeout(go,33);}}"
-                "requestAnimationFrame(function(){requestAnimationFrame(go);});"
-                "})();"
+                "(function(){var y=" + str(int(y)) + ";" + _SCROLL_KEEP_JS + "})();"
             )
+        else:
+            # 戻す先が無い場合はここでカバーを外す（位置合わせ側では外れない）
+            _safe_run_js(self._view,
+                         'var s=document.getElementById("__anch");if(s)s.remove();')
 
 
     def _set_view_mode(self, mode: str):
