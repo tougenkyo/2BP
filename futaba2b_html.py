@@ -3390,6 +3390,12 @@ def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
         head.append(f' <span class="sr-th-cnt">─ {_html.escape(board_label)}</span>')
     head.append('</div>')
 
+    is_cache = (getattr(result, "source", "futaba") == "cache")
+    head.append('<div class="sr-range">'
+                + ('検索先: 手元のキャッシュ（開いたことのあるスレ）'
+                   if is_cache else '検索先: ふたばの検索モード')
+                + '</div>')
+
     notes: list = []
     if err:
         notes.append('<div class="sr-note"><b>検索できませんでした</b><br>'
@@ -3397,26 +3403,39 @@ def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
     elif hits:
         _t_lo = _sr_time(min(hits, key=lambda h: h.no).datetime_str)
         _t_hi = _sr_time(max(hits, key=lambda h: h.no).datetime_str)
-        head.append(
-            f'<div class="sr-range">{result.count}件 / {result.thread_count}スレ'
-            f'　走査できた範囲: {_html.escape(_t_lo)} 〜 {_html.escape(_t_hi)}'
-            f'（No.{result.first_no} 〜 No.{result.last_no}）</div>')
-        stale = result.stale_minutes()
-        if stale >= 10:
-            notes.append(
-                '<div class="sr-note">'
-                '<b>これより新しいレスは検索されていない可能性があります</b><br>'
-                f'一番新しいヒットが{stale}分前で止まっています。ふたばの検索は、'
-                'よくある語や短い語だと板の全部を見ずに途中で打ち切ります。'
-                '語を長く・具体的にすると、より新しいところまで検索されます。</div>')
+        _scan = (f'　{result.scanned}スレを走査' if is_cache
+                 else f'　走査できた範囲: {_html.escape(_t_lo)} 〜 '
+                      f'{_html.escape(_t_hi)}'
+                      f'（No.{result.first_no} 〜 No.{result.last_no}）')
+        head.append(f'<div class="sr-range">{result.count}件 / '
+                    f'{result.thread_count}スレ{_scan}</div>')
+        if is_cache:
+            if getattr(result, "capped", False):
+                notes.append(
+                    f'<div class="sr-note"><b>{result.count}件で打ち切りました</b><br>'
+                    '新しいスレから順に探しているので、古いスレのぶんが'
+                    '残っています。もっと絞り込める語で検索し直してください。</div>')
+        else:
+            stale = result.stale_minutes()
+            if stale >= 10:
+                notes.append(
+                    '<div class="sr-note">'
+                    '<b>これより新しいレスは検索されていない可能性があります</b><br>'
+                    f'一番新しいヒットが{stale}分前で止まっています。ふたばの検索は、'
+                    'よくある語や短い語だと板の全部を見ずに途中で打ち切ります。'
+                    '語を長く・具体的にするか、検索先を「手元のキャッシュ」に'
+                    '変えてください（開いたことのあるスレだけが対象になる'
+                    'かわりに、打ち切られません）。</div>')
     else:
         head.append('<div class="sr-range">0件</div>')
 
-    if not err and 0 < len(kw) <= 2:
+    if not err and not is_cache and 0 < len(kw) <= 2:
         notes.append(
             '<div class="sr-note">検索語が短いと、ふたば側が板の古いところだけを見て'
             '打ち切ってしまい、ヒット数が実際よりずっと少なくなります。'
-            '3文字以上の具体的な語のほうが確実です。</div>')
+            '3文字以上の具体的な語にするか、検索先を「手元のキャッシュ」に'
+            '変えてください（開いたことのあるスレだけが対象になるかわりに、'
+            '短い語でも打ち切られません）。</div>')
 
     body = [f'<div class="sr-head">{"".join(head)}{"".join(notes)}</div>']
     if not hits:
@@ -3430,9 +3449,10 @@ def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
         groups.setdefault(h.thread_no, []).append(h)
     for th_no, ghits in groups.items():
         _u = _html.escape(f"{base}res/{th_no}.htm", quote=True)
+        # スレの見出し。板の検索モードは件名(sub)、キャッシュ検索は
+        # <title> から取ったスレ名が subject に入っている。
         _sub = next((h.subject for h in ghits
-                     if h.is_op and (h.subject or "").strip()
-                     and h.subject != "無念"), "")
+                     if (h.subject or "").strip() and h.subject != "無念"), "")
         _sub_html = (f' <span class="sr-th-sub">{_html.escape(_sub)}</span>'
                      if _sub else "")
         body.append(

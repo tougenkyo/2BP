@@ -186,6 +186,9 @@ class SearchResult:
     hits:       list = field(default_factory=list)
     error:      str  = ""
     server_now: str  = ""    # 応答ヘッダ Date を板の時刻(JST)にしたもの "HH:MM:SS"
+    source:     str  = "futaba"   # "futaba"=板の検索モード / "cache"=手元のキャッシュ
+    scanned:    int  = 0     # cache のとき、走査したスレ数
+    capped:     bool = False  # cache のとき、上限で打ち切ったか
 
     @property
     def count(self) -> int:

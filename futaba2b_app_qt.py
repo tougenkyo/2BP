@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.427"
+APP_VER = "0.9.428"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10813,6 +10813,16 @@ class BoardSearchView(QWidget):
         self._btn = QPushButton("検索"); self._btn.setFixedHeight(22)
         self._btn.clicked.connect(self.run_search)
         tb.addWidget(self._btn)
+        tb.addWidget(QLabel(" 検索先："))
+        self._src = _NoWheelComboBox()
+        self._src.addItems(["ふたば", "手元のキャッシュ"])
+        self._src.setToolTip(
+            "ふたば … 板の検索窓と同じ。板全体が対象だが、短い語・よくある語だと\n"
+            "　　　　　途中で打ち切られて古いところしか返らない\n"
+            "手元のキャッシュ … 開いたことのあるスレだけが対象。そのかわり\n"
+            "　　　　　新しいスレから最後まで探す。落ちたスレも残っていれば拾える")
+        self._src.currentIndexChanged.connect(lambda _: self.run_search())
+        tb.addWidget(self._src)
         self._lbl = QLabel("")
         self._lbl.setStyleSheet(f"font-size:8pt;color:{_TM.ui('text_muted','#888')};"
                                 "padding:0 8px;")
@@ -10878,13 +10888,16 @@ class BoardSearchView(QWidget):
         self._btn.setEnabled(False)
         self._lbl.setText("検索中…")
         _board, _fetcher = self._board, self._fetcher
+        _use_cache = (self._src.currentIndex() == 1)
 
         def _work():
             try:
-                r = _fetcher.search_board(_board, kw)
+                r = (_fetcher.search_cache(kw, _board) if _use_cache
+                     else _fetcher.search_board(_board, kw))
             except Exception as e:                   # 想定外でもUIを固めない
                 from futaba2b_models import SearchResult as _SR
                 r = _SR(keyword=kw, board_url=_board.base_url,
+                        source=("cache" if _use_cache else "futaba"),
                         error=f"検索に失敗しました: {e}")
             _self = _wr.ref(self)()
             if _self is not None:
@@ -10900,9 +10913,12 @@ class BoardSearchView(QWidget):
         self._result = result
         if result.error:
             self._lbl.setText(result.error)
+        elif result.source == "cache":
+            _cut = "（多すぎるため打ち切り）" if result.capped else ""
+            self._lbl.setText(f"{result.count}件 / {result.thread_count}スレ"
+                              f"　{result.scanned}スレを走査{_cut}")
         else:
-            _stale = result.stale_minutes()
-            _cut = "（途中で打ち切られています）" if _stale >= 10 else ""
+            _cut = "（途中で打ち切られています）" if result.stale_minutes() >= 10 else ""
             self._lbl.setText(f"{result.count}件 / {result.thread_count}スレ{_cut}")
         self._render()
         self.title_changed.emit(self.tab_label())

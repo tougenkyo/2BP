@@ -531,6 +531,107 @@ class FutabaFetcher:
               f"({res.first_no}〜{res.last_no})")
         return res
 
+    # ── 手元のスレHTMLキャッシュを全文検索 ───────────────────────────────
+
+    # キャッシュのHTMLは「日時 → No. → （画像など）→ blockquote」の並びが
+    # OPも返信も共通なので、これ1本でレスを切り出せる。
+    _CACHE_RES_RE = re.compile(
+        r'<span class="cnw">(?P<dt>[^<]*)</span>\s*'
+        r'<span class="cno">No\.(?P<no>\d+)</span>'
+        r'(?P<mid>.*?)'
+        r'<blockquote[^>]*>(?P<com>.*?)</blockquote>', re.S)
+    _CACHE_IMG_RE   = re.compile(r'''<img\s+src=['"]([^'"]*/thumb/[^'"]+)['"]''', re.I)
+    _CACHE_SRC_RE   = re.compile(r'''href=['"]([^'"]*/src/[^'"]+)['"]''', re.I)
+    _CACHE_TITLE_RE = re.compile(r'<title>(.*?)</title>', re.S | re.I)
+
+    def search_cache(self, keyword: str, board: "BoardInfo",
+                     max_hits: int = 1000) -> SearchResult:
+        """開いたことのあるスレのHTMLキャッシュ(data/log)を全文検索する。
+
+        ふたばの検索は板の全部を走査せず途中で打ち切るので、その先を
+        手元で補うための経路。落ちたスレも、キャッシュが残っていれば拾える。
+        逆にここに無いスレ（一度も開いていない）は当然出てこない。"""
+        kw = (keyword or "").strip()
+        res = SearchResult(keyword=kw, board_url=board.base_url, source="cache")
+        if not kw:
+            res.error = "検索する語を入れてください"
+            return res
+
+        p = urllib.parse.urlparse(board.base_url)
+        root = THREAD_CACHE_DIR / (p.hostname or "") / p.path.strip("/") / "res"
+        if not root.is_dir():
+            res.error = "この板のキャッシュはまだありません"
+            return res
+
+        kw_b  = kw.encode("utf-8")
+        kw_lo = kw.lower()
+        try:
+            # 新しいスレから見る。上限で打ち切られた時に残るのが最近のぶんに
+            # なるようにする（古い方から埋まると、打ち切り＝昔しか出ない）。
+            files = sorted(root.glob("*.htm"), key=lambda f: f.name, reverse=True)
+        except OSError as e:
+            res.error = f"キャッシュを読めませんでした: {e}"
+            return res
+
+        for f in files:
+            res.scanned += 1
+            try:
+                raw = f.read_bytes()
+            except OSError:
+                continue
+            # まず生バイトで素通しふるい。ほとんどのファイルはここで落ちる。
+            if kw_b not in raw:
+                continue
+            try:
+                html_text = raw.decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            try:
+                th_no = int(f.stem)
+            except ValueError:
+                continue
+            _tm = self._CACHE_TITLE_RE.search(html_text)
+            title = _html_to_text(_tm.group(1)) if _tm else ""
+            title = re.sub(r'\s*-\s*[^-]*＠ふたば\s*$', '', title).strip()
+            prev_end = 0
+            for m in self._CACHE_RES_RE.finditer(html_text):
+                com  = m.group("com")
+                text = _html_to_text(com)
+                _head, prev_end = html_text[prev_end:m.start()], m.end()
+                if kw_lo not in text.lower():
+                    continue
+                no  = int(m.group("no"))
+                mid = m.group("mid")
+                # 画像は No. と blockquote の間（返信）か、その手前（OP）にある。
+                # 手前を見る範囲は「1つ前のレスの終わり」までに限る。広げると
+                # 画像の無いレスに前のレスのサムネが付いてしまう。
+                _im = (self._CACHE_IMG_RE.search(mid)
+                       or self._CACHE_IMG_RE.search(_head))
+                _sr = (self._CACHE_SRC_RE.search(mid)
+                       or self._CACHE_SRC_RE.search(_head))
+                res.hits.append(SearchHit(
+                    no=no,
+                    resto=(0 if no == th_no else th_no),
+                    datetime_str=m.group("dt"),
+                    subject=title,
+                    comment_html=com,
+                    comment_text=text,
+                    thumb_url=(urllib.parse.urljoin(board.base_url, _im.group(1))
+                               if _im else ""),
+                    image_url=(urllib.parse.urljoin(board.base_url, _sr.group(1))
+                               if _sr else ""),
+                ))
+                if len(res.hits) >= max_hits:
+                    res.capped = True
+                    break
+            if res.capped:
+                break
+        res.hits.sort(key=lambda h: h.no)
+        print(f"[Search/cache] {board.base_url} {kw!r} → {len(res.hits)}件 "
+              f"/ {res.scanned}スレ走査"
+              + ("（上限で打ち切り）" if res.capped else ""))
+        return res
+
     @staticmethod
     def _date_header_jst(date_hdr: str) -> str:
         """応答の Date ヘッダ(GMT)を板の時刻(JST)の "HH:MM:SS" にする。
