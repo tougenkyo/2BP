@@ -1285,8 +1285,12 @@ class PostDialog(QDialog):
                  settings: AppSettings, resto: int = 0,
                  quote_text: str = "", on_success=None, parent=None):
         super().__init__(parent)
+        from futaba2b_models import board_display_name
         is_new_thread = (resto == 0)
-        self.setWindowTitle(f"{'返信' if resto else 'スレッド作成'} ─ {board.name}")
+        # 二次元裏は may / img 等でサーバーが分かれる。どこへ書き込むのか
+        # 分かるようタイトルにはサブドメイン付きの板名を出す。
+        self._board_disp = board_display_name(board.name, board.url)
+        self.setWindowTitle(f"{'返信' if resto else 'スレッド作成'} ─ {self._board_disp}")
         self.resize(580, 460)
         # 記憶済みサイズ・位置を復元
         _sz = getattr(settings, "post_dialog_size", [])
@@ -1306,7 +1310,7 @@ class PostDialog(QDialog):
             self.setStyleSheet(
                 "QDialog { border-top: 3px solid #cc0000; }"
             )
-            title_lbl = QLabel(f"🧵 スレッド作成 ─ {board.name}")
+            title_lbl = QLabel(f"🧵 スレッド作成 ─ {self._board_disp}")
             title_lbl.setStyleSheet(
                 "background:#cc0000;color:#fff;font-weight:bold;"
                 "padding:4px 8px;font-size:10pt;")
@@ -2162,8 +2166,9 @@ document.addEventListener('keydown',function(e){{
                     _os.makedirs(_log_dir, exist_ok=True)
                     _tpl = getattr(self._settings, "log_filename_template", "{date}/{date}_No.{no}_{title}")
                     _now = _dt.datetime.now()
+                    # {board} はログ保存と同じ「二次元裏(may)」表記に揃える
                     _board_name = _re.sub(r'[\\/:*?"<>|]', '',
-                        getattr(self._board, "name", "") or "" if self._board else "")
+                        self._board_disp if self._board else "")
                     # {逆NG}/{逆NG:代替文字} を解決（手書き保存は逆NGマッチ無し）
                     def _rv_hw(m):
                         _d = m.group(1)
@@ -2774,7 +2779,7 @@ document.addEventListener('keydown',function(e){{
         if thread_title:
             self.setWindowTitle(f"[返信] {thread_title}")
         else:
-            base = f"{'返信' if self._resto else 'スレッド作成'} ─ {self._board.name}"
+            base = f"{'返信' if self._resto else 'スレッド作成'} ─ {self._board_disp}"
             self.setWindowTitle(f"[縮小] {base}")
         _lay = self.layout()
         for i in range(_lay.count()):
@@ -2794,7 +2799,7 @@ document.addEventListener('keydown',function(e){{
         if not getattr(self, "_rolled_up", False):
             return
         self._rolled_up = False
-        base = f"{'返信' if self._resto else 'スレッド作成'} ─ {self._board.name}"
+        base = f"{'返信' if self._resto else 'スレッド作成'} ─ {self._board_disp}"
         self.setWindowTitle(base)
         _lay = self.layout()
         _rules_w = getattr(self, "_rules_widget", None)

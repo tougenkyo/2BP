@@ -818,12 +818,10 @@ class MainWindow(QMainWindow):
         for cat in bbsmenu_cats:
             for board in cat.boards:
                 if board.name == "二次元裏" and board.url not in niji_seen:
-                    try:
-                        sub   = urllib.parse.urlparse(board.url).hostname.split(".")[0]
-                        short = sub if sub != "www" else board.name
-                    except Exception:
-                        short = board.name
-                    niji_boards.append(BoardInfo(name=short, url=board.url))
+                    # 板名は「二次元裏」のまま持ち、サブドメインは表示側で添える
+                    # （ツリーの表示は set_categories、それ以外は
+                    #   board_display_name が「二次元裏(may)」を作る）
+                    niji_boards.append(BoardInfo(name=board.name, url=board.url))
                     niji_seen.add(board.url)
         cg = settings.get_custom_group("二次元裏")
         if cg:
@@ -847,7 +845,8 @@ class MainWindow(QMainWindow):
     def _on_board_selected(self, board: BoardInfo):
         self._current_board = board
         self._url_bar.setText(board.url)
-        self._st_log.setText(f"板を開いています: {board.name}")
+        self._st_log.setText(
+            f"板を開いています: {self._board_display_name(board.name, board.url)}")
         self._show_board_catalog(board)
 
     def _show_board_catalog(self, board: BoardInfo | None = None):
@@ -879,7 +878,8 @@ class MainWindow(QMainWindow):
             w = inner.widget(i)
             if isinstance(w, CatalogView):
                 inner.setCurrentIndex(i)
-                self._st_log.setText(f"カタログ更新中: {board.name}")
+                self._st_log.setText(
+                    f"カタログ更新中: {self._board_display_name(board.name, board.url)}")
                 def _catset_existing(_b=board, _v=w):
                     _bs = get_board_settings(_b.base_url)
                     import urllib.parse as _up
@@ -930,7 +930,8 @@ class MainWindow(QMainWindow):
                 self._catset_reload_signal.emit(_v, _b)
         cat_view._pending_catset = _do_catset_then_reload
         cat_view.load(board)
-        self._st_log.setText(f"カタログ取得中: {board.name}")
+        self._st_log.setText(
+            f"カタログ取得中: {self._board_display_name(board.name, board.url)}")
 
     def _get_or_create_board_tab(self, board: BoardInfo, activate: bool = True) -> "BoardPane | None":
         for i in range(self._outer_tabs.count()):
@@ -1570,7 +1571,9 @@ class MainWindow(QMainWindow):
         self._ar_mgr.add(entry, cat_view)
         _disp = (f"{interval_sec}秒" if interval_sec < 60
                  else f"{interval_sec // 60}分")
-        self._st_log.setText(f"カタログを自動更新に追加: {board.name}  間隔 {_disp}")
+        self._st_log.setText(
+            f"カタログを自動更新に追加: "
+            f"{self._board_display_name(board.name, board.url)}  間隔 {_disp}")
 
     def _open_thread_url_mode(self, url: str, mode: int):
         """スレをアクティブで開き、読込後に表示モードを切り替える"""
@@ -2388,7 +2391,8 @@ class MainWindow(QMainWindow):
                     target_board = pane._board; break
         if target_board is None:
             # 板タブが閉じられている場合はスタックに残したまま中止する
-            self._st_log.setText(f"板タブが閉じられているため復元できません: {board_name}")
+            self._st_log.setText("板タブが閉じられているため復元できません: "
+                                 f"{self._board_display_name(board_name, board_url)}")
             return
         self._closed_tabs.pop(idx)
         self._open_thread(target_board, thread_no)
@@ -3179,13 +3183,8 @@ class MainWindow(QMainWindow):
         no   = thread.no
         # board名（二次元裏の場合はサブドメインを付加）
         if hasattr(thread, 'board') and thread.board:
-            _bname = thread.board.name or ""
-            _burl  = getattr(thread.board, 'url', '') or ""
-            if _bname == "二次元裏" and _burl:
-                _m = re.search(r'//(\w+)\.2chan\.net/', _burl)
-                board = f"二次元裏({_m.group(1)})" if _m else _bname
-            else:
-                board = _bname
+            board = self._board_display_name(thread.board.name or "",
+                                             getattr(thread.board, 'url', '') or "")
         else:
             board = ""
         # OP1行目
@@ -4853,16 +4852,12 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _board_label_for_title(board) -> str:
         """板名。二次元裏のみ may/img/cgi/dat 等のサブドメインを付加する。
-        例: 「二次元裏 (may)」「二次元裏 (img)」「二次元裏 (cgi)」それ以外は「板名」のみ"""
-        name = board.name if board else ""
-        if name == "二次元裏" and board:
-            try:
-                from urllib.parse import urlparse as _up
-                sub = _up(board.url).hostname.split(".")[0]  # 例: "may", "img", "cgi", "dat"
-                return f"{name} ({sub})"
-            except Exception:
-                pass
-        return name
+        例: 「二次元裏(may)」「二次元裏(img)」それ以外は「板名」のみ。
+        表記は履歴パネル等と揃える（board_display_name に一本化）。"""
+        if not board:
+            return ""
+        from futaba2b_models import board_display_name
+        return board_display_name(board.name or "", getattr(board, "url", "") or "")
 
     def _refresh_title_bar(self, info: dict | None = None):
         """ウィンドウタイトルを更新する。
@@ -4952,7 +4947,8 @@ class MainWindow(QMainWindow):
         if board:
             self._settings.add_favorite(board.name, board.url)
             self._tree_pane.refresh_favorites()
-            self._st_log.setText(f"お気に入りに追加: {board.name}")
+            self._st_log.setText(
+                f"お気に入りに追加: {self._board_display_name(board.name, board.url)}")
 
     def _open_settings(self, tab_name: str = ""):
         dlg = AppSettingsDialog(self._settings, on_apply=self._on_settings_applied,

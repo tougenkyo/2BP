@@ -85,7 +85,8 @@ from PySide6.QtWebEngineCore    import (
 )
 from PySide6.QtWebChannel import QWebChannel
 
-from futaba2b_models   import BoardInfo, BoardCategory, AutoRefreshEntry, CatalogEntry
+from futaba2b_models   import (BoardInfo, BoardCategory, AutoRefreshEntry, CatalogEntry,
+                               board_display_name)
 from futaba2b_network  import FutabaFetcher
 from futaba2b_settings import AppSettings, NgFilter
 from futaba2b_html     import thread_to_html, catalog_to_html, render_res, THREAD_CSS, WEBCHANNEL_JS
@@ -121,7 +122,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.425"
+APP_VER = "0.9.426"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2101,7 +2102,9 @@ class TabManagePane(QWidget):
             board_pane = outer_tabs.widget(ti)
             if not isinstance(board_pane, BoardPane):
                 continue
-            board_name = board_pane._board.name if board_pane._board else ""
+            board_name = (board_display_name(board_pane._board.name,
+                                             board_pane._board.url)
+                          if board_pane._board else "")
 
             for ii in range(board_pane._tabs.count()):
                 tab_w = board_pane._tabs.widget(ii)
@@ -2271,7 +2274,9 @@ class FavManagePane(QWidget):
             board_pane = outer_tabs.widget(ti)
             if not isinstance(board_pane, BoardPane):
                 continue
-            board_name = board_pane._board.name if board_pane._board else ""
+            board_name = (board_display_name(board_pane._board.name,
+                                             board_pane._board.url)
+                          if board_pane._board else "")
 
             for ii in range(board_pane._tabs.count()):
                 tab_w = board_pane._tabs.widget(ii)
@@ -2419,11 +2424,8 @@ class BoardTreePane(QWidget):
             for board in cat.boards:
                 is_custom = board.url in custom_urls
                 # 「二次元裏」のみサブドメインを付加
-                _sv = ''
-                if board.name == "二次元裏":
-                    _sm = re.match(r'https?://([^.]+)\.2chan\.net/', board.url or '')
-                    _sv = f"({_sm.group(1)})" if _sm else ''
-                disp = f"★ {board.name}{_sv}" if is_custom else f"{board.name}{_sv}"
+                _bd = board_display_name(board.name, board.url)
+                disp = f"★ {_bd}" if is_custom else _bd
                 bi = QTreeWidgetItem([disp])
                 bi.setData(0, Qt.ItemDataRole.UserRole,
                            ("board", board.url, cat.name, is_custom, board.name))
@@ -5854,7 +5856,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """エラースレッドの表示（キャッシュなし）- 上下にバナーを表示"""
         if not self._is_alive():
             return              # 閉じたタブには描かない
-        board_name = thread.board.name if thread.board else ""
+        board_name = (board_display_name(thread.board.name, thread.board.url)
+                      if thread.board else "")
         url = thread.url or ""
         err = thread.error or "取得に失敗しました"
         code = self._err_code(err)
@@ -11888,6 +11891,15 @@ class AutoRefreshDialog(QDialog):
         m = re.match(r'https?://(\w+)\.2chan\.net/', url)
         return m.group(1) if m else ""
 
+    def _board_label(self, entry) -> str:
+        """「板：」欄・一覧の板名列に出す文字列。二次元裏は may / img 等で
+        サーバーが分かれるため、一覧と同じくサーバー名を添える。"""
+        if not entry:
+            return ""
+        name = entry.board_name or ""
+        server = self._server_from_url(entry.url or "")
+        return f"{name}({server})" if (name and server) else name
+
     def _build(self):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
@@ -11957,7 +11969,10 @@ class AutoRefreshDialog(QDialog):
         form.setContentsMargins(0, 0, 0, 0)
         self._lbl_view  = QLabel(self._init_entry.title if self._init_entry else "")
         self._lbl_view.setWordWrap(False)
-        self._lbl_board = QLabel(self._init_entry.board_name if self._init_entry else "")
+        # 表示はサーバー名付き。エントリに書き戻す生の板名は別に持つ
+        self._board_name_raw = (self._init_entry.board_name
+                                if self._init_entry else "")
+        self._lbl_board = QLabel(self._board_label(self._init_entry))
         self._lbl_url   = QLabel(self._init_entry.url if self._init_entry else "")
         self._lbl_url.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         form.addRow("スレ名：", self._lbl_view)
@@ -12234,8 +12249,7 @@ class AutoRefreshDialog(QDialog):
             stop_str = f"{e.stop_hour:02d}:{e.stop_min:02d}" if e.stop_hour >= 0 else "--"
 
             # 板名にサーバー名を付加
-            server = self._server_from_url(e.url)
-            board_display = f"{e.board_name}({server})" if server else e.board_name
+            board_display = self._board_label(e)
 
             # Col 0: チェックボックス
             chk = QTableWidgetItem()
@@ -12323,7 +12337,8 @@ class AutoRefreshDialog(QDialog):
         """フォームにエントリの値を反映する。
         keep_intervals=True のとき adaptive_intervals が空なら既存コンボ値を維持する。"""
         self._lbl_view.setText(e.title)
-        self._lbl_board.setText(e.board_name)
+        self._board_name_raw = e.board_name or ""
+        self._lbl_board.setText(self._board_label(e))
         self._lbl_url.setText(e.url)
 
         # エントリがカタログかスレかに応じて行の表示/非表示とラベルを切り替える
@@ -12486,7 +12501,7 @@ class AutoRefreshDialog(QDialog):
             entry = AutoRefreshEntry(
                 no=no, url=url,
                 title=self._lbl_view.text(),
-                board_name=self._lbl_board.text(),
+                board_name=getattr(self, "_board_name_raw", ""),
                 interval_sec=new_interval_sec,
                 stop_hour=sh, stop_min=sm,
                 stop_after_min=self._spin_stop_after.value(),
