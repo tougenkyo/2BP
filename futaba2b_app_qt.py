@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.428"
+APP_VER = "0.9.429"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8945,7 +8945,6 @@ class CatalogView(_MouseGestureMixin, QWidget):
     quar_nos_changed   = Signal(object)  # 隔離スレNo集合が更新された（スレタブのオレンジ色再評価用）
     _catalog_err_sig   = Signal(str)  # BGスレッド→UI: カタログfetch失敗の詳細
     _history_ready     = Signal(list)  # 履歴表示用エントリ（BG→UI）
-    board_search_requested = Signal(str)  # 板内検索タブを開く要求（検索語）
 
     def __init__(self, fetcher: FutabaFetcher, settings: AppSettings, parent=None):
         super().__init__(parent)
@@ -9007,14 +9006,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
         tb.addWidget(self._search)
         sr = QPushButton("検索"); sr.setFixedHeight(22); sr.clicked.connect(self._re_render)
         tb.addWidget(sr)
-        # 上の検索欄はカタログに出ているスレタイの絞り込み。こちらは板ぜんぶの
-        # 本文をふたば側の検索モードで引く（別タブに結果を出す）。
-        sb = QPushButton("板内"); sb.setFixedHeight(22)
-        sb.setToolTip("ふたばの検索モードで板全体の本文を検索する\n"
-                      "（カタログに出ていないレスも探せる。結果は別タブ）")
-        sb.clicked.connect(
-            lambda: self.board_search_requested.emit(self._search.text().strip()))
-        tb.addWidget(sb)
+        # この検索欄はカタログに出ているスレタイの絞り込み（正規表現）。
+        # 板全体の本文を引く「板内検索」は、絞り込みを消さずに使えるよう
+        # ツールバー（URLバーの隣）に独立した欄を置いている。
 
         # ── 設定 ─────────────────────────────────────────────────────────
         tb.addWidget(QLabel(" / "))

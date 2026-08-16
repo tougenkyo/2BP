@@ -493,6 +493,20 @@ class MainWindow(QMainWindow):
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.VLine)
         sep2.setStyleSheet(f"color:{ThemeManager.ui('separator_color','#555')};"); sep2.setFixedWidth(6)
 
+        # 板内検索。カタログの検索欄は「常設の絞り込み(正規表現)」として使う欄
+        # なので、そこから語を持ってくると絞り込みを一度消す羽目になる。
+        # URLバーの隣に独立した欄を置き、絞り込みには一切触れないようにする。
+        self._bsearch = _JapaneseLineEdit()
+        self._bsearch.setPlaceholderText("板内を検索… (Enter)")
+        self._bsearch.setFixedWidth(210)
+        self._bsearch.setToolTip(
+            "今の板の本文を検索する（カタログの絞り込みとは別）\n"
+            "結果は「板内検索」タブに出る。検索先はそのタブで切り替えられる")
+        self._bsearch.returnPressed.connect(self._on_board_search_enter)
+
+        sep3 = QFrame(); sep3.setFrameShape(QFrame.Shape.VLine)
+        sep3.setStyleSheet(f"color:{ThemeManager.ui('separator_color','#555')};"); sep3.setFixedWidth(6)
+
         self._url_bar = _JapaneseLineEdit()
         self._url_bar.setPlaceholderText("URL を入力… (Enter で移動)")
         self._url_bar.returnPressed.connect(self._on_url_enter)
@@ -504,6 +518,8 @@ class MainWindow(QMainWindow):
         top_lay.addWidget(sep1)
         top_lay.addWidget(zoom_out); top_lay.addWidget(self._zoom_lbl); top_lay.addWidget(zoom_in)
         top_lay.addWidget(sep2)
+        top_lay.addWidget(self._bsearch)
+        top_lay.addWidget(sep3)
         top_lay.addWidget(self._url_bar, 1)
         self._r_lay.addWidget(top_bar)
 
@@ -604,8 +620,8 @@ class MainWindow(QMainWindow):
         bm.addAction(QAction("返信(&D)…", self,
                              triggered=self._reply_current, shortcut=_sc("reply")))
         bm.addAction(QAction("スレッド作成(&R)…", self, triggered=self._new_thread))
-        bm.addAction(QAction("板内をふたばで検索(&S)…", self,
-                             triggered=lambda: self._open_board_search()))
+        bm.addAction(QAction("板内を検索(&S)…", self,
+                             triggered=self._focus_board_search))
         bm.addSeparator()
         bm.addAction(QAction("このビューを閉じる(&L)", self,
                              triggered=self._close_current_tab, shortcut=_sc("close_tab")))
@@ -910,8 +926,6 @@ class MainWindow(QMainWindow):
             lambda nos, _inner=inner, _cv=cat_view: self._recolor_quar_tabs(_inner, _cv))
         cat_view.auto_refresh_requested.connect(
             lambda v=cat_view: self._open_ar_dialog(v))
-        cat_view.board_search_requested.connect(
-            lambda kw, _b=board: self._open_board_search(_b, kw))
         inner.insertTab(0, cat_view, "カタログ"); inner.setCurrentIndex(0)
         _cat_ico = self._catalog_icon()
         if not _cat_ico.isNull():
@@ -1850,14 +1864,24 @@ class MainWindow(QMainWindow):
         cat.status_info.connect(self._on_thread_status)
         cat.error_band_changed.connect(
             lambda text, p=pane: self._broadcast_error_band(p, text))
-        cat.board_search_requested.connect(
-            lambda kw, _b=board: self._open_board_search(_b, kw))
         pane.insertTab(0, cat, "カタログ")
         _cat_ico = self._catalog_icon()
         if not _cat_ico.isNull():
             pane._wrap_bar.setTabIcon(0, _cat_ico)
         if True:  # 板を開いたとき常に自動取得
             cat.load(board)
+
+    def _focus_board_search(self):
+        """ツールバーの板内検索欄へフォーカスを移す（メニューから）"""
+        self._bsearch.setFocus()
+        self._bsearch.selectAll()
+
+    def _on_board_search_enter(self):
+        """ツールバーの板内検索欄で Enter。今の板を検索して結果タブに出す。"""
+        kw = self._bsearch.text().strip()
+        if not kw:
+            return
+        self._open_board_search(None, kw)
 
     def _open_board_search(self, board: "BoardInfo | None" = None, keyword: str = ""):
         """板内検索タブ（ふたばの検索モード）を開く。板ごとに1枚を使い回す。"""
