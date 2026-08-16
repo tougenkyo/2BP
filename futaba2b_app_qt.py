@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.429"
+APP_VER = "0.9.430"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4174,6 +4174,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._pending_scroll  = 0
         # 再描画をまたいで位置を戻すための目印 (レスNo, そのレス上端からのズレpx)
         self._pending_anchor: "tuple | None" = None
+        self._jump_res: int = 0   # 読込完了後に見せたいレスNo（検索結果から）
         # ページの読み込みが進行中か（位置合わせの予約を横から捨てないため）
         self._load_pending    = False
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
@@ -6615,6 +6616,35 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._pending_anchor = None
             then()
 
+    def show_res(self, no: int):
+        """外（検索結果など）から「このレスを見せて」と言われた時の入口。
+
+        そのレスが今のページにあればその場で移動する。無ければ（まだ読んで
+        いない・古い内容のまま等）読み直し、読み終わってから合わせる。"""
+        no = int(no or 0)
+        if not no:
+            return
+
+        def _later():
+            # 読み込み完了時に使う。_pending_anchor は再読込の途中で
+            # 「今見ている位置」に上書きされるので、別に持っておく。
+            self._jump_res = no
+            self._pending_anchor = (str(no), 0)   # 位置が決まるまで画面を隠す用
+            self._pending_scroll = 0
+            self.reload_thread()
+
+        def _cb(found):
+            if not self._is_alive():
+                return
+            if found:
+                self._on_jump_to_res(no)
+            else:
+                _later()
+
+        if not _safe_run_js(getattr(self, "_view", None),
+                            "!!document.getElementById('r%d')" % no, _cb):
+            _later()
+
     def _on_jump_to_res(self, no: int):
         """画像/引用モードから、そのレスを返信モードで表示する。
 
@@ -6695,6 +6725,14 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 焼かれた古いぼかし設定のまま表示されるため、読込完了時に合わせ直す
         self.apply_blur_setting()
         self._load_pending = False
+        # 「このレスを見せて」の予約があれば、控えた位置より優先する。
+        # 再読込の途中で _pending_anchor は今の表示位置に上書きされるため、
+        # ここで入れ直さないと元の位置に戻ってしまう。
+        _jr = getattr(self, "_jump_res", 0)
+        if _jr:
+            self._jump_res = 0
+            self._pending_anchor = (str(_jr), 0)
+            self._pending_scroll = 0
         _fb = self._pending_scroll
         if self._restore_scroll_anchor(_fb):
             self._pending_scroll = 0
@@ -10776,8 +10814,10 @@ class BoardSearchView(QWidget):
     ふたばの検索はレス単位で返り、板の全部は走査せず途中で止まる。
     結果ページ側に「どこまで見たか」を出すので、ここは取得と表示だけ担う。"""
 
-    thread_open    = Signal(str)   # スレURL
-    thread_open_bg = Signal(str)   # スレURL（バックグラウンド）
+    thread_open       = Signal(str)        # スレURL
+    thread_open_bg    = Signal(str)        # スレURL（バックグラウンド）
+    thread_open_at    = Signal(str, int)   # スレURL + 見せたいレスNo
+    thread_open_at_bg = Signal(str, int)   # 同上（バックグラウンド）
     status_info    = Signal(object)
     title_changed  = Signal(str)   # タブ見出しの更新
     _result_ready  = Signal(object)   # BG→UI (SearchResult)
@@ -10843,6 +10883,8 @@ class BoardSearchView(QWidget):
 
         self._bridge.thread_open_requested.connect(self.thread_open.emit)
         self._bridge.thread_bg_open_requested.connect(self.thread_open_bg.emit)
+        self._bridge.thread_open_at_requested.connect(self.thread_open_at.emit)
+        self._bridge.thread_bg_open_at_requested.connect(self.thread_open_at_bg.emit)
         self._bridge.url_open_requested.connect(_open_url)
         self._bridge.copy_to_clipboard_requested.connect(
             lambda t: QGuiApplication.clipboard().setText(t))

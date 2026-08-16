@@ -3297,9 +3297,15 @@ body {
 """
 
 SEARCH_JS = """
-function srOpen(url, bg) {
+/* no を渡すとそのレスまでスクロールして見せる。0 ならスレの頭から */
+function srOpen(url, bg, no) {
     if (!window.bridge) return;
-    if (bg) { bridge.openThreadBg(url); } else { bridge.openThread(url); }
+    no = no || 0;
+    if (bg) {
+        if (no) { bridge.openThreadAtBg(url, no); } else { bridge.openThreadBg(url); }
+    } else {
+        if (no) { bridge.openThreadAt(url, no); } else { bridge.openThread(url); }
+    }
 }
 /* 本文中のリンクは外部ブラウザへ。スレを開く動作と二重に反応しないよう止める */
 document.addEventListener('click', function(ev) {
@@ -3313,7 +3319,10 @@ document.addEventListener('click', function(ev) {
 document.addEventListener('auxclick', function(ev) {
     if (ev.button !== 1) return;
     var el = ev.target.closest ? ev.target.closest('[data-url]') : null;
-    if (el) { ev.preventDefault(); srOpen(el.getAttribute('data-url'), 1); }
+    if (el) {
+        ev.preventDefault();
+        srOpen(el.getAttribute('data-url'), 1, Number(el.getAttribute('data-no') || 0));
+    }
 }, true);
 """
 
@@ -3353,8 +3362,9 @@ def _sr_hit_html(h, keyword: str, thread_url_esc: str) -> str:
     if h.thumb_url:
         thumb = (f'<img class="sr-thumb" loading="lazy" '
                  f'src="{_html.escape(h.thumb_url, quote=True)}">')
-    return (f'<div class="sr-hit" data-url="{thread_url_esc}" '
-            f"onclick=\"srOpen('{thread_url_esc}',0)\">"
+    # クリックしたレスまでスクロールして見せたいので、レスNoも一緒に渡す
+    return (f'<div class="sr-hit" data-url="{thread_url_esc}" data-no="{h.no}" '
+            f"onclick=\"srOpen('{thread_url_esc}',0,{h.no})\">"
             f'<div class="sr-meta">{"".join(meta)}</div>'
             f'{thumb}<div class="sr-com">'
             f'{_sr_mark_keyword(h.comment_html, keyword)}</div></div>')

@@ -994,7 +994,7 @@ class MainWindow(QMainWindow):
         self._update_placeholder_visibility()
         return pane
 
-    def _open_thread_url(self, url: str):
+    def _open_thread_url(self, url: str, target_res: int = 0):
         m = re.search(r"(https?://[^/]+/[^/]+/).*?res/(\d+)", url)
         if not m:
             return
@@ -1006,16 +1006,31 @@ class MainWindow(QMainWindow):
                 board = w._board; break
         if not board:
             board = BoardInfo(name="", url=base + "futaba.htm")
-        self._open_thread(board, no)
+        self._open_thread(board, no, target_res=target_res)
+
+    def _open_thread_url_at(self, url: str, target_res: int):
+        """検索結果から: スレを開いて、そのレスまでスクロールして見せる"""
+        self._open_thread_url(url, target_res=int(target_res or 0))
 
     def _open_thread(self, board: BoardInfo, no: int,
-                     open_mode_override: str | None = None):
-        """open_mode_override: None=設定に従う / ''=通常モード強制 / 'image' / 'quote'"""
+                     open_mode_override: str | None = None,
+                     target_res: int = 0):
+        """open_mode_override: None=設定に従う / ''=通常モード強制 / 'image' / 'quote'
+        target_res: 表示後にそのレスまでスクロールする（0=しない）"""
         inner = self._get_or_create_board_tab(board)
         for i in range(inner.count()):
             w = inner.widget(i)
             if isinstance(w, ThreadView) and w._thread_no == no:
-                inner.setCurrentIndex(i); w.reload_thread(); return
+                inner.setCurrentIndex(i)
+                # 見せたいレスが指定されている時は読み直さない。見たいのは
+                # そのレスであって最新の状態ではないし、読み直すと位置合わせが
+                # 「今見ている場所」に上書きされる。ページに無ければ show_res
+                # 側が読み直してから合わせる。
+                if target_res:
+                    w.show_res(target_res)
+                else:
+                    w.reload_thread()
+                return
 
         view = ThreadView(self._fetcher, self._settings, inner)
         view.open_reply_window.connect(
@@ -1094,6 +1109,11 @@ class MainWindow(QMainWindow):
             _mode_idx = getattr(self._settings, 'thread_open_mode', 0)
             _mode_map = {0: '', 1: 'image', 2: 'quote'}
             _open_mode = _mode_map.get(_mode_idx, '')
+        if target_res:
+            # 読み終わったらこのレスへ。_pending_anchor も入れておくと、
+            # 位置が決まるまで画面が隠れて先頭が一瞬見えるのを防げる。
+            view._jump_res = int(target_res)
+            view._pending_anchor = (str(int(target_res)), 0)
         view.load_thread(board, no, open_mode=_open_mode)
         self._settings.add_history(board.name, no, f"No.{no}", board.url)
         self._settings.save(); self._hist_pane.refresh()
@@ -1696,8 +1716,9 @@ class MainWindow(QMainWindow):
         view.thread_loaded.connect(lambda _n, _c: _update_mode())
         view.load_thread(board, no, open_mode=_open_mode)
 
-    def _open_thread_url_bg(self, url: str):
-        """スレをバックグラウンドタブで開く (現在タブを切り替えない)"""
+    def _open_thread_url_bg(self, url: str, target_res: int = 0):
+        """スレをバックグラウンドタブで開く (現在タブを切り替えない)
+        target_res: 読み終わったらそのレスの位置にしておく（0=しない）"""
         board = self._find_board_by_url(url)
         if not board:
             m = re.match(r"(https?://[^/]+/[^/]+/)", url)
@@ -1714,9 +1735,9 @@ class MainWindow(QMainWindow):
         if not m: return
         no = int(m.group(1))
         _bg_mode_idx = getattr(self._settings, 'thread_open_bg_mode', 0)
-        self._open_thread_url_bg_mode(url, _bg_mode_idx)
+        self._open_thread_url_bg_mode(url, _bg_mode_idx, target_res=target_res)
 
-    def _open_thread_url_bg_mode(self, url: str, mode: int):
+    def _open_thread_url_bg_mode(self, url: str, mode: int, target_res: int = 0):
         """スレをBGで開き、読込後に表示モードを切り替える"""
         _mode_map = {0: '', 1: 'image', 2: 'quote'}
         _open_mode = _mode_map.get(mode, '')
@@ -1820,6 +1841,10 @@ class MainWindow(QMainWindow):
                     threading.Thread(target=_load_icon_bg, daemon=True).start()
             self._refresh_tab_pane()
         view.thread_loaded.connect(lambda _n, _c: _bg_update())
+        if target_res:
+            # 裏で開いたタブも、見に行った時点でそのレスの位置にしておく
+            view._jump_res = int(target_res)
+            view._pending_anchor = (str(int(target_res)), 0)
         view.load_thread(board, no, open_mode=_open_mode)
 
     def _open_from_history(self, h: dict):
@@ -1903,6 +1928,9 @@ class MainWindow(QMainWindow):
             view.set_board(board)
             view.thread_open.connect(self._open_thread_url)
             view.thread_open_bg.connect(self._open_thread_url_bg)
+            view.thread_open_at.connect(self._open_thread_url_at)
+            view.thread_open_at_bg.connect(
+                lambda u, n: self._open_thread_url_bg(u, n))
             view.status_info.connect(self._on_thread_status)
             view.title_changed.connect(
                 lambda t, _p=pane, _v=view: self._set_search_tab_text(_p, _v, t))

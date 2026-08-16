@@ -220,6 +220,8 @@ class CatalogBridge(QObject):
 
     thread_open_requested    = Signal(str)   # スレッド URL
     thread_bg_open_requested = Signal(str)   # バックグラウンドで開く
+    thread_open_at_requested    = Signal(str, int)  # スレURL + 見せたいレスNo
+    thread_bg_open_at_requested = Signal(str, int)  # 同上（バックグラウンド）
     url_open_requested       = Signal(str)   # 外部ブラウザ
     copy_to_clipboard_requested = Signal(str)  # クリップボードコピー
     add_thread_ng_requested  = Signal(str)   # スレッドURLをNGに追加
@@ -243,6 +245,15 @@ class CatalogBridge(QObject):
     @Slot(str)
     def openThreadBg(self, url: str):
         self.thread_bg_open_requested.emit(url)
+
+    @Slot(str, int)
+    def openThreadAt(self, url: str, no: int):
+        """スレを開いて、指定のレスまでスクロールして見せる（検索結果から）"""
+        self.thread_open_at_requested.emit(url, int(no))
+
+    @Slot(str, int)
+    def openThreadAtBg(self, url: str, no: int):
+        self.thread_bg_open_at_requested.emit(url, int(no))
 
     @Slot(str)
     def openUrl(self, url: str):
