@@ -144,6 +144,86 @@ class CatalogEntry:
     board: Optional[BoardInfo] = None
 
 
+# ── 板内検索（ふたばの検索モード mode=search）───────────────────────────────
+
+@dataclass
+class SearchHit:
+    """検索モードが返す1件。スレではなくレス単位で返ってくる。
+    resto はそのレスが属するスレの番号。0 のときはスレ本文(OP)自身。"""
+    no:            int
+    resto:         int
+    datetime_str:  str = ""
+    name:          str = ""
+    email:         str = ""
+    subject:       str = ""
+    comment_html:  str = ""
+    comment_text:  str = ""
+    thumb_url:     str = ""
+    image_url:     str = ""
+    image_name:    str = ""
+    image_size:    int = 0
+    thumb_w:       int = 0
+    thumb_h:       int = 0
+
+    @property
+    def thread_no(self) -> int:
+        return self.resto or self.no
+
+    @property
+    def is_op(self) -> bool:
+        return self.resto == 0
+
+
+@dataclass
+class SearchResult:
+    """板内検索の結果一式。
+
+    ふたばの検索は板の全部を見てくれるわけではなく、途中で走査をやめる。
+    よくある語・短い語ほど早く止まり、古い側だけが返る。どこまで見たのかは
+    レス番号で分かるので、範囲もそのまま持って表示に使う。"""
+    keyword:    str
+    board_url:  str  = ""
+    hits:       list = field(default_factory=list)
+    error:      str  = ""
+    server_now: str  = ""    # 応答ヘッダ Date を板の時刻(JST)にしたもの "HH:MM:SS"
+
+    @property
+    def count(self) -> int:
+        return len(self.hits)
+
+    @property
+    def first_no(self) -> int:
+        return min((h.no for h in self.hits), default=0)
+
+    @property
+    def last_no(self) -> int:
+        return max((h.no for h in self.hits), default=0)
+
+    @property
+    def thread_count(self) -> int:
+        return len({h.thread_no for h in self.hits})
+
+    def newest_time(self) -> str:
+        """一番新しいヒットの時刻 "HH:MM:SS"（取れなければ空）"""
+        if not self.hits:
+            return ""
+        newest = max(self.hits, key=lambda h: h.no)
+        m = re.search(r'(\d{1,2}:\d{2}:\d{2})', newest.datetime_str or "")
+        return m.group(1) if m else ""
+
+    def stale_minutes(self) -> int:
+        """一番新しいヒットが、サーバーの現在時刻から何分前か。
+        判定材料が無いときは -1。日付をまたぐケースは 0 に丸める。"""
+        hi, now = self.newest_time(), self.server_now
+        if not (hi and now):
+            return -1
+
+        def _sec(t: str) -> int:
+            h, m, s = (int(x) for x in t.split(":"))
+            return h * 3600 + m * 60 + s
+        return max(0, (_sec(now) - _sec(hi)) // 60)
+
+
 # ── 自動更新 ─────────────────────────────────────────────────────────────────
 
 # 段階的更新間隔のデフォルト定義

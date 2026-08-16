@@ -57,6 +57,15 @@ except ImportError:  # 古い requests 同梱の urllib3
 from bs4 import BeautifulSoup, NavigableString, Comment
 
 
+def _html_to_text(com_html: str) -> str:
+    """mode=json / 検索モードが返す com（HTML断片）をプレーンテキストにする。
+    改行になるのは <br> だけ。タグを外してから実体参照を戻す（順序を逆に
+    すると、エスケープされた < > をタグと誤認して消してしまう）。"""
+    import html as _html
+    txt = re.sub(r"<br\s*/?>", "\n", com_html or "", flags=re.I)
+    return _html.unescape(re.sub(r"<[^>]+>", "", txt)).strip()
+
+
 def _blockquote_text(bq) -> str:
     """blockquote から本文のテキストを取り出す。改行にするのは <br> だけ。
 
@@ -95,6 +104,7 @@ _RES_IP_RE    = re.compile(r"IP:(\S+)")
 from futaba2b_const import UA, BBSMENU_URL, FUTABA_ERROR_PATTERNS, SEC_CH_UA, SEC_CH_UA_MOBILE, SEC_CH_UA_PLATFORM
 from futaba2b_models import (
     BoardCategory, BoardInfo, CatalogEntry, ResData, ThreadData,
+    SearchHit, SearchResult,
 )
 
 BBSMENU_CACHE   = Path("data/log/bbsmenu_cache.html")
@@ -430,6 +440,112 @@ class FutabaFetcher:
     def post_catset_bs(self, board, board_settings) -> bool:
         """BoardSettings を受け取る post_catset のエイリアス"""
         return self.post_catset(board, board_settings)
+
+    # ── 板内検索（ふたばの検索モード）────────────────────────────────────
+
+    # 応答HTMLの <script> に埋まっている検索結果。板のページはこれを
+    # /bin/search.js でクライアント側に描画している。
+    _SEARCH_RET_RE = re.compile(r'var\s+ret\s*=\s*(\{.*?\})\s*;?\s*</script>',
+                                re.S)
+
+    def search_board(self, board: "BoardInfo", keyword: str) -> SearchResult:
+        """板の右上の検索窓と同じ検索（futaba.php に mode=search を POST）。
+
+        投稿ではないが POST なので、失敗しても自動で再送はしない。
+        戻りはレス単位。ふたば側は板の全部を走査せず途中で止めるため、
+        どこまで見たかは呼び出し側が SearchResult の範囲で判断する。"""
+        kw = (keyword or "").strip()
+        res = SearchResult(keyword=kw, board_url=board.base_url)
+        if not kw:
+            res.error = "検索する語を入れてください"
+            return res
+        # ふたばは Shift_JIS。変換できない文字は送っても化けるだけなので弾く。
+        try:
+            kw_bytes = kw.encode("cp932")
+        except UnicodeEncodeError:
+            res.error = "ふたばの検索に使えない文字が含まれています（Shift_JIS外）"
+            return res
+
+        url = board.base_url + "futaba.php?guid=on"
+        try:
+            r = self.session.post(
+                url,
+                files={"keyword": (None, kw_bytes), "mode": (None, "search")},
+                headers={"Referer": board.base_url + "futaba.htm"},
+                timeout=self.timeout,
+            )
+            r.raise_for_status()
+        except requests.RequestException as e:
+            _resp = getattr(e, "response", None)
+            res.error = (f"{_resp.status_code} {_resp.reason}"
+                         if _resp is not None else f"接続エラー: {e}")
+            print(f"[Search] エラー [{board.base_url}] {kw!r}: {e}")
+            return res
+
+        res.server_now = self._date_header_jst(r.headers.get("Date", ""))
+        html_text = r.content.decode("cp932", errors="replace")
+        m = self._SEARCH_RET_RE.search(html_text)
+        if not m:
+            # 該当が無いときは var ret 自体が出ず、本文に「該当なし」とだけ出る
+            if "該当なし" not in html_text:
+                res.error = "検索結果を読み取れませんでした（ふたば側の仕様変更かも）"
+            return res
+        try:
+            data = json.loads(m.group(1)).get("res", {}) or {}
+        except ValueError as e:
+            res.error = f"検索結果の解析に失敗しました: {e}"
+            return res
+
+        # src/thumb は "/b/src/xxx.jpg" のようにホスト直下からの絶対パスで来る。
+        # 板URLに素で連結すると "/b/b/src/..." になるので urljoin で解決する。
+        base = board.base_url
+        for no_str, d in data.items():
+            try:
+                no = int(no_str)
+            except (TypeError, ValueError):
+                continue
+            src   = str(d.get("src", "") or "")
+            thumb = str(d.get("thumb", "") or "")
+            ext   = str(d.get("ext", "") or "")
+            com   = str(d.get("com", "") or "")
+            res.hits.append(SearchHit(
+                no=no,
+                resto=int(d.get("resto", 0) or 0),
+                datetime_str=str(d.get("now", "") or ""),
+                name=str(d.get("name", "") or ""),
+                email=str(d.get("email", "") or ""),
+                subject=str(d.get("sub", "") or ""),
+                comment_html=com,
+                comment_text=_html_to_text(com),
+                # 画像が無いレスにも src/thumb は入っているが ext が空。
+                # その場合は URL を持たせない（壊れた画像リンクになるため）。
+                image_url=urllib.parse.urljoin(base, src) if (ext and src) else "",
+                thumb_url=urllib.parse.urljoin(base, thumb) if (ext and thumb) else "",
+                image_name=(str(d.get("tim", "") or "") + ext) if ext else "",
+                image_size=int(d.get("fsize", 0) or 0),
+                thumb_w=int(d.get("w", 0) or 0),
+                thumb_h=int(d.get("h", 0) or 0),
+            ))
+        res.hits.sort(key=lambda h: h.no)
+        print(f"[Search] {board.base_url} {kw!r} → {len(res.hits)}件 "
+              f"({res.first_no}〜{res.last_no})")
+        return res
+
+    @staticmethod
+    def _date_header_jst(date_hdr: str) -> str:
+        """応答の Date ヘッダ(GMT)を板の時刻(JST)の "HH:MM:SS" にする。
+        端末の時計に頼らずに「今」を知るために使う。"""
+        if not date_hdr:
+            return ""
+        try:
+            from email.utils import parsedate_to_datetime
+            dt = parsedate_to_datetime(date_hdr)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            jst = dt.astimezone(datetime.timezone(datetime.timedelta(hours=9)))
+            return jst.strftime("%H:%M:%S")
+        except Exception:
+            return ""
 
     def _load_cookies(self) -> None:
         """保存済みクッキーをセッションに復元する"""

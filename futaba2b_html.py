@@ -3240,3 +3240,207 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
         f'</body></html>'
     )
     return html
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 板内検索（ふたばの検索モード）の結果 HTML 生成
+# ══════════════════════════════════════════════════════════════════════════════
+
+SEARCH_CSS = """
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    background: var(--body-bg, #FFFFEE);
+    color: var(--body-fg, #7B0004);
+    font-family: "MS PGothic", "ＭＳ Ｐゴシック", sans-serif;
+    font-size: 9pt;
+    padding: 6px;
+}
+.sr-head {
+    border-bottom: 2px solid var(--no-color, #800000);
+    padding: 2px 4px 6px 4px; margin-bottom: 8px;
+}
+.sr-title { font-size: 11pt; font-weight: bold; color: var(--subject-color, #cc1105); }
+.sr-title .kw { background: #ffee55; color: #000; padding: 0 3px; }
+.sr-range { font-size: 8pt; color: var(--footer-color, #888888); margin-top: 3px; }
+.sr-note {
+    margin-top: 6px; padding: 5px 8px; font-size: 8.5pt; line-height: 1.5;
+    border-left: 4px solid #e0a000; background: rgba(224,160,0,0.13);
+}
+.sr-note b { color: #cc6600; }
+.sr-empty { padding: 20px 8px; font-size: 10pt; }
+.sr-thread { margin: 0 0 10px 0; }
+.sr-th-head {
+    background: var(--reply-bg, #F0E0D6);
+    border-left: 4px solid var(--no-color, #800000);
+    padding: 3px 7px; font-weight: bold; cursor: pointer;
+}
+.sr-th-head:hover { color: var(--no-hover, #DD0000); }
+.sr-th-sub { color: var(--subject-color, #cc1105); }
+.sr-th-cnt { font-weight: normal; font-size: 8pt; color: var(--footer-color, #888888); }
+.sr-hit {
+    padding: 4px 8px 6px 14px; margin-top: 2px; cursor: pointer;
+    border-bottom: 1px dotted var(--footer-border, #dddddd);
+}
+.sr-hit:hover { background: rgba(128,0,0,0.06); }
+.sr-hit::after { content: ""; display: block; clear: both; }
+.sr-meta { font-size: 8pt; color: var(--date-color, #800000); }
+.sr-meta .sr-no { color: var(--no-color, #800000); margin-left: 6px; }
+.sr-meta .sr-op { color: var(--name-color, #117743); font-weight: bold; margin-left: 6px; }
+.sr-com { margin-top: 2px; color: var(--comment-color, #7B0004); line-height: 1.4; }
+.sr-com a { color: var(--link-color, #0000EE); }
+.sr-com mark { background: #ffee55; color: #000; }
+.sr-thumb {
+    float: left; margin: 2px 8px 2px 0;
+    max-width: 90px; max-height: 90px;
+    border: 1px solid var(--thumb-border, #aaaaaa);
+}
+"""
+
+SEARCH_JS = """
+function srOpen(url, bg) {
+    if (!window.bridge) return;
+    if (bg) { bridge.openThreadBg(url); } else { bridge.openThread(url); }
+}
+/* 本文中のリンクは外部ブラウザへ。スレを開く動作と二重に反応しないよう止める */
+document.addEventListener('click', function(ev) {
+    var a = ev.target.closest ? ev.target.closest('a[href]') : null;
+    if (a && window.bridge) {
+        ev.preventDefault(); ev.stopPropagation();
+        bridge.openUrl(a.href);
+    }
+}, true);
+/* 中クリックはバックグラウンドで開く */
+document.addEventListener('auxclick', function(ev) {
+    if (ev.button !== 1) return;
+    var el = ev.target.closest ? ev.target.closest('[data-url]') : null;
+    if (el) { ev.preventDefault(); srOpen(el.getAttribute('data-url'), 1); }
+}, true);
+"""
+
+
+def _sr_time(datetime_str: str) -> str:
+    """"26/08/16(日)17:15:45" → "17:15:45"（取れなければ元のまま）"""
+    m = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?)', datetime_str or "")
+    return m.group(1) if m else (datetime_str or "")
+
+
+def _sr_mark_keyword(com_html: str, keyword: str) -> str:
+    """本文HTMLの中の検索語を <mark> で囲む。タグの内側は触らない
+    （href やタグ名の中に語が入っていてもHTMLを壊さないため）。"""
+    if not keyword:
+        return com_html or ""
+    # ふたばの com は実体参照込みのHTML。素の語と実体参照に直した語の
+    # 両方を候補にする（「>」を含む語でも当たるように）。
+    cands = {keyword, _html.escape(keyword, quote=False)}
+    pat = re.compile("|".join(re.escape(c) for c in
+                              sorted(cands, key=len, reverse=True)),
+                     re.IGNORECASE)
+    out = []
+    for part in re.split(r'(<[^>]*>)', com_html or ""):
+        if part.startswith("<"):
+            out.append(part)
+        else:
+            out.append(pat.sub(lambda m: f"<mark>{m.group(0)}</mark>", part))
+    return "".join(out)
+
+
+def _sr_hit_html(h, keyword: str, thread_url_esc: str) -> str:
+    meta = [f'<span class="sr-date">{_html.escape(_sr_time(h.datetime_str))}</span>',
+            f'<span class="sr-no">No.{h.no}</span>']
+    if h.is_op:
+        meta.append('<span class="sr-op">スレ本文</span>')
+    thumb = ""
+    if h.thumb_url:
+        thumb = (f'<img class="sr-thumb" loading="lazy" '
+                 f'src="{_html.escape(h.thumb_url, quote=True)}">')
+    return (f'<div class="sr-hit" data-url="{thread_url_esc}" '
+            f"onclick=\"srOpen('{thread_url_esc}',0)\">"
+            f'<div class="sr-meta">{"".join(meta)}</div>'
+            f'{thumb}<div class="sr-com">'
+            f'{_sr_mark_keyword(h.comment_html, keyword)}</div></div>')
+
+
+def _sr_page(body: str, user_css: str = "") -> str:
+    try:
+        from futaba2b_const import ThemeManager as _TM
+        theme_vars = f'<style>{_TM.thread_css_vars()}</style>'
+    except Exception:
+        theme_vars = ''
+    usr = f'<style>{user_css}</style>' if user_css else ''
+    return (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<style>{SEARCH_CSS}</style>{theme_vars}{usr}'
+            f'{WEBCHANNEL_JS}'
+            f'<script>{SEARCH_JS}</script>'
+            f'</head><body>{body}</body></html>')
+
+
+def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
+    """板内検索の結果ページ。
+
+    ふたばの検索は板の全部を走査せず途中で止める。件数だけ出すと
+    「少ない＝無い」と誤解するので、どこまで見たのかを必ず添える。"""
+    kw     = getattr(result, "keyword", "") or ""
+    kw_esc = _html.escape(kw)
+    base   = (getattr(result, "board_url", "") or "").rstrip("/") + "/"
+    hits   = list(getattr(result, "hits", []) or [])
+    err    = getattr(result, "error", "") or ""
+
+    head = [f'<div class="sr-title">「<span class="kw">{kw_esc}</span>」の検索結果']
+    if board_label:
+        head.append(f' <span class="sr-th-cnt">─ {_html.escape(board_label)}</span>')
+    head.append('</div>')
+
+    notes: list = []
+    if err:
+        notes.append('<div class="sr-note"><b>検索できませんでした</b><br>'
+                     f'{_html.escape(err)}</div>')
+    elif hits:
+        _t_lo = _sr_time(min(hits, key=lambda h: h.no).datetime_str)
+        _t_hi = _sr_time(max(hits, key=lambda h: h.no).datetime_str)
+        head.append(
+            f'<div class="sr-range">{result.count}件 / {result.thread_count}スレ'
+            f'　走査できた範囲: {_html.escape(_t_lo)} 〜 {_html.escape(_t_hi)}'
+            f'（No.{result.first_no} 〜 No.{result.last_no}）</div>')
+        stale = result.stale_minutes()
+        if stale >= 10:
+            notes.append(
+                '<div class="sr-note">'
+                '<b>これより新しいレスは検索されていない可能性があります</b><br>'
+                f'一番新しいヒットが{stale}分前で止まっています。ふたばの検索は、'
+                'よくある語や短い語だと板の全部を見ずに途中で打ち切ります。'
+                '語を長く・具体的にすると、より新しいところまで検索されます。</div>')
+    else:
+        head.append('<div class="sr-range">0件</div>')
+
+    if not err and 0 < len(kw) <= 2:
+        notes.append(
+            '<div class="sr-note">検索語が短いと、ふたば側が板の古いところだけを見て'
+            '打ち切ってしまい、ヒット数が実際よりずっと少なくなります。'
+            '3文字以上の具体的な語のほうが確実です。</div>')
+
+    body = [f'<div class="sr-head">{"".join(head)}{"".join(notes)}</div>']
+    if not hits:
+        if not err:
+            body.append('<div class="sr-empty">該当するレスはありませんでした。</div>')
+        return _sr_page("".join(body), user_css)
+
+    # スレごとにまとめる（最初にヒットした順＝古い順）
+    groups: dict = {}
+    for h in hits:
+        groups.setdefault(h.thread_no, []).append(h)
+    for th_no, ghits in groups.items():
+        _u = _html.escape(f"{base}res/{th_no}.htm", quote=True)
+        _sub = next((h.subject for h in ghits
+                     if h.is_op and (h.subject or "").strip()
+                     and h.subject != "無念"), "")
+        _sub_html = (f' <span class="sr-th-sub">{_html.escape(_sub)}</span>'
+                     if _sub else "")
+        body.append(
+            f'<div class="sr-thread">'
+            f'<div class="sr-th-head" data-url="{_u}" '
+            f"onclick=\"srOpen('{_u}',0)\">スレ No.{th_no}{_sub_html}"
+            f' <span class="sr-th-cnt">（{len(ghits)}件）</span></div>')
+        for h in ghits:
+            body.append(_sr_hit_html(h, kw, _u))
+        body.append('</div>')
+    return _sr_page("".join(body), user_css)

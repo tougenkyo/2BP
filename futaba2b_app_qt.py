@@ -89,7 +89,8 @@ from futaba2b_models   import (BoardInfo, BoardCategory, AutoRefreshEntry, Catal
                                board_display_name)
 from futaba2b_network  import FutabaFetcher
 from futaba2b_settings import AppSettings, NgFilter
-from futaba2b_html     import thread_to_html, catalog_to_html, render_res, THREAD_CSS, WEBCHANNEL_JS
+from futaba2b_html     import (thread_to_html, catalog_to_html, render_res, search_to_html,
+                               THREAD_CSS, WEBCHANNEL_JS)
 from futaba2b_bridge   import ThreadBridge, CatalogBridge
 from futaba2b_const    import UA, ThemeManager as _TM
 
@@ -122,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.426"
+APP_VER = "0.9.427"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8944,6 +8945,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
     quar_nos_changed   = Signal(object)  # 隔離スレNo集合が更新された（スレタブのオレンジ色再評価用）
     _catalog_err_sig   = Signal(str)  # BGスレッド→UI: カタログfetch失敗の詳細
     _history_ready     = Signal(list)  # 履歴表示用エントリ（BG→UI）
+    board_search_requested = Signal(str)  # 板内検索タブを開く要求（検索語）
 
     def __init__(self, fetcher: FutabaFetcher, settings: AppSettings, parent=None):
         super().__init__(parent)
@@ -9005,6 +9007,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
         tb.addWidget(self._search)
         sr = QPushButton("検索"); sr.setFixedHeight(22); sr.clicked.connect(self._re_render)
         tb.addWidget(sr)
+        # 上の検索欄はカタログに出ているスレタイの絞り込み。こちらは板ぜんぶの
+        # 本文をふたば側の検索モードで引く（別タブに結果を出す）。
+        sb = QPushButton("板内"); sb.setFixedHeight(22)
+        sb.setToolTip("ふたばの検索モードで板全体の本文を検索する\n"
+                      "（カタログに出ていないレスも探せる。結果は別タブ）")
+        sb.clicked.connect(
+            lambda: self.board_search_requested.emit(self._search.text().strip()))
+        tb.addWidget(sb)
 
         # ── 設定 ─────────────────────────────────────────────────────────
         tb.addWidget(QLabel(" / "))
@@ -10760,6 +10770,237 @@ class CatalogView(_MouseGestureMixin, QWidget):
             if url.isLocalFile():
                 p._open_log_file(url.toLocalFile())
         event.acceptProposedAction()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 板内検索ビュー（ふたばの検索モード）
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BoardSearchView(QWidget):
+    """板の右上の検索窓と同じ検索（mode=search）の結果を出すタブ。
+
+    ふたばの検索はレス単位で返り、板の全部は走査せず途中で止まる。
+    結果ページ側に「どこまで見たか」を出すので、ここは取得と表示だけ担う。"""
+
+    thread_open    = Signal(str)   # スレURL
+    thread_open_bg = Signal(str)   # スレURL（バックグラウンド）
+    status_info    = Signal(object)
+    title_changed  = Signal(str)   # タブ見出しの更新
+    _result_ready  = Signal(object)   # BG→UI (SearchResult)
+
+    def __init__(self, fetcher: FutabaFetcher, settings: AppSettings, parent=None):
+        super().__init__(parent)
+        self._fetcher  = fetcher
+        self._settings = settings
+        self._board: BoardInfo | None = None
+        self._result   = None
+        self._keyword  = ""
+        self._inflight = False
+        self._tmp_html_path: str = ""
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        tb = QToolBar(); tb.setMovable(False)
+        tb.setIconSize(QSize(1, 1))
+        tb.setMaximumHeight(28)
+        tb.addWidget(QLabel(" 板内検索："))
+        self._edit = _JapaneseLineEdit()
+        self._edit.setPlaceholderText("板全体の本文を検索（3文字以上が確実）")
+        self._edit.setFixedWidth(300)
+        self._edit.returnPressed.connect(self.run_search)
+        tb.addWidget(self._edit)
+        self._btn = QPushButton("検索"); self._btn.setFixedHeight(22)
+        self._btn.clicked.connect(self.run_search)
+        tb.addWidget(self._btn)
+        self._lbl = QLabel("")
+        self._lbl.setStyleSheet(f"font-size:8pt;color:{_TM.ui('text_muted','#888')};"
+                                "padding:0 8px;")
+        tb.addWidget(self._lbl)
+        lay.addWidget(tb)
+
+        # off-the-record: ディスクキャッシュなし。file:// のページから
+        # ふたばのサムネ(https)を読むため LocalContentCanAccessRemoteUrls を許可。
+        self._profile = QWebEngineProfile(self)
+        self._profile.setHttpUserAgent(UA)
+        self._profile.setUrlRequestInterceptor(Interceptor())
+        self._profile.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        self._page    = _DebugPage(self._profile, self._profile)
+        self._channel = QWebChannel(self._page)
+        self._bridge  = CatalogBridge(self)
+        self._channel.registerObject("bridge", self._bridge)
+        self._page.setWebChannel(self._channel)
+        self._view = _CatalogWebView(self._page, self)
+        self._view.setZoomFactor(_default_zoom())
+        lay.addWidget(self._view)
+        self._find_bar = _FindBar(lambda: self._page, self)
+        lay.addWidget(self._find_bar)
+
+        self._bridge.thread_open_requested.connect(self.thread_open.emit)
+        self._bridge.thread_bg_open_requested.connect(self.thread_open_bg.emit)
+        self._bridge.url_open_requested.connect(_open_url)
+        self._bridge.copy_to_clipboard_requested.connect(
+            lambda t: QGuiApplication.clipboard().setText(t))
+        self._result_ready.connect(self._on_result)
+
+        _self_ref = _wr.ref(self)
+        self.destroyed.connect(
+            lambda: _cleanup_tmp(getattr(_self_ref(), '_tmp_html_path', '')))
+
+    # ── 公開API ──────────────────────────────────────────────────────────
+
+    def set_board(self, board: BoardInfo):
+        self._board = board
+
+    def search(self, board: BoardInfo, keyword: str):
+        """板とキーワードを与えて検索する（タブを開いた側から呼ぶ）"""
+        self._board = board
+        self._edit.setText(keyword or "")
+        self.run_search()
+
+    def tab_label(self) -> str:
+        kw = (self._keyword or self._edit.text() or "").strip()
+        return f"検索: {kw[:12]}" if kw else "板内検索"
+
+    def focus_input(self):
+        self._edit.setFocus()
+        self._edit.selectAll()
+
+    # ── 実行 ─────────────────────────────────────────────────────────────
+
+    def run_search(self):
+        kw = self._edit.text().strip()
+        if not self._board or not kw or self._inflight:
+            return
+        self._inflight = True
+        self._keyword  = kw
+        self._btn.setEnabled(False)
+        self._lbl.setText("検索中…")
+        _board, _fetcher = self._board, self._fetcher
+
+        def _work():
+            try:
+                r = _fetcher.search_board(_board, kw)
+            except Exception as e:                   # 想定外でもUIを固めない
+                from futaba2b_models import SearchResult as _SR
+                r = _SR(keyword=kw, board_url=_board.base_url,
+                        error=f"検索に失敗しました: {e}")
+            _self = _wr.ref(self)()
+            if _self is not None:
+                _self._result_ready.emit(r)
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_result(self, result):
+        self._inflight = False
+        try:
+            self._btn.setEnabled(True)
+        except RuntimeError:
+            return                    # 閉じられたタブ
+        self._result = result
+        if result.error:
+            self._lbl.setText(result.error)
+        else:
+            _stale = result.stale_minutes()
+            _cut = "（途中で打ち切られています）" if _stale >= 10 else ""
+            self._lbl.setText(f"{result.count}件 / {result.thread_count}スレ{_cut}")
+        self._render()
+        self.title_changed.emit(self.tab_label())
+        self.status_info.emit({
+            'view': self,
+            'log': (f"板内検索「{result.keyword}」: {result.count}件"
+                    if not result.error else f"板内検索: {result.error}")})
+
+    def _render(self):
+        if self._result is None:
+            return
+        html = search_to_html(
+            self._result,
+            user_css=_load_user_css(self._settings),
+            board_label=(board_display_name(self._board.name, self._board.url)
+                         if self._board else ""))
+        base = QUrl(self._board.base_url) if self._board else QUrl("about:blank")
+        self._load_html_via_tempfile(html, base)
+
+    def _load_html_via_tempfile(self, html: str, base_url: QUrl):
+        """カタログと同じく一時ファイル経由でロードする。
+        qwebchannel.js を実体に差し替えないと file:// では bridge が生えない。"""
+        import tempfile, os
+        from PySide6.QtCore import QFile, QIODevice
+        if self._tmp_html_path:
+            try:
+                os.unlink(self._tmp_html_path)
+            except OSError:
+                pass
+        QRC_TAG = '<script src="qrc:///qtwebchannel/qwebchannel.js"></script>'
+        if QRC_TAG in html:
+            f = QFile(':/qtwebchannel/qwebchannel.js')
+            if f.open(QIODevice.OpenModeFlag.ReadOnly):
+                qwc = bytes(f.readAll()).decode('utf-8', errors='replace')
+                f.close()
+                html = html.replace(QRC_TAG, f'<script>\n{qwc}\n</script>', 1)
+        if '<head>' in html:
+            html = html.replace('<head>', f'<head><base href="{base_url.toString()}">', 1)
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".html", encoding="utf-8", delete=False)
+        tmp.write(html); tmp.close()
+        self._tmp_html_path = tmp.name
+        self._view.load(QUrl.fromLocalFile(tmp.name))
+
+    def reload(self):
+        """更新ボタン等から呼ばれた時は、同じ語で引き直す"""
+        self.run_search()
+
+    def cleanup(self):
+        """タブが閉じられる時のWebEngineリソース解放。
+        profile を使う page が残っているうちに profile を解放すると
+        「Release of profile requested but WebEnginePage still not deleted」
+        警告とネイティブクラッシュになるため、page 破棄後に遅らせる
+        （ThreadView / CatalogView と同じ手順）。"""
+        if getattr(self, '_tmp_html_path', ''):
+            _cleanup_tmp(self._tmp_html_path)
+            self._tmp_html_path = ''
+        self._result = None
+        _page   = getattr(self, '_page', None)
+        _prof   = getattr(self, '_profile', None)
+        _chan   = getattr(self, '_channel', None)
+        _bridge = getattr(self, '_bridge', None)
+        self._page = self._profile = self._channel = self._bridge = None
+        try:
+            if getattr(self, '_view', None) is not None:
+                self._view.setPage(QWebEnginePage(self))
+        except Exception:
+            pass
+        for obj in (_prof, _page):
+            try:
+                if obj is not None:
+                    obj.setParent(None)
+            except Exception:
+                pass
+        try:
+            if _page is not None:
+                _page.setWebChannel(None)
+        except Exception:
+            pass
+        for obj in (_chan, _bridge):
+            try:
+                if obj is not None:
+                    obj.deleteLater()
+            except Exception:
+                pass
+        if _page is not None:
+            if _prof is not None:
+                try:
+                    _page.destroyed.connect(
+                        lambda *a, p=_prof: QTimer.singleShot(3000, p.deleteLater))
+                except Exception:
+                    QTimer.singleShot(3000, lambda p=_prof: p.deleteLater())
+            try:
+                _page.deleteLater()
+            except Exception:
+                pass
+        elif _prof is not None:
+            QTimer.singleShot(3000, _prof.deleteLater)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

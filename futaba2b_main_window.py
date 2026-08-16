@@ -37,6 +37,7 @@ from futaba2b_app_qt import (
     APP_VER, _DebugPage, WrapTabBar, Interceptor, InnerTabWidget,
     BoardTreePane, BoardPane,
     VideoPlayerWindow, ThreadView, CatalogView, ImageTabView, ImageWindow,
+    BoardSearchView,
     AutoRefreshManager, AutoRefreshDialog,
     _compute_interval_sec,
     _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
@@ -603,6 +604,8 @@ class MainWindow(QMainWindow):
         bm.addAction(QAction("返信(&D)…", self,
                              triggered=self._reply_current, shortcut=_sc("reply")))
         bm.addAction(QAction("スレッド作成(&R)…", self, triggered=self._new_thread))
+        bm.addAction(QAction("板内をふたばで検索(&S)…", self,
+                             triggered=lambda: self._open_board_search()))
         bm.addSeparator()
         bm.addAction(QAction("このビューを閉じる(&L)", self,
                              triggered=self._close_current_tab, shortcut=_sc("close_tab")))
@@ -907,6 +910,8 @@ class MainWindow(QMainWindow):
             lambda nos, _inner=inner, _cv=cat_view: self._recolor_quar_tabs(_inner, _cv))
         cat_view.auto_refresh_requested.connect(
             lambda v=cat_view: self._open_ar_dialog(v))
+        cat_view.board_search_requested.connect(
+            lambda kw, _b=board: self._open_board_search(_b, kw))
         inner.insertTab(0, cat_view, "カタログ"); inner.setCurrentIndex(0)
         _cat_ico = self._catalog_icon()
         if not _cat_ico.isNull():
@@ -1845,12 +1850,55 @@ class MainWindow(QMainWindow):
         cat.status_info.connect(self._on_thread_status)
         cat.error_band_changed.connect(
             lambda text, p=pane: self._broadcast_error_band(p, text))
+        cat.board_search_requested.connect(
+            lambda kw, _b=board: self._open_board_search(_b, kw))
         pane.insertTab(0, cat, "カタログ")
         _cat_ico = self._catalog_icon()
         if not _cat_ico.isNull():
             pane._wrap_bar.setTabIcon(0, _cat_ico)
         if True:  # 板を開いたとき常に自動取得
             cat.load(board)
+
+    def _open_board_search(self, board: "BoardInfo | None" = None, keyword: str = ""):
+        """板内検索タブ（ふたばの検索モード）を開く。板ごとに1枚を使い回す。"""
+        inner = self._active_inner()
+        board = board or (inner._board if inner else self._current_board)
+        if not board:
+            self._st_log.setText("先に板を開いてください")
+            return
+        pane = self._get_or_create_board_tab(board)
+        view = None
+        for i in range(pane.count()):
+            w = pane.widget(i)
+            if isinstance(w, BoardSearchView):
+                view = w
+                pane.setCurrentIndex(i)
+                break
+        if view is None:
+            view = BoardSearchView(self._fetcher, self._settings, pane)
+            view.set_board(board)
+            view.thread_open.connect(self._open_thread_url)
+            view.thread_open_bg.connect(self._open_thread_url_bg)
+            view.status_info.connect(self._on_thread_status)
+            view.title_changed.connect(
+                lambda t, _p=pane, _v=view: self._set_search_tab_text(_p, _v, t))
+            pane.addTab(view, "板内検索")
+            pane.setCurrentIndex(pane.indexOf(view))
+        view.set_board(board)
+        if keyword:
+            view.search(board, keyword)
+        else:
+            view.focus_input()
+
+    @staticmethod
+    def _set_search_tab_text(pane, view, text: str):
+        """板内検索タブの見出しを検索語に合わせる（閉じられていたら何もしない）"""
+        try:
+            idx = pane.indexOf(view)
+            if idx >= 0:
+                pane.setTabText(idx, text)
+        except RuntimeError:
+            pass
 
     # ── タブ操作 ─────────────────────────────────────────────────────────────
 
@@ -2835,6 +2883,7 @@ class MainWindow(QMainWindow):
         w = inner.currentWidget()
         if isinstance(w, ThreadView):       w.reload_thread()
         elif isinstance(w, CatalogView) and inner._board: w.load(inner._board)
+        elif isinstance(w, BoardSearchView): w.reload()
 
     def _refresh_board(self):
         inner = self._active_inner()
@@ -5411,6 +5460,10 @@ class MainWindow(QMainWindow):
             if not isinstance(inner, BoardPane):
                 continue
             tabs_info = []
+            # 保存しないタブ（板内検索など）があるとインデックスがずれるため、
+            # アクティブ位置は「保存する並びの中での位置」で数え直す。
+            _active_w = inner.currentWidget()
+            _active_j = 0
             for j in range(inner.count()):
                 w = inner.widget(j)
                 is_pinned = (w in inner._pinned)
@@ -5418,11 +5471,15 @@ class MainWindow(QMainWindow):
                     tabs_info.append({"type": "catalog", "no": 0, "pinned": is_pinned})
                 elif isinstance(w, ThreadView):
                     tabs_info.append({"type": "thread", "no": w._thread_no, "pinned": is_pinned})
+                else:
+                    continue
+                if w is _active_w:
+                    _active_j = len(tabs_info) - 1
             state["boards"].append({
                 "board_name":  inner._board.name,
                 "board_url":   inner._board.url,
                 "active":      (i == active_outer),
-                "active_inner": inner.currentIndex(),
+                "active_inner": _active_j,
                 "inner_tabs":  tabs_info,
             })
         self._settings.tab_state = state
