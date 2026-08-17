@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.430"
+APP_VER = "0.9.431"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2386,6 +2386,9 @@ class BoardTreePane(QWidget):
     def __init__(self, settings: AppSettings, parent=None):
         super().__init__(parent)
         self._settings = settings
+        # カテゴリを組み直している最中は開閉の記録を止める（expandAll で
+        # itemExpanded が全カテゴリぶん飛び、記録が全部「開」に潰れるため）
+        self._restoring_tree = False
         self._build()
 
     def _build(self):
@@ -2401,6 +2404,8 @@ class BoardTreePane(QWidget):
         self._tree.itemDoubleClicked.connect(self._on_double)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_right_click)
+        self._tree.itemExpanded.connect(self._on_cat_toggled)
+        self._tree.itemCollapsed.connect(self._on_cat_toggled)
         b_lay.addWidget(self._tree)
         self._nb.addTab(board_w, "板")
 
@@ -2412,9 +2417,49 @@ class BoardTreePane(QWidget):
         self._fav_pane = FavManagePane(self._settings, self)
         self._nb.addTab(self._fav_pane, "お気に入り")
 
+        # 前回開いていたタブ（板/タブ/お気に入り）で開く
+        try:
+            _ti = int(self._settings.get("tree_tab_index", 0) or 0)
+        except (TypeError, ValueError):
+            _ti = 0
+        if 0 <= _ti < self._nb.count():
+            self._nb.setCurrentIndex(_ti)
+        self._nb.currentChanged.connect(self._on_nb_changed)
+
+    # ── 表示状態の記憶 ──────────────────────────────────────────────────────
+
+    def _on_nb_changed(self, idx: int):
+        self._settings.set("tree_tab_index", int(idx))
+        self._settings.save()
+
+    def _collapsed_cats(self) -> set:
+        """畳んだままにするカテゴリ名"""
+        try:
+            return {str(x) for x in (self._settings.get("tree_collapsed_cats", []) or [])}
+        except TypeError:
+            return set()
+
+    def _on_cat_toggled(self, _item=None):
+        """カテゴリを開閉したら、畳んでいるものを控えておく"""
+        if self._restoring_tree:
+            return
+        names = sorted(
+            self._tree.topLevelItem(i).text(0)
+            for i in range(self._tree.topLevelItemCount())
+            if not self._tree.topLevelItem(i).isExpanded())
+        self._settings.set("tree_collapsed_cats", names)
+        self._settings.save()
+
     # ── 公開 API ────────────────────────────────────────────────────────────
 
     def set_categories(self, cats: list, custom_urls: set = frozenset()):
+        self._restoring_tree = True
+        try:
+            self._set_categories(cats, custom_urls)
+        finally:
+            self._restoring_tree = False
+
+    def _set_categories(self, cats: list, custom_urls: set = frozenset()):
         self._tree.clear()
         for cat in cats:
             ci = QTreeWidgetItem([cat.name])
@@ -2434,6 +2479,13 @@ class BoardTreePane(QWidget):
                     bi.setForeground(0, QColor("#0055AA"))
                 ci.addChild(bi)
         self._tree.expandAll()  # 全カテゴリを展開
+        # 前回畳んでいたカテゴリだけ畳み直す
+        _col = self._collapsed_cats()
+        if _col:
+            for i in range(self._tree.topLevelItemCount()):
+                it = self._tree.topLevelItem(i)
+                if it.text(0) in _col:
+                    it.setExpanded(False)
 
     def refresh_favorites(self):
         p = self.parent()

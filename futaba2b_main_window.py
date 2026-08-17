@@ -439,6 +439,9 @@ class MainWindow(QMainWindow):
         self._tree_pane._fav_pane.tab_select_requested.connect(
             self._on_tab_pane_select)
         splitter.addWidget(self._tree_pane)
+        # 前回隠していたなら隠したまま起動する（スレ履歴と揃える）
+        if not self._settings.get("tree_visible", True):
+            self._tree_pane.hide()
 
         # 右: URL バー + タブ + 履歴
         right = QWidget()
@@ -4945,8 +4948,11 @@ class MainWindow(QMainWindow):
     # ── 設定・表示切替 ─────────────────────────────────────────────────────────
 
     def _toggle_tree(self):
-        if self._tree_pane.isVisible(): self._tree_pane.hide()
-        else: self._tree_pane.show()
+        """板ツリーの表示切替。スレ履歴と同じく、次の起動でも同じ状態にする。"""
+        vis = not self._tree_pane.isVisible()
+        self._tree_pane.setVisible(vis)
+        self._settings.set("tree_visible", vis)
+        self._settings.save()
 
     # ── タイトルバー更新 ────────────────────────────────────────────────────────
 
