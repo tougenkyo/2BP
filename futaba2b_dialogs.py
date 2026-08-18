@@ -1277,7 +1277,7 @@ class PostDialog(QDialog):
     _result_signal = Signal(bool, str, int)  # 投稿結果 thread-safe (ok, msg, new_thread_no)
     _upload_done     = Signal(object)        # うｐろだ結果 thread-safe (結果dictのlist)
     _upload_progress = Signal(int, int)      # うｐろだ進捗 (完了数, 総数)
-    pin_after_post    = Signal()        # 投稿成功後にピン留め要求
+    pin_after_post    = Signal(int)     # 投稿成功後にピン留め要求（スレ番号）
     scroll_after_post = Signal()        # 投稿成功後に最下部スクロール要求
     activate_tab      = Signal(int)     # タイトルバークリック → 対応タブをアクティブ化
 
@@ -2843,7 +2843,10 @@ document.addEventListener('keydown',function(e){{
                 _no = new_thread_no
                 QTimer.singleShot(100, lambda _n=_no: self._on_success(_n))
             if getattr(self._settings, "pin_after_post", False):
-                self.pin_after_post.emit()
+                # スレ立ては resto=0 なので、留める先は新しく立ったスレ。
+                # そのタブが開くのは _on_success（上の100ms後）なので、
+                # 受け側で開かれるのを待ってから留める。
+                self.pin_after_post.emit(int(self._resto or new_thread_no or 0))
             # 投稿後スクロール設定を保存してシグナル発火
             if self._chk_scroll_bottom is not None:
                 _scroll = self._chk_scroll_bottom.isChecked()

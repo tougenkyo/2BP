@@ -3002,30 +3002,41 @@ class MainWindow(QMainWindow):
         # タイトルバークリック → 対応スレタブをアクティブ化
         dlg.activate_tab.connect(lambda r=resto: self._activate_thread_tab(r))
         # 投稿後ピン留め設定がONなら、投稿成功時に書き込んだスレのタブをピン打ち
-        dlg.pin_after_post.connect(lambda r=resto: self._pin_posted_tab(r))
+        dlg.pin_after_post.connect(
+            lambda no, r=resto: self._pin_posted_tab(int(no) or r))
         # 投稿後最下部スクロールは ThreadView._scroll_bottom_after_update フラグで
         # 更新完了後に行う（_on_success 内でセット）。旧 scroll_after_post の
         # 固定遅延スクロールは更新完了前に走り最下部に届かないため接続しない。
         dlg.setModal(False); dlg.show()
 
-    def _pin_posted_tab(self, resto: int):
+    def _pin_posted_tab(self, resto: int, _tries: int = 0):
         """書き込んだスレのタブをピン留めする（投稿後ピン留め設定がONの時）。
 
         以前は「今表示しているタブ」を留めていた。返信ウインドウを開いたまま
         別のタブ・別の板を見ていると関係ないタブにピンが付き、書いたスレには
         マークが出ない（別のタブに切り替えるとそちらに付いている）。
-        書き込んだスレ番号でタブを探して留める。"""
-        for ti in range(self._outer_tabs.count()):
-            pane = self._outer_tabs.widget(ti)
-            if not isinstance(pane, BoardPane):
-                continue
-            for i in range(pane._tabs.count()):
-                w = pane._tabs.widget(i)
-                if isinstance(w, ThreadView) and (w._thread_no or 0) == resto:
-                    pane._pin_tab(w)
-                    return
-        # スレ立て（resto=0）や、タブを閉じた後などで見つからない場合は
-        # 従来どおり表示中のスレタブを留める
+        書き込んだスレ番号でタブを探して留める。
+
+        スレ立ての直後は、そのスレのタブがまだ開かれていない（投稿成功の
+        少しあとに開く）。見つからないうちは短い間だけ待って探し直す。"""
+        if resto:
+            for ti in range(self._outer_tabs.count()):
+                pane = self._outer_tabs.widget(ti)
+                if not isinstance(pane, BoardPane):
+                    continue
+                for i in range(pane._tabs.count()):
+                    w = pane._tabs.widget(i)
+                    if isinstance(w, ThreadView) and (w._thread_no or 0) == resto:
+                        pane._pin_tab(w)
+                        return
+            # まだ開かれていないだけかもしれないので、少し待って探し直す
+            if _tries < 30:
+                QTimer.singleShot(
+                    100, lambda r=resto, t=_tries: self._pin_posted_tab(r, t + 1))
+            # それでも無い＝そのスレのタブを閉じた後。関係ないタブに付けると
+            # 別のスレが留まってしまうので、この場合は何もしない。
+            return
+        # スレ番号が分からなかった時だけ、従来どおり表示中のスレタブを留める
         pane = self._active_inner()
         if pane is None:
             return
@@ -3070,8 +3081,13 @@ class MainWindow(QMainWindow):
                 if hasattr(cur, 'reload'):
                     cur.reload()
 
-        PostDialog(board, self._fetcher, self._settings,
-                   resto=0, on_success=_on_new_thread_success, parent=self).show()
+        _dlg = PostDialog(board, self._fetcher, self._settings,
+                          resto=0, on_success=_on_new_thread_success, parent=self)
+        # スレ立てでもピン留め設定を効かせる（従来は繋いでおらず必ず付かなかった）。
+        # 新スレのタブが開くのは投稿成功の少しあとなので、_pin_posted_tab 側で
+        # 開かれるのを待ってから留める。
+        _dlg.pin_after_post.connect(lambda no: self._pin_posted_tab(int(no)))
+        _dlg.show()
 
     def _open_image_tab(self, url: str, img_list: list, idx: int):
         _mode = getattr(self._settings, "image_display_mode", 0)

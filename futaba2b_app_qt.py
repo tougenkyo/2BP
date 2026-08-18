@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.431"
+APP_VER = "0.9.432"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -646,12 +646,17 @@ class WrapTabBar(QTabBar):
 
 
     # ── レイアウト計算 ──────────────────────────────────────────────────────
+    def _is_pinned_tab(self, i: int) -> bool:
+        w = self._widget_for_paint(i)
+        return bool(self._pinned_widgets) and w is not None and w in self._pinned_widgets
+
     def _tab_width(self, i: int) -> int:
         """太字フォントで計算したタブ幅（選択時に見切れないよう太字基準）"""
-        # キャッシュ: テキスト・アイコン有無が変わったときだけ再計算
+        # キャッシュ: テキスト・アイコン有無・ピンが変わったときだけ再計算
         text = self.tabText(i)
         has_icon = bool(self._tab_icons.get(i))
-        cache_key = (text, has_icon)
+        is_pinned = self._is_pinned_tab(i)
+        cache_key = (text, has_icon, is_pinned)
         cached = self._tab_width_cache.get(i)
         if cached and cached[0] == cache_key:
             return cached[1]
@@ -659,9 +664,11 @@ class WrapTabBar(QTabBar):
         fnt = QFont(self.font())
         fnt.setBold(True)
         fm = QFontMetrics(fnt)
-        # テキスト幅 + 左余白5 + 右余白20(×ボタン分) + アイコン分21
+        # テキスト幅 + 左余白 + 右余白20(×ボタン分)
+        # 左余白は paintEvent の文字開始位置と揃える。揃えないと、ピンを
+        # 付けた分だけ文字が右へずれてスレタイの末尾が切れる。
         text_w = fm.horizontalAdvance(text)
-        left_pad = 21 if has_icon else 5
+        left_pad = 21 if has_icon else (24 if is_pinned else 5)
         w = max(left_pad + text_w + 20, 80)
         # 設定で最大幅が指定されていればクリップ（0=無制限。指定時は下限まで許す）
         _max_w = getattr(getattr(self, '_settings', None), 'tab_max_width', 0)
@@ -699,10 +706,13 @@ class WrapTabBar(QTabBar):
         return rows
 
     def _tab_rects(self):
-        # キャッシュ: サイズ・タブ数・テキストが変わらない限り再計算しない
+        # キャッシュ: サイズ・タブ数・テキスト・アイコン・ピンが
+        # 変わらない限り再計算しない。ピンを鍵に入れておかないと、
+        # 留めた直後に前の配置のまま描かれる（手で捨てないと直らない）。
         key = (self.width(), self.count(), self.currentIndex(),
                tuple(self.tabText(i) for i in range(self.count())),
-               tuple(bool(self._tab_icons.get(i)) for i in range(self.count())))
+               tuple(bool(self._tab_icons.get(i)) for i in range(self.count())),
+               tuple(self._is_pinned_tab(i) for i in range(self.count())))
         if getattr(self, '_tab_rects_cache_key', None) == key:
             return self._tab_rects_cache_val
         rects = {}
@@ -763,6 +773,14 @@ class WrapTabBar(QTabBar):
         if rows != getattr(self, "_cached_rows", 1):
             self._cached_rows = rows
             self.updateGeometry()
+        self.update()
+
+    def showEvent(self, event):
+        """隠れている間の描き直し要求は捨てられる。板を切り替えて戻った時
+        などに前の状態のまま出ないよう、表示されたら組み直してから描く。"""
+        self._tab_rects_cache_key = None
+        self._tab_width_cache.clear()
+        super().showEvent(event)
         self.update()
 
     def tabLayoutChange(self):
@@ -3612,19 +3630,31 @@ class BoardPane(QWidget):
         self._refresh_tab_bar()       # 再描画でピンマーク非表示
 
     def _refresh_tab_bar(self):
-        """ピン留めの変化をその場でタブバーへ反映する。
+        """ピン留めの変化をタブバーへ反映する。
 
-        ピンの有無でタブ内の文字位置が変わるため、行分けの計算結果
-        （_tab_rects のキャッシュ）を捨ててから描き直す。キャッシュの鍵には
-        ピンの状態が入っておらず、update() だけだと前の配置のまま描かれる。
-        投稿直後は再読込などで描画要求が重なるので、その場で描いてしまう。"""
+        ピンの有無でタブ幅と文字位置が変わるため、幅と行分けのキャッシュを
+        捨ててから描き直す。
+
+        描き直しは2回掛ける。投稿直後は返信ウインドウが閉じてウィンドウの
+        前後関係が入れ替わる最中で、その場の repaint() が画面に届かないこと
+        がある（別のタブへ切り替えるまでピンが出ない、という報告）。
+        処理が落ち着いた直後にもう一度掛けて取りこぼしを塞ぐ。"""
         try:
             bar = self._tabs.tabBar()
-            bar._tab_rects_cache_key = None
-            bar.update()
-            bar.repaint()
         except (AttributeError, RuntimeError):
-            pass
+            return
+
+        def _redraw(b=bar):
+            try:
+                b._tab_rects_cache_key = None
+                b._tab_width_cache.clear()
+                b.update()
+                b.repaint()
+            except (AttributeError, RuntimeError):
+                pass          # 破棄済みのタブバー
+
+        _redraw()
+        QTimer.singleShot(0, _redraw)
 
     def _toggle_pin(self):
         # _ctx_tab_widget を優先 (インデックスより信頼性が高い)
