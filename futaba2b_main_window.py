@@ -5251,6 +5251,9 @@ class MainWindow(QMainWindow):
                     _v = pane._tabs.widget(_j)
                     if hasattr(_v, 'apply_mouse_gesture_setting'):
                         _v.apply_mouse_gesture_setting()
+                    # ホイールのスクロール量も再読込なしで反映
+                    if hasattr(_v, 'apply_wheel_scroll_setting'):
+                        _v.apply_wheel_scroll_setting()
         # テーマ変更をステータスバーへ再適用（個別styleSheetはアプリ全体スタイルより
         # 優先されるため、明示的に塗り直さないと色が変わらない）
         self._apply_statusbar_theme()

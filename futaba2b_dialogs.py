@@ -5110,6 +5110,29 @@ class AppSettingsDialog(QDialog):
             "（文字を消してもマウスを乗せるとボタン名が出ます）")
         tf2.addRow("", self._toolbar_show_labels)
 
+        # ── 操作・見た目 ──────────────────────────────────────────────
+        g_ope = QGroupBox("操作・見た目"); f_ap.addWidget(g_ope)
+        opf = QFormLayout(g_ope)
+        self._tab_dblclick = _combo(["閉じる", "更新", "何もしない"],
+            tip="スレ/カタログのタブをダブルクリックした時の動作\n"
+                "「閉じる」ではピン留め中のタブはピンを外します")
+        self._tab_dblclick.setFixedWidth(150)
+        opf.addRow("タブのダブルクリック:", self._tab_dblclick)
+
+        self._wheel_scroll_mul = _spin(50, 500, " %",
+            tip="マウスホイール1回で動く量。100%＝ブラウザの既定\n"
+                "大きくすると一度に多くスクロールします（例: 200%で2倍）",
+            width=120)
+        self._wheel_scroll_mul.setSingleStep(25)
+        opf.addRow("ホイールのスクロール量:", self._wheel_scroll_mul)
+
+        self._new_res_mark = _combo(["通常", "控えめ", "表示しない"],
+            tip="更新で増えたレスの目印（「新着ここから」の帯と、レス左の色帯）\n"
+                "控えめ: 薄い色で細く出す\n"
+                "表示しない: どちらも出さない")
+        self._new_res_mark.setFixedWidth(150)
+        opf.addRow("新着レスの目印:", self._new_res_mark)
+
         def _apply_theme_now(name: str):
             _TM.load(name)
             QApplication.instance().setStyleSheet(_TM.qt_stylesheet())
@@ -5963,6 +5986,12 @@ class AppSettingsDialog(QDialog):
         self._theme_combo.blockSignals(False)
         self._toolbar_show_labels.setChecked(
             bool(getattr(s, "toolbar_show_labels", True)))
+        self._tab_dblclick.setCurrentIndex(
+            max(0, min(2, int(getattr(s, "tab_dblclick_action", 0) or 0))))
+        self._wheel_scroll_mul.setValue(
+            max(50, min(500, int(getattr(s, "wheel_scroll_mul", 100) or 100))))
+        self._new_res_mark.setCurrentIndex(
+            max(0, min(2, int(getattr(s, "new_res_mark_style", 0) or 0))))
 
         # ログ保存
         self._log_dir.setText(getattr(s, "log_save_dir", ""))
@@ -6131,6 +6160,9 @@ class AppSettingsDialog(QDialog):
         # 外観
         s.theme                   = self._theme_combo.currentText()
         s.toolbar_show_labels     = self._toolbar_show_labels.isChecked()
+        s.tab_dblclick_action     = self._tab_dblclick.currentIndex()
+        s.wheel_scroll_mul        = self._wheel_scroll_mul.value()
+        s.new_res_mark_style      = self._new_res_mark.currentIndex()
 
         # ログ保存
         s.log_save_dir            = self._log_dir.text().strip()

@@ -685,6 +685,9 @@ class AppSettings:
         self.catalog_sort_desc: bool       = False
         self.theme: str                    = "dark"  # "dark" or "light"
         self.toolbar_show_labels: bool     = True    # ツールバーボタンの文字(キャプション)表示
+        self.tab_dblclick_action: int      = 0       # タブのダブルクリック 0=閉じる 1=更新 2=何もしない
+        self.wheel_scroll_mul: int         = 100     # ホイールのスクロール量(%)。100=ブラウザ既定
+        self.new_res_mark_style: int       = 0       # 新着の目印 0=通常 1=控えめ 2=表示しない
         self.img_overlay_res: bool         = False   # 画像タブ「レス」オーバーレイ
         self.img_overlay_info: bool        = False   # 画像タブ「情報」オーバーレイ
         self.video_volume: int             = 80      # 動画音量 (0-100)
@@ -1097,6 +1100,9 @@ class AppSettings:
             self.id_warn_count = int(raw.get("id_warn_count", 5))
             self.theme = str(raw.get("theme", "dark"))
             self.toolbar_show_labels = bool(raw.get("toolbar_show_labels", True))
+            self.tab_dblclick_action = int(raw.get("tab_dblclick_action", 0) or 0)
+            self.wheel_scroll_mul    = int(raw.get("wheel_scroll_mul", 100) or 100)
+            self.new_res_mark_style  = int(raw.get("new_res_mark_style", 0) or 0)
             self.thread_open_mode    = int(raw.get("thread_open_mode", 0))
             self.thread_open_bg_mode = int(raw.get("thread_open_bg_mode", 0))
             self.image_display_mode  = int(raw.get("image_display_mode", 0))
@@ -1319,6 +1325,9 @@ class AppSettings:
                         "id_warn_count": self.id_warn_count,
                         "theme": self.theme,
                         "toolbar_show_labels": self.toolbar_show_labels,
+                        "tab_dblclick_action": self.tab_dblclick_action,
+                        "wheel_scroll_mul":    self.wheel_scroll_mul,
+                        "new_res_mark_style":  self.new_res_mark_style,
                         "thread_open_mode":    self.thread_open_mode,
                         "thread_open_bg_mode": self.thread_open_bg_mode,
                         "image_display_mode":  self.image_display_mode,

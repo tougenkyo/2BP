@@ -34,6 +34,7 @@ THREAD_CSS = """
   --op-bg:              #FFFFEE;
   --reply-bg:           #F0E0D6;
   --new-res-border:     #cc1105;
+  --new-res-soft:       #e8a0a8;   /* 新着の目印「控えめ」用の淡い色 */
   --self-res-border:    #1a6fd4;
   --to-self-res-border: #e08a00;
   --divider-fg:         #cc1105;
@@ -117,6 +118,22 @@ body {
     width: 100%;
     margin: 6px 0 0 0;
 }
+/* ─ 新着の目印: 控えめ（塗りをやめて細い線と淡い色だけにする）─
+   レス左の帯は太さを変えず色だけ淡くする（太さを変えると新着になった
+   瞬間に本文の位置がずれる）。 */
+body.nr-plain .res.reply.new-res { border-left-color: var(--new-res-soft); }
+body.nr-plain .new-res-divider {
+    border-top: 1px dashed var(--new-res-soft);
+    border-bottom: none;
+    background: transparent;
+    color: var(--new-res-soft);
+    font-size: 7.5pt;
+    padding: 1px 0;
+    margin: 3px 0 1px 0;
+}
+/* ─ 新着の目印: 表示しない ─ */
+body.nr-off .res.reply.new-res { border-left: none; }
+body.nr-off .new-res-divider   { display: none; }
 
 /* ─ 表示モード (一覧/画像/引用) ─ */
 [data-mode="image"] .res:not(.has-img) { display: none !important; }
@@ -2739,10 +2756,18 @@ def thread_to_html(thread, show_deleted: bool = False,
     _lv = blur_level or "mid"
     # show_deleted: 「削除:見る」の状態。作り直しでも消えないよう最初から付ける
     # （付けないと、NGの使う/解除など全体を描き直すたびに勝手に隠れる）
+    # 新着の目印（0=通常 1=控えめ 2=表示しない）は body クラスで切り替える。
+    # 目印を消すだけでクラス自体は残すので、「新着の先頭へ移動」や更新時の
+    # 仕切り線の張り直しはそのまま動く。
+    try:
+        _nr = int(getattr(ng_settings, "new_res_mark_style", 0) or 0)
+    except (TypeError, ValueError):
+        _nr = 0
     _bc = (["m-reply", f"blur-{_lv}", f"rp-{_lv}"]
            + (["show-deleted"] if show_deleted else [])
            + (["blur-res", "rp-res"] if blur_res else [])
-           + (["blur-ul", "rp-ul"] if blur_ul else []))
+           + (["blur-ul", "rp-ul"] if blur_ul else [])
+           + (["nr-plain"] if _nr == 1 else (["nr-off"] if _nr == 2 else [])))
     _add = " ".join(_bc)
     body_class = (body_class.replace('class="', f'class="{_add} ')
                   if body_class else f' class="{_add}"')

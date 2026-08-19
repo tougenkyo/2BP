@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.432"
+APP_VER = "0.9.433"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1422,6 +1422,44 @@ def _json_com_to_text(com: str) -> str:
     return t.strip()
 
 
+def _wheel_scroll_js(mul: int = 100) -> str:
+    """ホイール1回で動く量を変えるJS。mul は%で 100 が既定（＝何もしない）。
+
+    Chromiumの既定は本家2Bに比べて動きが小さい。倍率を掛けた分だけ自前で
+    スクロールし、元の動きは止める。スレ内のポップアップなど、自前で
+    スクロールできる要素の上ではその要素を動かす（ページごと動くと困る）。"""
+    try:
+        mul = max(50, min(500, int(mul or 100)))
+    except (TypeError, ValueError):
+        mul = 100
+    return (
+        "(function(){"
+        "if(window._wsHandler){window.removeEventListener('wheel',window._wsHandler,"
+        "{capture:true});window._wsHandler=null;}"
+        f"var M={mul}/100;"
+        "if(Math.abs(M-1)<0.01)return;"
+        "function box(el){"
+        "  while(el&&el!==document.body&&el!==document.documentElement){"
+        "    if(el.scrollHeight>el.clientHeight){"
+        "      var ov=getComputedStyle(el).overflowY;"
+        "      if(ov==='auto'||ov==='scroll')return el;}"
+        "    el=el.parentElement;}"
+        "  return null;}"
+        "window._wsHandler=function(e){"
+        # Ctrl+ホイールは拡大縮小。deltaMode!=0（行/ページ単位）も触らない
+        "  if(e.ctrlKey||e.defaultPrevented||e.deltaMode!==0)return;"
+        "  var d=e.deltaY*M;if(!d)return;"
+        "  var t=box(e.target);"
+        "  if(t){var b=t.scrollTop;t.scrollTop=b+d;"
+        # 端まで来ていたら、そのままページ側へ流す（止めると引っかかる）
+        "       if(t.scrollTop!==b){e.preventDefault();return;}}"
+        "  window.scrollBy(0,d);e.preventDefault();};"
+        "window.addEventListener('wheel',window._wsHandler,"
+        "{passive:false,capture:true});"
+        "})();"
+    )
+
+
 def _mouse_gesture_js(enabled: bool = False, step: int = 30,
                       via_title: bool = False) -> str:
     """マウスジェスチャー（右ドラッグの軌跡）認識JS。
@@ -1495,11 +1533,22 @@ class _MouseGestureMixin:
         return getattr(self, "_settings", None) or getattr(self, "_settings_ref", None)
 
     def inject_mouse_gesture_js(self):
-        """表示中ページへジェスチャー認識JSを注入する（読込完了ごとに呼ぶ）。"""
+        """表示中ページへジェスチャー認識JSを注入する（読込完了ごとに呼ぶ）。
+        ホイールのスクロール量も同じ場所で入れる（どちらも読込ごとに要る）。"""
         s = self._mg_settings()
         en = bool(getattr(s, "mouse_gesture_enabled", False)) if s else False
         _safe_run_js(getattr(self, "_view", None),
                      _mouse_gesture_js(en, via_title=self._MG_VIA_TITLE))
+        self.apply_wheel_scroll_setting()
+
+    def apply_wheel_scroll_setting(self):
+        """ホイール1回のスクロール量を表示中ページへ反映する（再読込不要）。"""
+        s = self._mg_settings()
+        try:
+            mul = int(getattr(s, "wheel_scroll_mul", 100) or 100) if s else 100
+        except (TypeError, ValueError):
+            mul = 100
+        _safe_run_js(getattr(self, "_view", None), _wheel_scroll_js(mul))
 
     def apply_mouse_gesture_setting(self):
         """設定変更を表示中ページへ即時反映する（再読込不要）。"""
@@ -2648,7 +2697,10 @@ class BoardPane(QWidget):
         # ── 共通ツールバー (タイトル左・ボタン右固定) ──
         # QToolBar はオーバーフロー時にボタンを隠すため QWidget+QHBoxLayout を使用
         _tb_widget = QWidget()
-        _tb_widget.setFixedHeight(50)
+        self._tb_widget = _tb_widget
+        # 高さはボタンの高さ＋上下の余白。キャプションOFFならボタンが低く
+        # なるので、ツールバーもその分詰めてスレ/カタログを広く使う。
+        _tb_widget.setFixedHeight(self._toolbar_height())
         # セレクタ無しの "background: transparent;" は子孫ウィジェットにも波及する。
         # 「保存」「移動」ボタンのドロップダウンは QMenu(ボタン) と子として作るため、
         # ポップアップの背景まで透明(alpha=0)になり、テーマのQMenu指定が効かなくなる。
@@ -2694,7 +2746,7 @@ class BoardPane(QWidget):
             b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon
                                  if _show_lbl else Qt.ToolButtonStyle.ToolButtonIconOnly)
             b.setAutoRaise(True)
-            b.setFixedHeight(46 if _show_lbl else 32)
+            b.setFixedHeight(BoardPane._BTN_H_LABEL if _show_lbl else BoardPane._BTN_H_ICON)
             b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             b.setStyleSheet(_BTN_STYLE)
             b.setToolTip(label)          # 文字を消してもツールチップで判るように
@@ -2726,7 +2778,7 @@ class BoardPane(QWidget):
                                           if _show_lbl else Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._btn_move.setToolTip("移動")
         self._btn_move.setAutoRaise(True)
-        self._btn_move.setFixedHeight(46 if _show_lbl else 32)
+        self._btn_move.setFixedHeight(self._BTN_H_LABEL if _show_lbl else self._BTN_H_ICON)
         self._btn_move.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._btn_move.setStyleSheet(_BTN_STYLE)
         self._btn_move.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
@@ -2753,7 +2805,7 @@ class BoardPane(QWidget):
                                           if _show_lbl else Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._btn_save.setToolTip("保存")
         self._btn_save.setAutoRaise(True)
-        self._btn_save.setFixedHeight(46 if _show_lbl else 32)
+        self._btn_save.setFixedHeight(self._BTN_H_LABEL if _show_lbl else self._BTN_H_ICON)
         self._btn_save.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._btn_save.setStyleSheet(_BTN_STYLE)
         self._btn_save.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
@@ -2884,14 +2936,30 @@ class BoardPane(QWidget):
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self._sc_map[aid] = sc
 
+    # ボタンの高さ（キャプションあり/なし）とツールバー上下の余白
+    _BTN_H_LABEL   = 46
+    _BTN_H_ICON    = 32
+    _TB_MARGIN     = 4    # QHBoxLayout の上下マージン合計
+
+    def _toolbar_height(self, settings=None) -> int:
+        s = settings or getattr(self, "_settings", None)
+        show = bool(getattr(s, 'toolbar_show_labels', True)) if s else True
+        return (self._BTN_H_LABEL if show else self._BTN_H_ICON) + self._TB_MARGIN
+
     def apply_toolbar_labels(self, settings=None):
         """ツールバーの文字(キャプション)表示を設定に合わせて即時反映する。
-        OFF時はアイコンのみ表示＋ボタン高さを詰めてスッキリさせる。"""
+        OFF時はアイコンのみ表示＋ボタン高さを詰め、ツールバー自体も縮める。"""
         s = settings or getattr(self, "_settings", None)
         show = bool(getattr(s, 'toolbar_show_labels', True)) if s else True
         style = (Qt.ToolButtonStyle.ToolButtonTextUnderIcon if show
                  else Qt.ToolButtonStyle.ToolButtonIconOnly)
-        h = 46 if show else 32
+        h = self._BTN_H_LABEL if show else self._BTN_H_ICON
+        _tb = getattr(self, "_tb_widget", None)
+        if _tb is not None:
+            try:
+                _tb.setFixedHeight(self._toolbar_height(s))
+            except RuntimeError:
+                pass
         for name in ("_btn_stop", "_btn_update", "_btn_reply", "_btn_new_thread",
                      "_btn_move", "_btn_ar", "_btn_save", "_btn_close",
                      "_btn_ng_settings"):
@@ -3395,12 +3463,25 @@ class BoardPane(QWidget):
 
     # ── タブ ダブルクリック ────────────────────────────────────────────────
     def _on_inner_dbl_click(self, idx: int):
-        if idx >= 0:
-            w = self._tabs.widget(idx)
-            if w in self._pinned:
-                self._unpin_tab(w)   # ピン済み → ダブルクリックで解除
-            else:
-                self._on_close_tab(idx)  # 通常 → 閉じる
+        """タブのダブルクリック。動作は設定で選べる（0=閉じる 1=更新 2=何もしない）"""
+        if idx < 0:
+            return
+        act = int(getattr(self._settings, "tab_dblclick_action", 0) or 0)
+        if act == 2:
+            return
+        w = self._tabs.widget(idx)
+        if act == 1:
+            if isinstance(w, ThreadView):
+                w.reload_thread()
+            elif isinstance(w, CatalogView) and self._board:
+                w.load(self._board)
+            elif hasattr(w, "reload"):
+                w.reload()
+            return
+        if w in self._pinned:
+            self._unpin_tab(w)   # ピン済み → ダブルクリックで解除
+        else:
+            self._on_close_tab(idx)  # 通常 → 閉じる
 
     # ── 右クリックメニュー ────────────────────────────────────────────────
     def _show_inner_ctx_menu(self, pos):
