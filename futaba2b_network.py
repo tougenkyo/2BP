@@ -94,7 +94,11 @@ _RES_NO_RE    = re.compile(r"No\.(\d+)")
 _TRIP_RE      = re.compile(r"[!◆★☆].+")
 _SODANE_RE    = re.compile(r"そうだねx(\d+)")
 # 生htm冒頭からOPのサムネイルURLを拾う（履歴表示で落ちたスレのサムネ復元用）
-_OP_THUMB_SRC_RE = re.compile(r'<img[^>]+src="([^"]*/thumb/[^"]+)"', re.I)
+# ふたばのスレHTMLは <img src='/b/thumb/xxxs.jpg' …> とシングルクォート。
+# ダブルクォートだけを見ていたため実データでは1件も拾えていなかった
+# （実測: 実キャッシュ200件中 0件 → 200件）。引用符なしにも備える。
+_OP_THUMB_SRC_RE = re.compile(
+    r"""<img[^>]+src=(["']?)([^"'\s>]*/thumb/[^"'\s>]+)\1""", re.I)
 _FSIZE_RE     = re.compile(r"[\-\(](\d+)\s*B")
 # 直前が英数字でも拾えるようにする（\b だと "…08:25:24ID:xxxx" のように
 # 区切りが失われた文字列で境界が成立せずマッチしなかった）
@@ -881,25 +885,93 @@ class FutabaFetcher:
             self._save_rescount_index()
         return out
 
+    # 拾い方を変えた時にインデックスを作り直すための版番号。
+    # 上げると次回の読み込みで捨てられ、正しい値で入れ直される。
+    _OPTHUMB_IDX_VER = 2
+
+    def _opthumb_index(self) -> dict:
+        """OPサムネURLのインデックス {url: [mtime, size, サムネURL]}。
+        遅延読み込みしてプロセス内で保持する。"""
+        idx = getattr(self, "_opthumb_idx", None)
+        if idx is None:
+            idx = {}
+            try:
+                p = THREAD_CACHE_DIR / "_opthumb.json"
+                if p.exists():
+                    _raw = json.loads(p.read_text(encoding="utf-8"))
+                    if (isinstance(_raw, dict)
+                            and _raw.get("__v") == self._OPTHUMB_IDX_VER):
+                        idx = _raw
+            except Exception:
+                idx = {}
+            idx["__v"] = self._OPTHUMB_IDX_VER
+            self._opthumb_idx = idx
+        return idx
+
+    def _save_opthumb_index(self) -> None:
+        idx = getattr(self, "_opthumb_idx", None)
+        if idx is None:
+            return
+        try:
+            p = THREAD_CACHE_DIR / "_opthumb.json"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_name(f"{p.name}.{_os.getpid()}.tmp")
+            tmp.write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
+            _os.replace(tmp, p)
+        except Exception as e:
+            print(f"[Cache] OPサムネインデックス保存エラー: {e}")
+
+    def cached_op_thumbs(self, urls: list) -> dict:
+        """キャッシュ済み生htmからOP（スレ主）のサムネイルURLをまとめて拾う。
+        落ちたスレのサムネを履歴表示に出すために使う。
+
+        OPは先頭にあるので冒頭8KBだけ読むが、それでも履歴数百件ぶんを毎回
+        読むと数十秒かかる（実測: 302件で36秒。OSのファイルキャッシュが
+        冷えていると1件60ms）。更新時刻とサイズをキーにインデックスへ
+        メモ化し、変わっていないファイルは二度と読まない。
+        サムネが見つからなかった時も「無い」ことを覚える（そうしないと、
+        見つからないスレを毎回読み直すことになる）。"""
+        out: dict = {}
+        if not urls:
+            return out
+        idx = self._opthumb_index()
+        dirty = False
+        for url in urls:
+            if not url or url in out:
+                continue
+            try:
+                p = self._cache_path(url)
+                st = p.stat()
+            except Exception:
+                # キャッシュが無い / URLが壊れている(hostname無し等)
+                continue
+            ent = idx.get(url)
+            if (isinstance(ent, list) and len(ent) == 3
+                    and ent[0] == int(st.st_mtime) and ent[1] == st.st_size):
+                if ent[2]:
+                    out[url] = str(ent[2])
+                continue
+            try:
+                # バイナリで読んで必要な分だけ復号する（テキストモードより軽い）
+                with p.open("rb") as f:
+                    head = f.read(8192).decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            m = _OP_THUMB_SRC_RE.search(head)
+            thumb = urllib.parse.urljoin(url, m.group(2)) if m else ""
+            if thumb:
+                out[url] = thumb
+            idx[url] = [int(st.st_mtime), st.st_size, thumb]
+            dirty = True
+        if dirty:
+            self._save_opthumb_index()
+        return out
+
     def cached_op_thumb(self, url: str) -> str:
-        """キャッシュ済み生htmからOP（スレ主）のサムネイルURLを取り出す。
-        落ちたスレのサムネを履歴表示に出すため。OPは先頭にあるので冒頭だけ読む
-        （履歴数百件ぶんを全読みするとディスクI/Oが重すぎるため）。"""
+        """キャッシュ済み生htmからOPのサムネイルURLを1件取り出す。"""
         if not url:
             return ""
-        try:
-            p = self._cache_path(url)
-            if not p.exists():
-                return ""
-            with p.open("r", encoding="utf-8", errors="replace") as f:
-                head = f.read(8192)
-        except Exception:
-            # URLが壊れている(hostname無し等)場合も _cache_path で失敗しうる
-            return ""
-        m = _OP_THUMB_SRC_RE.search(head)
-        if not m:
-            return ""
-        return urllib.parse.urljoin(url, m.group(1))
+        return self.cached_op_thumbs([url]).get(url, "")
 
     def cached_image_file_url(self, url: str) -> str:
         """画像ディスクキャッシュに実体があれば file:// URL を返す（無ければ空）。

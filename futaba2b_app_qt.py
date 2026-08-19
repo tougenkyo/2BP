@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.433"
+APP_VER = "0.9.434"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10440,6 +10440,15 @@ class CatalogView(_MouseGestureMixin, QWidget):
             e.get("enabled", True) and e.get("method", "md5") != "type_size"
             for e in (self._settings.ng_images or []))
         _hist_all = list(self._settings.thread_history)
+        # OPサムネURLはスレHTMLキャッシュを読んで拾う。同じスレを2回読まない
+        # よう、この組み立ての中では1回だけにする（サムネ用とNG照合用で
+        # 同じものを2度読んでいた）。ファイル自体はネットワーク側の
+        # インデックスにメモ化されるので、2回目以降は読み直さない。
+        _op_thumb_memo: dict = {}
+        def _op_thumb(u: str) -> str:
+            if u not in _op_thumb_memo:
+                _op_thumb_memo[u] = self._fetcher.cached_op_thumb(u)
+            return _op_thumb_memo[u]
         # ── 診断ログ用の内訳カウンタ ──
         _sk_nourl = _sk_board = _sk_no = 0
         _base_count: dict = {}
@@ -10476,7 +10485,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 # （保管庫は自動削除されないので、こちらが本命）
                 thumb = hthumb.get(no, "")
             if not thumb:
-                _t = self._fetcher.cached_op_thumb(turl)
+                _t = _op_thumb(turl)
                 if _t:
                     _ng_thumb = _t
                     thumb = self._fetcher.cached_image_file_url(_t) or ""
@@ -10484,7 +10493,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             # ふたばのファイル名（＝画像の番号）が失われてNG画像と照合できない。
             # スレHTMLキャッシュから元のサムネURLを拾い直しておく。
             if _need_ng_thumb and not _ng_thumb and not thumb.startswith(("http:", "https:")):
-                _ng_thumb = self._fetcher.cached_op_thumb(turl)
+                _ng_thumb = _op_thumb(turl)
             # thread_read_counts はOP込みの件数。カタログのレス数は返信数
             # （OP除く）なので揃える。落ちて記録が消えたスレは0のままにして
             # おき、あとでキャッシュから埋める。
