@@ -17,6 +17,7 @@ class ThreadBridge(QObject):
     quote_img_requested   = Signal(int)          # 画像クリック → 画像URLを引用
     quote_idip_requested  = Signal(int)          # フッターID/IPクリック → >ID: / >IP: 引用
     ng_requested          = Signal(int)          # NG クリック
+    ctx_res_requested     = Signal(int)          # 右ボタンを押した位置のレスNo（0=レス外）
     sodane_requested      = Signal(int)          # そうだね
     img_open_requested    = Signal(str, int)     # 画像タブを開く (url, idx)
     img_open_bg_requested = Signal(str, int)     # 画像タブをバックグラウンドで開く (url, idx)
@@ -69,6 +70,11 @@ class ThreadBridge(QObject):
         """画像/引用モードから、その画像のレスへ移動する"""
         self.jump_to_res_requested.emit(int(no))
 
+
+    @Slot(int)
+    def ctxRes(self, no: int):
+        """右ボタンを押した位置にあるレス番号（右クリックメニュー用に先出し）"""
+        self.ctx_res_requested.emit(int(no or 0))
 
     @Slot(int)
     def quoteImg(self, no: int):

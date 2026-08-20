@@ -40,7 +40,7 @@ from futaba2b_app_qt import (
     BoardSearchView,
     AutoRefreshManager, AutoRefreshDialog,
     _compute_interval_sec,
-    _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
+    _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view, _safe_run_js,
     _schedule_gc,
     _JapaneseLineEdit,
     suppress_context_menu as _suppress_ctx_menu,
@@ -2654,6 +2654,11 @@ class MainWindow(QMainWindow):
                     self._step_tab(1 if dy < 0 else -1)   # 下=次 / 上=前
                     self._arm_context_menu_block()
                 return True      # ページはスクロールさせない
+            # 返信ウインドウを開いている間もスレをスクロールできるようにする。
+            # Windowsはホイールを「今フォーカスのあるウィンドウ」へ送るので、
+            # 返信ウインドウが前面だとカーソルがスレの上にあっても動かない。
+            if _t == QEvent.Type.Wheel and self._wheel_to_hovered_view(ev):
+                return True
             # タブを移動した後にボタンを離すと、そのままでは移動先のページで
             # 右クリックメニューが出る。メニュー要求をQt側で握り潰す。
             if _t == QEvent.Type.ContextMenu and self._ctx_block_armed():
@@ -2676,6 +2681,50 @@ class MainWindow(QMainWindow):
         except (AttributeError, RuntimeError, SystemError):
             pass
         return super().eventFilter(obj, ev)
+
+    def _wheel_to_hovered_view(self, ev) -> bool:
+        """返信ウインドウにフォーカスがある時、カーソルの下のスレ/カタログを
+        スクロールする。処理したら True を返す（本家2Bと同じ操作感）。
+
+        本体のウィンドウが前面の時は何もしない（そのままChromiumが処理する）。
+        返信ウインドウ自身の上にカーソルがある時も何もしない。"""
+        from PySide6.QtWidgets import QApplication as _QA
+        if self.isActiveWindow():
+            return False
+        _aw = _QA.activeWindow()
+        if _aw is None or _aw is self:
+            return False
+        # 返信ウインドウ（PostDialog）が前面の時だけ横取りする。
+        # 設定ダイアログ等でスレが動くと戸惑うので対象を絞る。
+        if type(_aw).__name__ != "PostDialog":
+            return False
+        _gp = ev.globalPosition().toPoint()
+        w = _QA.widgetAt(_gp)
+        if w is None or _aw.isAncestorOf(w) or w is _aw:
+            return False
+        # カーソルの下がスレ/カタログ/板内検索なら、その中身を動かす
+        view = None
+        p = w
+        while p is not None:
+            if isinstance(p, (ThreadView, CatalogView, BoardSearchView)):
+                view = p; break
+            p = p.parentWidget()
+        if view is None or not self.isAncestorOf(view):
+            return False
+        dy = ev.angleDelta().y()
+        if not dy:
+            return False
+        try:
+            mul = int(getattr(self._settings, "wheel_scroll_mul", 100) or 100)
+        except (TypeError, ValueError):
+            mul = 100
+        # Qtのホイール1目盛は120。Chromiumの既定に合わせて100pxを基準にする。
+        step = int(-dy / 120.0 * 100 * max(50, min(500, mul)) / 100)
+        _v = getattr(view, "_view", None)
+        if _v is None:
+            return False
+        _safe_run_js(_v, f"window.scrollBy(0,{step});")
+        return True
 
     def _ctx_block_armed(self) -> bool:
         """右ボタン+ホイールの直後か。取りこぼした時に無関係な右クリックまで

@@ -947,6 +947,15 @@ function quoteNo(no)            { _b('quoteNo',       [no]); }
 function quoteComment(no)       { _b('quoteComment',  [no]); }
 function quoteImg(no)           { _b('quoteImg',       [no]); }
 function ngRes(no)              { _b('ngRes',          [no]); }
+/* 右ボタンを押した位置のレス番号を先にPython側へ渡す。右クリックメニューは
+   これを見て「このレスにレスする / NGにする」を出す。メニューを出す時に
+   問い合わせると、返事を待つ間メニューが出なくなるため先出しにする。 */
+document.addEventListener('mousedown', function(e) {
+    if (e.button !== 2) return;
+    var r = (e.target && e.target.closest) ? e.target.closest('.res') : null;
+    var m = r ? /^r(\\d+)$/.exec(r.id || '') : null;
+    _b('ctxRes', [m ? parseInt(m[1]) : 0]);
+}, true);
 function ngId(id)               { _b('ngId',           [id]); }
 /* IDを右クリック → 小さいメニューを出す（左クリックは従来どおり抽出表示）。
    ポップアップの中のレスでも効くよう document 側で拾う。 */

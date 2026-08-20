@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.435"
+APP_VER = "0.9.436"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3127,13 +3127,14 @@ class BoardPane(QWidget):
                         # スクロール位置を読み取り _pending_scroll に渡す
                         # （_on_load_finished_scroll が読込完了後に復元する）。
                         _html_r = w._last_html
-                        def _reload_keep_scroll(_y, _w=w, _h=_html_r, _u=_url_r):
-                            try:
-                                _w._pending_scroll = int(_y) if _y else 0
-                            except Exception:
-                                _w._pending_scroll = 0
-                            _w._load_html_via_tempfile(_h, QUrl(_u))
-                        w._view.page().runJavaScript("window.scrollY", _reload_keep_scroll)
+                        # 位置は目印のレスで控える。ピクセル位置だけだと
+                        # 新着が入って高さが変わった分ずれるし、ページが
+                        # まだ生きていない時は scrollY が取れず 0（＝先頭）に
+                        # なっていた。_capture_scroll_anchor なら保険の
+                        # ピクセル位置も一緒に控える。
+                        w._capture_scroll_anchor(
+                            lambda _w=w, _h=_html_r, _u=_url_r:
+                            _w._load_html_via_tempfile(_h, QUrl(_u)))
             # 追記/再描画の完了を待ってから _pending_redraw を解除し、DOM反映済み
             # レス数を同期してステータスを更新する（先出しで多く見える不具合の解消）。
             def _sync_after_redraw(_w=w):
@@ -4338,6 +4339,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 再描画をまたいで位置を戻すための目印 (レスNo, そのレス上端からのズレpx)
         self._pending_anchor: "tuple | None" = None
         self._jump_res: int = 0   # 読込完了後に見せたいレスNo（検索結果から）
+        self._ctx_res_no: int = 0  # 右クリックした位置のレスNo（メニュー用）
         # ページの読み込みが進行中か（位置合わせの予約を横から捨てないため）
         self._load_pending    = False
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
@@ -4506,6 +4508,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._bridge.url_open_requested.connect(_open_url)
         self._bridge.futaba_thread_open_requested.connect(self.open_thread_url_requested.emit)
         self._bridge.ng_requested.connect(self._on_ng)
+        self._bridge.ctx_res_requested.connect(self._on_ctx_res)
         self._bridge.ng_id_requested.connect(self._on_ng_id)
         self._bridge.del_requested.connect(self._on_del)
         self._bridge.report_del_requested.connect(self._on_report_del_with_hide)
@@ -6662,18 +6665,47 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 切替のたびにbodyが作り直される → ここ（描画完了フック）で再適用する。
         self._apply_heatmap()
 
+    def _on_ctx_res(self, no: int):
+        """右ボタンを押した位置にあったレス番号をページ側から受け取る。
+
+        メニューを出す時にJSへ問い合わせると、返事を待つ間メニューが出ない
+        （返事が来なければ永久に出ない）。押した時点で先に控えておき、
+        メニューは同期で出す。控えが間に合わなくても、レス向けの項目が
+        出ないだけで済む。"""
+        self._ctx_res_no = int(no or 0)
+
     def _on_thread_context_menu(self, pos):
-        """スレッドビュー右クリックメニュー"""
-        from PySide6.QtWidgets import QMenu
-        from PySide6.QtWebEngineCore import QWebEngineContextMenuRequest
+        """スレッドビュー右クリックメニュー。
+        レスの上で押した時は、そのレスへの返信・NG登録も出す
+        （フッターの小さいリンクは押しにくく、NGは誤爆すると厄介なため）。"""
         if context_menu_suppressed():
             return                    # 右ボタン＋ホイールでタブを送った直後
+        self._show_thread_ctx_menu(pos, int(getattr(self, "_ctx_res_no", 0) or 0))
+
+    def _show_thread_ctx_menu(self, pos, res_no: int = 0):
+        from PySide6.QtWebEngineCore import QWebEngineContextMenuRequest
+        if not self._is_alive():
+            return                    # 番号を待っている間に閉じられた
         req = self._view.lastContextMenuRequest()
         on_image = (req is not None and
                     req.mediaType() == QWebEngineContextMenuRequest.MediaType.MediaTypeImage)
+        img_url = req.mediaUrl().toString() if (on_image and req) else ""
+        menu = self._build_thread_ctx_menu(res_no, on_image, img_url)
+        menu.exec(self._view.mapToGlobal(pos))
+
+    def _build_thread_ctx_menu(self, res_no: int = 0, on_image: bool = False,
+                               img_url: str = ""):
+        """スレッド右クリックメニューを組み立てて返す（表示はしない）。"""
+        from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
+        if res_no > 0:
+            act_qc = menu.addAction(f"No.{res_no} のコメントにレスする")
+            act_qc.triggered.connect(lambda: self._quote_comment(res_no))
+            act_qn = menu.addAction(f"No.{res_no} の番号にレスする")
+            act_qn.triggered.connect(
+                lambda: self.open_reply_window.emit(res_no, f">No.{res_no}\n"))
+            menu.addSeparator()
         if on_image:
-            img_url = req.mediaUrl().toString() if req else ""
             act_open = menu.addAction("外部で開く")
             act_open.triggered.connect(lambda: self._open_url_external(img_url))
             menu.addSeparator()
@@ -6685,7 +6717,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
         act_copy = menu.addAction("コピー")
         act_copy.triggered.connect(lambda: page.triggerAction(
             QWebEnginePage.WebAction.Copy))
-        menu.exec(self._view.mapToGlobal(pos))
+        if res_no > 0:
+            menu.addSeparator()
+            act_ng = menu.addAction(f"No.{res_no} をNGにする…")
+            act_ng.triggered.connect(lambda: self._on_ng(res_no))
+        return menu
 
     def _open_url_external(self, url: str):
         """URLを外部ブラウザで開く"""
@@ -6771,7 +6807,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._pending_anchor = (_no, _off) if _no else None
             # 目印のレスが作り直したHTMLから消えている（NGで隠れた等）時に
             # 先頭へ取り残されないよう、今の位置も保険として控えておく。
-            self._pending_scroll = max(0, _sy if _no else _off)
+            # 目印が取れなかった時ほどこの保険が要るのに、以前はそこで
+            # 0（＝先頭）を入れてしまっていた。画像/引用モードには .res が
+            # 無いので必ずこの経路に入り、再読込のたびに先頭へ戻っていた。
+            self._pending_scroll = max(0, _sy)
             then()
         if not _safe_run_js(getattr(self, "_view", None),
                             self._SCROLL_ANCHOR_JS, _cb):
