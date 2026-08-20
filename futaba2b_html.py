@@ -1314,7 +1314,7 @@ function _markRepliesToSelf(quotedBy) {
         el.classList.remove('to-self-res');
     });
     document.querySelectorAll('.res.self-res').forEach(function(me) {
-        var m = (me.id || '').match(/^r(\d+)$/);
+        var m = (me.id || '').match(/^r(\\d+)$/);
         if (!m) return;
         (quotedBy[parseInt(m[1])] || []).forEach(function(qno) {
             var q = document.getElementById('r' + qno);

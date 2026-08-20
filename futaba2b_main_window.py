@@ -5997,6 +5997,39 @@ class MainWindow(QMainWindow):
 # エントリポイント
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _disable_console_quickedit() -> None:
+    """Windowsコンソールの「簡易編集モード」を切る。
+
+    このモードが有効だと、コンソールを1回クリックしただけで出力が一時停止し、
+    以降の print が戻らなくなる。2BPはログを出しながら起動するので、そのまま
+    起動の途中で固まる（アップデート直後に「[VER] 起動:」から進まない、と
+    いう報告の原因）。誤クリックで止まらないよう切っておく。
+    文字を選んでコピーしたい時は、ウィンドウメニューの「編集→範囲指定」か、
+    logs/console に残るログファイルを使う。"""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        if not k32.GetConsoleWindow():
+            return                      # コンソールが無い（pythonw等）
+        h = k32.GetStdHandle(-10)       # STD_INPUT_HANDLE
+        if h in (0, -1, None):
+            return
+        mode = wintypes.DWORD()
+        if not k32.GetConsoleMode(h, ctypes.byref(mode)):
+            return
+        ENABLE_QUICK_EDIT_MODE = 0x0040
+        ENABLE_EXTENDED_FLAGS  = 0x0080   # これを立てないと簡易編集の変更が効かない
+        new = (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS
+        if new != mode.value and k32.SetConsoleMode(h, new):
+            print("[LOG] コンソールの簡易編集モードを切りました"
+                  "（クリックで出力が止まり起動が固まるため）", flush=True)
+    except Exception as e:
+        print(f"[LOG] 簡易編集モードの解除に失敗: {e}", flush=True)
+
+
 def _setup_file_logging():
     """show_console=ON のとき stdout/stderr を .log ファイルにも複製する（tee）。
     出力先: logs/console/2bp_YYYYMMDD_HHMMSS.log（.gitignore 済み）。
@@ -6032,8 +6065,10 @@ def _setup_file_logging():
         def isatty(self):
             return False
 
-    sys.stdout = _Tee(sys.__stdout__, _logf)
-    sys.stderr = _Tee(sys.__stderr__, _logf)
+    # ファイルを先に書く。コンソール側が何かの拍子に詰まっても、そこまでの
+    # ログはファイルに残る（コンソールを先にすると1行も残らない）。
+    sys.stdout = _Tee(_logf, sys.__stdout__)
+    sys.stderr = _Tee(_logf, sys.__stderr__)
     import atexit
     atexit.register(lambda: (_logf.flush(), _logf.close()))
     print(f"[LOG] ファイル出力: {logpath}", flush=True)
@@ -6072,6 +6107,11 @@ def main():
             _scd = _jc.loads(_scf.read_text(encoding="utf-8"))
             _show_console = bool(_scd.get("show_console", False))
         if _show_console:
+            # 誤クリックで出力が止まり起動が固まるのを防ぐ
+            try:
+                _disable_console_quickedit()
+            except Exception:
+                pass
             # コンソール表示に加え、stdout/stderr を .log にも複製（tee）
             try:
                 _setup_file_logging()
