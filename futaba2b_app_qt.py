@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.438"
+APP_VER = "0.9.439"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2679,9 +2679,28 @@ class _ElideLabel(QLabel):
         painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided)
         painter.end()
 
+def add_del_hidden_thread(settings, url: str):
+    """削除依頼(del)が受理されたスレを「隠す」リストへ入れて覚える。
+
+    カタログからの削除依頼とタブからの削除依頼で同じ記録を使う
+    （どちらから出しても、カタログにも履歴にも出なくなる）。"""
+    if not url:
+        return
+    _l = getattr(settings, "del_hidden_thread_urls", None)
+    if _l is None:
+        _l = settings.del_hidden_thread_urls = []
+    if url in _l:
+        return
+    _l.append(url)
+    if len(_l) > 3000:                  # 肥大防止（新しい方を残す）
+        del _l[:-3000]
+    settings.save()
+
+
 class BoardPane(QWidget):
     """1板につき1個。新着/返信/更新/自動更新の共通ツールバー + タブを管理する。"""
     tab_closing = Signal(object)   # タブが閉じられる直前にビューを通知
+    _del_result = Signal(bool, str, str, bool)  # 削除依頼の結果 (ok, msg, スレURL, 隠す)
 
     def __init__(self, board: BoardInfo, main_window, parent=None):
         super().__init__(parent)
@@ -2875,6 +2894,7 @@ class BoardPane(QWidget):
         self._tabs.tabBar().customContextMenuRequested.connect(
             self._show_inner_ctx_menu)
         self._ctx_tab_idx = -1  # 右クリックされたタブ番号
+        self._del_result.connect(self._on_ctx_del_result)   # 削除依頼(BG→UI)
         self._pinned: set = set()  # ピン留め中のウィジェット
         self._wrap_bar._pinned_widgets = self._pinned  # 描画用に参照を共有
 
@@ -3575,6 +3595,16 @@ class BoardPane(QWidget):
                 _hdr.setEnabled(False)
                 for _p in _matched:
                     menu.addAction(_p).setEnabled(False)
+        # ── 削除依頼(del) ──
+        # ふたばへ実際に送る操作なので、他の項目から離して最下段に置く。
+        # 押しても確認を挟むため、掴み損ねてもいきなり送られることはない。
+        menu.addSeparator()
+        _del_act = menu.addAction("このスレの削除依頼(del)…", self._ctx_report_del)
+        _del_act.setEnabled(bool(
+            isinstance(_w_ctx, ThreadView)
+            and not getattr(_w_ctx, '_is_log', False)
+            and getattr(_w_ctx, '_thread_no', 0)
+            and getattr(_w_ctx, '_board', None) is not None))
         menu.exec(self._tabs.tabBar().mapToGlobal(pos))
 
     def _find_catalog_entry(self, board, no):
@@ -3698,6 +3728,88 @@ class BoardPane(QWidget):
         w = self._tabs.widget(self._ctx_tab_idx)
         if isinstance(w, ThreadView) and not getattr(w, '_is_log', False):
             w.refetch_thread()
+
+    # ── 削除依頼(del) ────────────────────────────────────────────
+
+    def _set_status(self, text: str):
+        """ステータスバーへ一言出す（メインウインドウが無い場面では何もしない）"""
+        try:
+            self._main._st_log.setText(text)
+        except Exception:
+            pass
+
+    def _ctx_report_del(self):
+        """右クリックしたスレタブの削除依頼(del)をふたばへ送る。
+
+        カタログの右クリックにある削除依頼と同じものを、スレを開いたまま
+        タブから出せるようにしたもの。ふたばへ実際に届く操作なので必ず
+        確認を挟む。送信は1回だけで、つながらなくても送り直さない
+        （同じ依頼が二重に届くのを避ける）。"""
+        w = getattr(self, "_ctx_tab_widget", None)
+        if not isinstance(w, ThreadView) or getattr(w, "_is_log", False):
+            return
+        board = getattr(w, "_board", None)
+        no    = int(getattr(w, "_thread_no", 0) or 0)
+        if board is None or no <= 0:
+            return
+        turl = ((w._thread.url if getattr(w, "_thread", None) else "")
+                or f"{board.base_url}res/{no}.htm")
+        idx  = self._tabs.indexOf(w)
+        label = (self._tabs.tabText(idx) if idx >= 0 else "").strip()
+        box = QMessageBox(self)
+        box.setWindowTitle("削除依頼(del)")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(
+            "このスレの削除依頼をふたばへ送ります。\n\n"
+            f"　No.{no}　{label}\n\n"
+            "送ったあとの取り消しはできません。よろしいですか？")
+        box.setStandardButtons(QMessageBox.StandardButton.Yes
+                               | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        chk = QCheckBox("受理されたらカタログと履歴から隠す")
+        chk.setChecked(True)
+        chk.setToolTip("カタログの右クリックから出した時と同じ扱いにします。\n"
+                       "隠した記録は設定の「削除依頼で隠したスレ」から消せます。")
+        box.setCheckBox(chk)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        hide = chk.isChecked()
+        self._set_status(f"削除依頼を送信中… No.{no}")
+        _f = self._fetcher
+        def _do():
+            try:
+                ok, msg = _f.report_del(board, no, thread_url=turl)
+            except Exception as e:      # つながらなくても送り直さない
+                ok, msg = False, str(e)
+            print(f"[TAB_DEL] No.{no} ok={ok} msg={msg!r}")
+            self._del_result.emit(bool(ok), msg or "", turl, hide)
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_ctx_del_result(self, ok: bool, msg: str, url: str, hide: bool):
+        """削除依頼の結果を出す。
+
+        ふたばは「操作が早すぎます」等で受け付けないことがあるので、
+        受理された時だけ del済 の印と「隠す」記録を残す。"""
+        text = (msg or ("登録しました" if ok else "削除依頼に失敗しました")).strip()
+        if not ok:
+            self._set_status(f"削除依頼に失敗しました: {text}")
+            QMessageBox.warning(
+                self, "削除依頼(del)",
+                "削除依頼を受け付けてもらえませんでした。\n"
+                "少し時間を置いてから試してください。\n\n"
+                f"{text}")
+            return
+        _m = re.search(r'res/(\d+)\.htm', url or "")
+        if _m:
+            _lst = self._settings.del_res_nos.setdefault(url, [])
+            _no = int(_m.group(1))
+            if _no not in _lst:
+                _lst.append(_no)        # スレのNo.横に「del済」が出る
+        if hide:
+            add_del_hidden_thread(self._settings, url)   # ここで save まで行う
+        else:
+            self._settings.save()
+        self._set_status(f"削除依頼: {text}")
 
 
     # ── ピン留め ──────────────────────────────────────────────
@@ -10064,15 +10176,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
 
     def _add_del_hidden(self, url: str):
         """削除依頼が受理されたスレを「隠す」リストへ入れて覚える"""
-        _l = getattr(self._settings, "del_hidden_thread_urls", None)
-        if _l is None:
-            _l = self._settings.del_hidden_thread_urls = []
-        if url in _l:
-            return
-        _l.append(url)
-        if len(_l) > 3000:                  # 肥大防止（新しい方を残す）
-            del _l[:-3000]
-        self._settings.save()
+        add_del_hidden_thread(self._settings, url)
 
     def _del_hidden_nos(self) -> set:
         """削除依頼を出して隠したスレのNo集合。
