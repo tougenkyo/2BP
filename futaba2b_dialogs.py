@@ -4957,6 +4957,20 @@ class AppSettingsDialog(QDialog):
             "※判定にはカタログのmode=json取得（メール欄/IDバッジ か 隔離まとめ表示）が必要です")
         taf.addRow(self._tab_orange_quarantine)
 
+        # 削除依頼(del)
+        g_del = QGroupBox("削除依頼(del)"); f0.addWidget(g_del)
+        _delf = QVBoxLayout(g_del)
+        self._del_hide_after = QCheckBox("受理されたらそのスレをカタログと履歴から隠す")
+        self._del_hide_after.setToolTip(
+            "タブの右クリックから削除依頼を出したとき、ふたばに受理されたら\n"
+            "そのスレをカタログ・履歴に出さなくします。\n"
+            "受け付けてもらえなかった時は隠しません。\n"
+            "隠した記録はNG設定の「delで隠したスレをクリアする」で消せます。")
+        _delf.addWidget(self._del_hide_after)
+        _del_hint = QLabel("タブの右クリック →「このスレの削除依頼(del)…」で使います")
+        _del_hint.setStyleSheet("color: gray; font-size: 11px;")
+        _delf.addWidget(_del_hint)
+
         # 保持件数
         g_keep = QGroupBox("保持件数"); f0.addWidget(g_keep); kpf = QFormLayout(g_keep)
         self._recent_closed_max = _spin(1, 100, " 件", width=80,
@@ -5911,6 +5925,7 @@ class AppSettingsDialog(QDialog):
             getattr(s, "tab_active_row_bottom", True))
         self._tab_pink_op_no_id.setChecked(getattr(s, "tab_pink_op_no_id", False))
         self._tab_orange_quarantine.setChecked(getattr(s, "tab_orange_quarantine", True))
+        self._del_hide_after.setChecked(getattr(s, "del_hide_after_report", True))
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
         self._image_mode_include_ul.setChecked(
             getattr(s, "image_mode_include_uploader", False))
@@ -6104,6 +6119,7 @@ class AppSettingsDialog(QDialog):
         s.tab_active_row_bottom   = self._tab_active_row_bottom.isChecked()
         s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
+        s.del_hide_after_report   = self._del_hide_after.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.image_mode_include_uploader = self._image_mode_include_ul.isChecked()
         # 空にされたら削除できなくなるので、その時は新しくランダム生成する

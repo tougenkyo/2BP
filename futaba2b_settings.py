@@ -811,6 +811,11 @@ class AppSettings:
         # 再起動でも復活していた。設定に持たせて両方に効かせる。
         self.del_hidden_thread_urls: list[str] = []
 
+        # 削除依頼(del)が受理されたら、そのスレをカタログ・履歴から隠すか。
+        # タブの右クリックから出す削除依頼で使う（既定ON=カタログから
+        # 出した時と同じ扱い）。
+        self.del_hide_after_report: bool = True
+
         # レス内NGボタンで非表示にしたレスNo（キー=スレッドURL、値=レスNoリスト）
         self.ng_hidden_res_nos: dict[str, list[int]] = {}
 
@@ -992,6 +997,7 @@ class AppSettings:
             self._ng_reverse_opened_list = list(_rev_list)  # FIFO順序管理用
             self.ng_thread_urls = raw.get("ng_thread_urls", [])
             self.del_hidden_thread_urls = raw.get("del_hidden_thread_urls", [])
+            self.del_hide_after_report = raw.get("del_hide_after_report", True)
             self.ng_hidden_res_nos = {
                 k: list(map(int, v))
                 for k, v in raw.get("ng_hidden_res_nos", {}).items()
@@ -1243,6 +1249,7 @@ class AppSettings:
                         "ng_reverse_opened_urls": self._ng_reverse_opened_list[-2000:],
                         "ng_thread_urls": self.ng_thread_urls,
                         "del_hidden_thread_urls": self.del_hidden_thread_urls[-3000:],
+                        "del_hide_after_report": self.del_hide_after_report,
                         "ng_hidden_res_nos": _ng_hidden,
                         "del_res_nos": _del_res,
                         "my_post_nos": {k: list(v) for k, v in self.my_post_nos.items() if v},

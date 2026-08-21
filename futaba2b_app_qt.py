@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.439"
+APP_VER = "0.9.440"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3596,10 +3596,10 @@ class BoardPane(QWidget):
                 for _p in _matched:
                     menu.addAction(_p).setEnabled(False)
         # ── 削除依頼(del) ──
-        # ふたばへ実際に送る操作なので、他の項目から離して最下段に置く。
-        # 押しても確認を挟むため、掴み損ねてもいきなり送られることはない。
+        # ふたばへ実際に送る操作なので、他の項目から離して最下段に置く
+        # （カタログの右クリックと同じく、押したらすぐ送る）。
         menu.addSeparator()
-        _del_act = menu.addAction("このスレの削除依頼(del)…", self._ctx_report_del)
+        _del_act = menu.addAction("このスレの削除依頼(del)", self._ctx_report_del)
         _del_act.setEnabled(bool(
             isinstance(_w_ctx, ThreadView)
             and not getattr(_w_ctx, '_is_log', False)
@@ -3742,8 +3742,9 @@ class BoardPane(QWidget):
         """右クリックしたスレタブの削除依頼(del)をふたばへ送る。
 
         カタログの右クリックにある削除依頼と同じものを、スレを開いたまま
-        タブから出せるようにしたもの。ふたばへ実際に届く操作なので必ず
-        確認を挟む。送信は1回だけで、つながらなくても送り直さない
+        タブから出せるようにしたもの。カタログ側と同じく確認は挟まずすぐ送る
+        （押し間違い対策はメニュー最下段に離して置くことで行う）。
+        送信は1回だけで、つながらなくても送り直さない
         （同じ依頼が二重に届くのを避ける）。"""
         w = getattr(self, "_ctx_tab_widget", None)
         if not isinstance(w, ThreadView) or getattr(w, "_is_log", False):
@@ -3754,26 +3755,8 @@ class BoardPane(QWidget):
             return
         turl = ((w._thread.url if getattr(w, "_thread", None) else "")
                 or f"{board.base_url}res/{no}.htm")
-        idx  = self._tabs.indexOf(w)
-        label = (self._tabs.tabText(idx) if idx >= 0 else "").strip()
-        box = QMessageBox(self)
-        box.setWindowTitle("削除依頼(del)")
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setText(
-            "このスレの削除依頼をふたばへ送ります。\n\n"
-            f"　No.{no}　{label}\n\n"
-            "送ったあとの取り消しはできません。よろしいですか？")
-        box.setStandardButtons(QMessageBox.StandardButton.Yes
-                               | QMessageBox.StandardButton.No)
-        box.setDefaultButton(QMessageBox.StandardButton.No)
-        chk = QCheckBox("受理されたらカタログと履歴から隠す")
-        chk.setChecked(True)
-        chk.setToolTip("カタログの右クリックから出した時と同じ扱いにします。\n"
-                       "隠した記録は設定の「削除依頼で隠したスレ」から消せます。")
-        box.setCheckBox(chk)
-        if box.exec() != QMessageBox.StandardButton.Yes:
-            return
-        hide = chk.isChecked()
+        # 受理された後に隠すかどうかは設定（全般 →「削除依頼(del)」）に従う
+        hide = bool(getattr(self._settings, "del_hide_after_report", True))
         self._set_status(f"削除依頼を送信中… No.{no}")
         _f = self._fetcher
         def _do():
