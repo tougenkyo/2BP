@@ -161,13 +161,15 @@ def cleanup_image_cache(max_days: int = 7) -> tuple[int, int]:
 
 
 def cleanup_cache_dir(cache_dir, max_days: int = 0,
-                      max_bytes: int = 0) -> tuple[int, int]:
+                      max_bytes: int = 0, keep=None) -> tuple[int, int]:
     """キャッシュディレクトリをクリーンアップする汎用関数。
 
     max_days  > 0: max_days日より古いファイルを削除
     max_bytes > 0: 日数削除後も合計がmax_bytesを超える場合、
                    古い順（mtime昇順=LRU）に超過分を削除
     両方0なら何もしない。
+    keep: 消さないファイルのパス（開いたままの画像タブが見せているもの等）。
+          容量の勘定には入れるが削除対象からは外す。
     Returns: (削除ファイル数, 削除バイト数)
     """
     from pathlib import Path
@@ -175,14 +177,24 @@ def cleanup_cache_dir(cache_dir, max_days: int = 0,
     if (max_days <= 0 and max_bytes <= 0) or not cache_dir.exists():
         return 0, 0
     import time
+    keep_set = set()
+    for p in (keep or ()):
+        try:
+            keep_set.add(_os.path.normcase(_os.path.abspath(str(p))))
+        except Exception:
+            pass
     deleted_count = 0
     deleted_bytes = 0
     files: list[tuple[float, int, Path]] = []   # (mtime, size, path)
+    kept: list[tuple[float, int, Path]] = []    # 残すぶん（容量の勘定だけに使う）
     for f in cache_dir.rglob("*"):
         if not f.is_file():
             continue
         try:
             st = f.stat()
+            if keep_set and _os.path.normcase(_os.path.abspath(str(f))) in keep_set:
+                kept.append((st.st_mtime, st.st_size, f))
+                continue
             files.append((st.st_mtime, st.st_size, f))
         except OSError:
             pass
@@ -205,7 +217,7 @@ def cleanup_cache_dir(cache_dir, max_days: int = 0,
 
     # ② サイズ上限超過分を古い順に削除（LRU）
     if max_bytes > 0:
-        total = sum(sz for _, sz, _ in files)
+        total = sum(sz for _, sz, _ in files) + sum(sz for _, sz, _ in kept)
         if total > max_bytes:
             files.sort(key=lambda t: t[0])   # mtime昇順
             for mtime, size, f in files:

@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.437"
+APP_VER = "0.9.438"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11120,6 +11120,23 @@ class BoardSearchView(QWidget):
         kw = (self._keyword or self._edit.text() or "").strip()
         return f"検索: {kw[:12]}" if kw else "板内検索"
 
+    def save_state(self) -> dict:
+        """終了時に覚えておく内容（検索語と検索先）。結果そのものは持ち越さない。"""
+        return {"keyword": (self._keyword or self._edit.text() or "").strip(),
+                "src": int(self._src.currentIndex())}
+
+    def restore_state(self, st: dict):
+        """save_state の内容を戻す。ここでは検索は走らせない（呼び側が決める）。
+        検索先コンボは変更で自動的に引き直すので、戻す間だけ黙らせる。"""
+        try:
+            i = int(st.get("src", 0) or 0)
+        except (TypeError, ValueError):
+            i = 0
+        self._src.blockSignals(True)
+        self._src.setCurrentIndex(1 if i == 1 else 0)
+        self._src.blockSignals(False)
+        self._edit.setText(str(st.get("keyword", "") or ""))
+
     def focus_input(self):
         self._edit.setFocus()
         self._edit.selectAll()
@@ -13035,6 +13052,11 @@ class AutoRefreshDialog(QDialog):
         super().closeEvent(event)
 
 
+# 終了時に覚えておく画像一覧の上限。長いスレをそのまま持つと設定ファイルが
+# 太るので頭打ちにする（前へ/次へ用。表示中の1枚は必ず保存される）
+_IMG_TAB_SAVE_MAX = 200
+
+
 class ImageTabView(_MouseGestureMixin, QWidget):
     # 画像ページは QWebChannel を持たないため document.title 経由で通知する
     _MG_VIA_TITLE = True
@@ -13739,6 +13761,32 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._mp_seeking = False
 
     # ── 表示切替 ───────────────────────────────────────────────────────────
+
+    def save_state(self) -> dict:
+        """終了時に覚えておく内容。表示は data/img のキャッシュを見ているので、
+        次の起動でも（掃除されていなければ）ふたば側が消えたあとでも出せる。
+
+        前へ/次へのために一覧も持つが、長いスレだと設定ファイルが太るので
+        頭 _IMG_TAB_SAVE_MAX 件までにする。現在の画像がそこから溢れる時は
+        その1枚だけにする（元スレのタブも復元されれば一覧は届き直す）。"""
+        if not self._img_list or not (0 <= self._idx < len(self._img_list)):
+            return {}
+        cur = self._img_list[self._idx]
+        url = str(cur.get("url", "") or "")
+        if not url:
+            return {}
+        lst = [{"url": str(e.get("url", "") or ""),
+                "name": str(e.get("name", "") or ""),
+                "res_no": e.get("res_no", "")}
+               for e in self._img_list[:_IMG_TAB_SAVE_MAX]]
+        idx = self._idx if self._idx < len(lst) else 0
+        if lst[idx].get("url") != url:
+            lst = [{"url": url, "name": str(cur.get("name", "") or ""),
+                    "res_no": cur.get("res_no", "")}]
+            idx = 0
+        src = getattr(self, "_src_thread_view", None)
+        return {"url": url, "idx": idx, "list": lst,
+                "src_no": int(getattr(src, "_thread_no", 0) or 0)}
 
     def update_img_list(self, new_img_list: list):
         """スレ更新後にimg_listを差し替えてカウント表示を更新する"""

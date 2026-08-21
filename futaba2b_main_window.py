@@ -1930,23 +1930,29 @@ class MainWindow(QMainWindow):
                 pane.setCurrentIndex(i)
                 break
         if view is None:
-            view = BoardSearchView(self._fetcher, self._settings, pane)
-            view.set_board(board)
-            view.thread_open.connect(self._open_thread_url)
-            view.thread_open_bg.connect(self._open_thread_url_bg)
-            view.thread_open_at.connect(self._open_thread_url_at)
-            view.thread_open_at_bg.connect(
-                lambda u, n: self._open_thread_url_bg(u, n))
-            view.status_info.connect(self._on_thread_status)
-            view.title_changed.connect(
-                lambda t, _p=pane, _v=view: self._set_search_tab_text(_p, _v, t))
-            pane.addTab(view, "板内検索")
+            view = self._new_board_search_view(pane, board)
             pane.setCurrentIndex(pane.indexOf(view))
         view.set_board(board)
         if keyword:
             view.search(board, keyword)
         else:
             view.focus_input()
+
+    def _new_board_search_view(self, pane, board):
+        """板内検索タブを1枚作って板ペインに足す（配線はここに集約）。
+        新規に開く時と、前回のタブを戻す時の両方から呼ぶ。"""
+        view = BoardSearchView(self._fetcher, self._settings, pane)
+        view.set_board(board)
+        view.thread_open.connect(self._open_thread_url)
+        view.thread_open_bg.connect(self._open_thread_url_bg)
+        view.thread_open_at.connect(self._open_thread_url_at)
+        view.thread_open_at_bg.connect(
+            lambda u, n: self._open_thread_url_bg(u, n))
+        view.status_info.connect(self._on_thread_status)
+        view.title_changed.connect(
+            lambda t, _p=pane, _v=view: self._set_search_tab_text(_p, _v, t))
+        pane.addTab(view, "板内検索")
+        return view
 
     @staticmethod
     def _set_search_tab_text(pane, view, text: str):
@@ -5635,7 +5641,7 @@ class MainWindow(QMainWindow):
             if not isinstance(inner, BoardPane):
                 continue
             tabs_info = []
-            # 保存しないタブ（板内検索など）があるとインデックスがずれるため、
+            # 保存できないタブ（ログ表示など）があるとインデックスがずれるため、
             # アクティブ位置は「保存する並びの中での位置」で数え直す。
             _active_w = inner.currentWidget()
             _active_j = 0
@@ -5646,6 +5652,21 @@ class MainWindow(QMainWindow):
                     tabs_info.append({"type": "catalog", "no": 0, "pinned": is_pinned})
                 elif isinstance(w, ThreadView):
                     tabs_info.append({"type": "thread", "no": w._thread_no, "pinned": is_pinned})
+                elif isinstance(w, (BoardSearchView, ImageTabView)):
+                    # 終了処理の途中で呼ばれても、覚えられないタブを飛ばすだけにする
+                    try:
+                        _st = w.save_state()
+                    except Exception:
+                        continue
+                    if isinstance(w, BoardSearchView):
+                        if not _st.get("keyword"):
+                            continue    # 一度も検索していないタブは覚えない
+                        _st.update({"type": "search", "no": 0, "pinned": is_pinned})
+                    else:
+                        if not _st:
+                            continue    # 見せるものが無いタブは覚えない
+                        _st.update({"type": "image", "no": 0, "pinned": is_pinned})
+                    tabs_info.append(_st)
                 else:
                     continue
                 if w is _active_w:
@@ -5664,21 +5685,26 @@ class MainWindow(QMainWindow):
         画像・動画・スレHTMLの3種別を設定（日数/サイズ上限）に従って削除し、
         旧named profile時代のQtWebEngineディスクキャッシュも掃除する。"""
         s = self._settings
-        jobs = []   # (label, dir, max_days, max_bytes) — メインスレッドで設定値を確定
+        jobs = []   # (label, dir, max_days, max_bytes, keep) — メインスレッドで設定値を確定
         from futaba2b_network import (IMAGE_CACHE_DIR, VIDEO_CACHE_DIR,
                                       THREAD_CACHE_DIR)
+        # 開いたままだった画像タブのぶんは消さない（次の起動でそのまま出せるように）
+        _keep_img, _keep_vid = self._tab_state_media_keep()
         if getattr(s, "cache_img_days_enabled", True) or getattr(s, "cache_img_size_enabled", False):
             jobs.append(("画像", IMAGE_CACHE_DIR,
                 getattr(s, "cache_max_days", 7) if getattr(s, "cache_img_days_enabled", True) else 0,
-                getattr(s, "cache_img_size_mb", 500) * 1048576 if getattr(s, "cache_img_size_enabled", False) else 0))
+                getattr(s, "cache_img_size_mb", 500) * 1048576 if getattr(s, "cache_img_size_enabled", False) else 0,
+                _keep_img))
         if getattr(s, "cache_video_days_enabled", True) or getattr(s, "cache_video_size_enabled", False):
             jobs.append(("動画", VIDEO_CACHE_DIR,
                 getattr(s, "cache_video_days", 3) if getattr(s, "cache_video_days_enabled", True) else 0,
-                getattr(s, "cache_video_size_mb", 1024) * 1048576 if getattr(s, "cache_video_size_enabled", False) else 0))
+                getattr(s, "cache_video_size_mb", 1024) * 1048576 if getattr(s, "cache_video_size_enabled", False) else 0,
+                _keep_vid))
         if getattr(s, "cache_thread_days_enabled", False) or getattr(s, "cache_thread_size_enabled", False):
             jobs.append(("スレHTML", THREAD_CACHE_DIR,
                 getattr(s, "cache_thread_days", 30) if getattr(s, "cache_thread_days_enabled", False) else 0,
-                getattr(s, "cache_thread_size_mb", 200) * 1048576 if getattr(s, "cache_thread_size_enabled", False) else 0))
+                getattr(s, "cache_thread_size_mb", 200) * 1048576 if getattr(s, "cache_thread_size_enabled", False) else 0,
+                ()))
         import threading
         def _run():
             # ⓪ 履歴サムネの保管（画像キャッシュから救出）と掃除。
@@ -5693,8 +5719,9 @@ class MainWindow(QMainWindow):
             self._purge_legacy_webengine_cache()
             # ② 画像・動画・スレHTMLのクリーンアップ
             from futaba2b_network import cleanup_cache_dir
-            for label, cdir, days, max_bytes in jobs:
-                cnt, sz = cleanup_cache_dir(cdir, max_days=days, max_bytes=max_bytes)
+            for label, cdir, days, max_bytes, keep in jobs:
+                cnt, sz = cleanup_cache_dir(cdir, max_days=days,
+                                            max_bytes=max_bytes, keep=keep)
                 if cnt > 0:
                     if sz >= 1048576:
                         print(f"[Cache] {label}自動クリーンアップ: {cnt}件 ({sz/1048576:.0f} MB) 削除")
@@ -5826,6 +5853,88 @@ class MainWindow(QMainWindow):
             self._warmup_view.deleteLater()
             del self._warmup_view
 
+    def _restore_search_tab(self, board, tab: dict):
+        """前回開いていた板内検索タブを戻す。検索語と検索先をそのままに引き直す
+        （結果そのものは持ち越さない。ふたば側もキャッシュ側も変わるため）。"""
+        pane = self._get_or_create_board_tab(board, activate=False)
+        if pane is None:
+            return
+        for i in range(pane.count()):
+            if isinstance(pane.widget(i), BoardSearchView):
+                return                      # 検索タブは板ごとに1枚
+        view = self._new_board_search_view(pane, board)
+        view.restore_state(tab)
+        self._set_search_tab_text(pane, view, view.tab_label())
+        if tab.get("keyword"):
+            view.run_search()
+
+    def _restore_image_tab(self, board, tab: dict, foreground: bool):
+        """前回開いていた画像タブを戻す。
+
+        画像タブは data/img のキャッシュを見せる作りなので、ふたば側から
+        元画像が消えていてもキャッシュが残っていればそのまま表示できる
+        （残るように _tab_state_media_keep で自動削除から外している）。"""
+        pane = self._get_or_create_board_tab(board, activate=False)
+        if pane is None:
+            return
+        url = str(tab.get("url", "") or "")
+        if not url:
+            return
+        lst = [e for e in (tab.get("list") or []) if e.get("url")]
+        if not lst:
+            lst = [{"url": url, "name": url.rsplit("/", 1)[-1].split("?")[0],
+                    "res_no": ""}]
+        try:
+            idx = int(tab.get("idx", 0) or 0)
+        except (TypeError, ValueError):
+            idx = 0
+        if not (0 <= idx < len(lst)) or lst[idx].get("url") != url:
+            idx = next((i for i, e in enumerate(lst) if e.get("url") == url), 0)
+        for i in range(pane.count()):          # 同じ画像のタブが既にあれば作らない
+            w = pane.widget(i)
+            if (isinstance(w, ImageTabView) and w._img_list
+                    and 0 <= w._idx < len(w._img_list)
+                    and w._img_list[w._idx].get("url") == url):
+                return
+        view = ImageTabView(url, lst, idx, self._fetcher, pane, self._settings)
+        view.set_settings(self._settings)
+        view.open_settings.connect(lambda: self._open_settings("画像保存"))
+        view.image_navigated.connect(self._record_recent_image)
+        view.open_image_tab_bg.connect(self._open_image_tab_bg)
+        name = (lst[idx].get("name") or "画像")[:14]
+        i = pane.addTab(view, f"🖼 {name}")
+        if foreground:
+            pane.setCurrentIndex(i)
+
+    def _tab_state_media_keep(self):
+        """前回開いたままだった画像タブが見せている画像・動画のパスを集める。
+
+        画像タブはキャッシュ(data/img・video_cache)を表示しているので、
+        起動時の自動クリーンアップで消えると、ふたば側から元が消えたあとに
+        見返せなくなる。開いたままにしていたぶんだけ削除対象から外す。
+        Returns: (画像のパス集合, 動画のパス集合)"""
+        imgs, vids = set(), set()
+        try:
+            boards = self._settings.tab_state.get("boards", [])
+        except Exception:
+            return imgs, vids
+        for entry in boards:
+            for t in entry.get("inner_tabs", []):
+                if t.get("type") != "image":
+                    continue
+                url = str(t.get("url", "") or "")
+                if not url.lower().startswith(("http://", "https://")):
+                    continue
+                base = url.split("?", 1)[0].lower()
+                try:
+                    if base.endswith((".webm", ".mp4", ".mov", ".m4v")):
+                        vids.add(VideoPlayerWindow._cache_path(url))
+                    else:
+                        imgs.add(self._fetcher._img_disk_path(url))
+                except Exception:
+                    pass
+        return imgs, vids
+
     def _restore_tab_state(self):
         boards = self._settings.tab_state.get("boards", [])
         if not boards:
@@ -5871,13 +5980,20 @@ class MainWindow(QMainWindow):
         def _restore_pins_and_active():
             """全タブ生成後に、保存時の type/no で実タブを照合してピン留め・
             アクティブ内側タブを復元する（タブ位置は保存順のまま保持済み）"""
-            def _match_widget(_pane, _type, _no):
+            def _match_widget(_pane, _t):
+                _type, _no = _t.get("type"), _t.get("no")
                 for k in range(_pane.count()):
                     wv = _pane.widget(k)
                     if _type == "catalog" and isinstance(wv, CatalogView):
                         return wv
                     if (_type == "thread" and isinstance(wv, ThreadView)
                             and getattr(wv, "_thread_no", None) == _no):
+                        return wv
+                    if _type == "search" and isinstance(wv, BoardSearchView):
+                        return wv
+                    if (_type == "image" and isinstance(wv, ImageTabView)
+                            and wv._img_list and 0 <= wv._idx < len(wv._img_list)
+                            and wv._img_list[wv._idx].get("url") == _t.get("url")):
                         return wv
                 return None
             for entry in boards:
@@ -5895,14 +6011,29 @@ class MainWindow(QMainWindow):
                 # ピン留め復元
                 for t in saved:
                     if t.get("pinned"):
-                        wv = _match_widget(pane, t.get("type"), t.get("no"))
+                        wv = _match_widget(pane, t)
                         if wv:
                             pane._pin_tab(wv)
+                # 画像タブを元スレへ結び直す。スレが読み終わると画像一覧が
+                # 届き、保存しきれなかったぶんも含めて前へ/次へが元通りになる。
+                for t in saved:
+                    if t.get("type") != "image" or not t.get("src_no"):
+                        continue
+                    wv = _match_widget(pane, t)
+                    if wv is None:
+                        continue
+                    for k in range(pane.count()):
+                        tv = pane.widget(k)
+                        if (isinstance(tv, ThreadView)
+                                and getattr(tv, "_thread_no", None) == t["src_no"]):
+                            wv._src_thread_view = tv
+                            if getattr(tv, "_img_list", None):
+                                wv.update_img_list(tv._img_list)
+                            break
                 # アクティブ内側タブ復元
                 ai_saved = entry.get("active_inner", 0)
                 if 0 <= ai_saved < len(saved):
-                    at = saved[ai_saved]
-                    wv = _match_widget(pane, at.get("type"), at.get("no"))
+                    wv = _match_widget(pane, saved[ai_saved])
                     if wv:
                         ai = pane._tabs.indexOf(wv)
                         if ai >= 0:
@@ -5937,6 +6068,10 @@ class MainWindow(QMainWindow):
                     base = board.url.rsplit("/futaba.htm", 1)[0].rstrip("/") + "/"
                     thread_url = f"{base}res/{tab['no']}.htm"
                     self._open_thread_url_bg(thread_url)
+            elif tab["type"] == "search":
+                self._restore_search_tab(board, tab)
+            elif tab["type"] == "image":
+                self._restore_image_tab(board, tab, foreground)
 
             # アクティブ板のタブを開き終えたら一旦アクティブ板を前面に出してUIを使える状態に
             if idx == n_active - 1:
