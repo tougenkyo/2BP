@@ -5765,6 +5765,13 @@ class MainWindow(QMainWindow):
                     saved += 1
             except Exception:
                 pass
+        if not keep:
+            # 残すスレが1つも無い＝設定を読めなかった等の可能性がある。
+            # ここで掃除すると保管庫を丸ごと消してしまうので何もしない。
+            # 本当に履歴0件なら、次に何か開いたときの掃除で追いつく。
+            if saved:
+                print(f"[HistThumb] 保管: {saved}件")
+            return
         try:
             removed = self._fetcher.prune_history_thumbs(keep)
         except Exception:
