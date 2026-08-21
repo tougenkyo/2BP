@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QRadioButton, QListWidget, QListWidgetItem, QInputDialog,
     QApplication, QStyle, QStylePainter, QStyleOptionTab, QSizePolicy,
     QListView, QToolButton, QMenu, QStyledItemDelegate,
+    QAbstractSpinBox, QSlider, QPlainTextEdit, QFrame,
 )
 
 from futaba2b_models   import BoardInfo
@@ -3910,6 +3911,348 @@ class NgImageEditDialog(QDialog):
 # NG設定ダイアログ
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── 設定ダイアログの項目検索 ────────────────────────────────────────────────
+
+def _layout_has(lay, w) -> bool:
+    """レイアウト（入れ子も含む）が w を持っているか"""
+    if lay is None:
+        return False
+    for i in range(lay.count()):
+        it = lay.itemAt(i)
+        if it is None:
+            continue
+        if it.widget() is w:
+            return True
+        if it.layout() is not None and _layout_has(it.layout(), w):
+            return True
+    return False
+
+
+class SettingsSearchBar(QWidget):
+    """設定ダイアログの一番上に置く「設定項目の検索」。
+
+    設定・NG設定・板の設定はどれもタブとグループが多く、目当ての項目が
+    どこにあるか分かりにくい。入力すると当てはまる項目を一覧に出し、
+    選ぶとそのタブへ切り替え、その場所まで送って一瞬光らせる。
+
+    項目はダイアログの中身に手を入れずに済むよう、組み立て終わった
+    ウィジェットの木を1回だけ歩いて集める（最初に入力した時に1度だけ）。
+    探す対象は「フォームの見出し・チェックボックス等の文字・ツールチップ・
+    グループ名・タブ名」。ツールチップまで見るのは、2BPの設定は説明を
+    ツールチップに書いているものが多く、そこを外すと探せなくなるため。"""
+
+    # 項目として拾うウィジェット。QLabel は見出しなので項目にはしない
+    _LEAF = (QCheckBox, QRadioButton, QComboBox, QAbstractSpinBox, QLineEdit,
+             QPushButton, QToolButton, QTextEdit, QPlainTextEdit,
+             QTableWidget, QListWidget, QSlider)
+
+    def __init__(self, dialog: QDialog, placeholder: str = ""):
+        super().__init__(dialog)
+        self._dlg   = dialog
+        self._items: list | None = None      # 最初の入力で集める
+        self._flash_w = None
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 4)
+        lay.setSpacing(6)
+        _ic = QLabel("🔍")
+        lay.addWidget(_ic)
+        self._edit = QLineEdit()
+        self._edit.setPlaceholderText(
+            placeholder or "設定項目を検索（例: タブ, 画像, 更新）")
+        self._edit.setClearButtonEnabled(True)
+        self._edit.textChanged.connect(self._on_text)
+        self._edit.installEventFilter(self)
+        lay.addWidget(self._edit, 1)
+        self._count = QLabel("")
+        self._count.setStyleSheet(
+            f"color:{_TM.ui('text_muted', '#888')};font-size:11px;")
+        lay.addWidget(self._count)
+
+        # 結果一覧はダイアログの子として浮かせる。レイアウトに入れると
+        # 打つたびにタブの高さが伸び縮みして落ち着かないため。
+        self._list = QListWidget(dialog)
+        self._list.setWindowFlags(Qt.WindowType.Widget)
+        self._list.setUniformItemSizes(True)
+        self._list.hide()
+        self._list.itemClicked.connect(self._on_pick)
+        self._list.itemActivated.connect(self._on_pick)
+
+    # ── 収集 ────────────────────────────────────────────────────────────
+    def _is_leaf(self, w) -> bool:
+        if not isinstance(w, self._LEAF):
+            return False
+        # コンボやスピンの中の QLineEdit などは項目として数えない
+        p = w.parentWidget()
+        while p is not None and p is not self._dlg:
+            if p is self or p is self._list:
+                return False
+            if isinstance(p, self._LEAF):
+                return False
+            p = p.parentWidget()
+        return True
+
+    @staticmethod
+    def _own_text(w) -> str:
+        """そのウィジェット自身が名乗っている文字。入力欄・スピン・コンボの
+        「中身」は設定値であって項目名ではないので、見出し文字には使わない
+        （代わりにプレースホルダを使う）。"""
+        if isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit,
+                          QAbstractSpinBox, QComboBox)):
+            attrs = ("placeholderText",)
+        else:
+            attrs = ("text", "title")
+        for attr in attrs:
+            f = getattr(w, attr, None)
+            if not callable(f):
+                continue
+            try:
+                t = (f() or "").strip()
+            except Exception:
+                t = ""
+            if t and len(t) <= 80:
+                return t
+        return ""
+
+    @staticmethod
+    def _form_label(w) -> str:
+        """QFormLayout の見出しを引く。addRow の第2引数が入れ子の
+        レイアウトだと labelForField では取れないので、行を総当りする。"""
+        p = w.parentWidget()
+        lay = p.layout() if p is not None else None
+        if not isinstance(lay, QFormLayout):
+            return ""
+        lbl = lay.labelForField(w)
+        if isinstance(lbl, QLabel):
+            return (lbl.text() or "").strip()
+        for r in range(lay.rowCount()):
+            fi = lay.itemAt(r, QFormLayout.ItemRole.FieldRole)
+            if fi is None or fi.layout() is None:
+                continue
+            if _layout_has(fi.layout(), w):
+                li = lay.itemAt(r, QFormLayout.ItemRole.LabelRole)
+                if li is not None and isinstance(li.widget(), QLabel):
+                    return (li.widget().text() or "").strip()
+        return ""
+
+    def _tab_jumps(self, w):
+        """w に辿り着くまでに切り替えるタブ [(QTabWidget, index), ...] と、
+        表示に使うタブ名（外側から並べる）"""
+        anc, cur = [], w
+        while cur is not None:
+            anc.append(cur)
+            if cur is self._dlg:
+                break
+            cur = cur.parentWidget()
+        ids = {id(a) for a in anc}
+        jumps, names = [], []
+        for a in anc:
+            if not isinstance(a, QTabWidget):
+                continue
+            for i in range(a.count()):
+                if id(a.widget(i)) in ids:
+                    jumps.append((a, i))
+                    names.append((a.tabText(i) or "").replace("&", "").strip())
+                    break
+        jumps.reverse(); names.reverse()
+        return jumps, names
+
+    @staticmethod
+    def _group_title(w) -> str:
+        p = w.parentWidget()
+        while p is not None:
+            if isinstance(p, QGroupBox):
+                return (p.title() or "").strip()
+            p = p.parentWidget()
+        return ""
+
+    def _collect(self):
+        out, seen = [], set()
+
+        def _add(w, name):
+            name = (name or "").strip()
+            if not name:
+                return
+            jumps, tabs = self._tab_jumps(w)
+            grp  = self._group_title(w)
+            tip  = ""
+            try:
+                tip = (w.toolTip() or "").replace("\n", " ")
+            except Exception:
+                pass
+            parts = [p for p in (" ".join(tabs), grp, name) if p]
+            disp  = "  ›  ".join(parts)
+            key = (disp, id(w))
+            if key in seen:
+                return
+            seen.add(key)
+            out.append({
+                "w": w, "jumps": jumps, "disp": disp,
+                "name": name.lower(),
+                "outer": (" ".join(tabs) + " " + grp).lower(),
+                "hay": (disp + " " + tip).lower(),
+                # タブの並び順で出す（findChildren の順は作った順で読みにくい）
+                "rank": tuple(i for _, i in jumps) + (len(out),),
+            })
+
+        for w in self._dlg.findChildren(QWidget):
+            if isinstance(w, QGroupBox):
+                # グループそのものも拾う（「キャッシュ」等で塊に飛べる）
+                if w.title():
+                    _add(w, w.title())
+                continue
+            if not self._is_leaf(w):
+                continue
+            if w.parent() is not None and isinstance(w.parentWidget(), QDialogButtonBox):
+                continue          # OK/キャンセルは設定項目ではない
+            if isinstance(w, (QCheckBox, QRadioButton, QPushButton, QToolButton)):
+                name = self._own_text(w) or self._form_label(w)
+            else:
+                name = self._form_label(w) or self._own_text(w)
+            if not name:
+                # 見出しもラベルも無いものは、説明の1行目を名前に使う
+                tip = (w.toolTip() or "").strip()
+                name = tip.splitlines()[0][:60] if tip else ""
+            _add(w, name)
+        out.sort(key=lambda e: e["rank"])
+        return out
+
+    # ── 検索 ────────────────────────────────────────────────────────────
+    def _on_text(self, text: str):
+        q = (text or "").strip().lower()
+        if not q:
+            self._list.hide(); self._count.setText("")
+            return
+        if self._items is None:
+            self._items = self._collect()
+        terms = [t for t in q.split() if t]
+        hits = [e for e in self._items
+                if all(t in e["hay"] for t in terms)]
+        # 項目名で当たったもの→グループ・タブ名で当たったもの→説明文だけで
+        # 当たったもの、の順に出す。同じ強さならタブの並び順。
+        def _score(e):
+            if all(t in e["name"] for t in terms):
+                return 0
+            if all(t in e["name"] + " " + e["outer"] for t in terms):
+                return 1
+            return 2
+        hits.sort(key=lambda e: (_score(e), e["rank"]))
+        self._list.clear()
+        for e in hits[:200]:
+            it = QListWidgetItem(e["disp"])
+            it.setData(Qt.ItemDataRole.UserRole, e)
+            self._list.addItem(it)
+        if not hits:
+            self._count.setText("見つかりません")
+            self._list.hide()
+            return
+        self._count.setText(f"{len(hits)}件" + ("（先頭200件）" if len(hits) > 200 else ""))
+        self._list.setCurrentRow(0)
+        self._place_list()
+        self._list.show(); self._list.raise_()
+
+    def _place_list(self):
+        tl = self.mapTo(self._dlg, QPoint(0, self.height()))
+        rows = max(1, min(10, self._list.count()))
+        h = rows * max(18, self._list.sizeHintForRow(0)) + 8
+        w = max(240, self._edit.width() + 40)
+        h = min(h, max(120, self._dlg.height() - tl.y() - 20))
+        self._list.setGeometry(QRect(tl.x(), tl.y(), w, h))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self._list.isVisible():
+            self._place_list()
+
+    # ── 移動 ────────────────────────────────────────────────────────────
+    def _on_pick(self, item):
+        ent = item.data(Qt.ItemDataRole.UserRole)
+        self._list.hide()
+        if ent:
+            self._goto(ent)
+
+    def _goto(self, ent):
+        for tw, i in ent["jumps"]:
+            try:
+                tw.setCurrentIndex(i)
+            except RuntimeError:
+                return
+        w = ent["w"]
+        sa = w.parentWidget()
+        while sa is not None and not isinstance(sa, QScrollArea):
+            sa = sa.parentWidget()
+        def _after():
+            try:
+                if sa is not None:
+                    sa.ensureWidgetVisible(w, 60, 60)
+                if w.focusPolicy() != Qt.FocusPolicy.NoFocus:
+                    w.setFocus(Qt.FocusReason.OtherFocusReason)
+                self._flash(w)
+            except RuntimeError:
+                pass
+        QTimer.singleShot(0, _after)
+
+    def _flash(self, w):
+        """見つけた場所を一瞬だけ枠で囲む。ウィジェット自身のスタイルシートを
+        書き換えるとテーマの指定を潰すので、上に枠だけの板を重ねる。"""
+        try:
+            tl = w.mapTo(self._dlg, QPoint(0, 0))
+        except Exception:
+            return
+        f = self._flash_w
+        if f is None:
+            f = self._flash_w = QFrame(self._dlg)
+            f.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        col = (_TM.ui("accent", "") or _TM.ui("link_color", "") or "#4a90d9")
+        f.setStyleSheet(f"QFrame{{border:2px solid {col};border-radius:3px;"
+                        "background:transparent;}")
+        f.setGeometry(QRect(tl.x() - 3, tl.y() - 3, w.width() + 6, w.height() + 6))
+        f.show(); f.raise_()
+        def _off(_f=f):
+            try:
+                _f.hide()
+            except RuntimeError:
+                pass          # ダイアログが先に閉じられた
+        QTimer.singleShot(1600, _off)
+
+    # ── キー操作 ────────────────────────────────────────────────────────
+    def eventFilter(self, obj, ev):
+        if obj is self._edit and ev.type() == QEvent.Type.FocusIn:
+            # 一度選んだあとに入力欄へ戻ったら、また一覧から選べるようにする
+            if self._edit.text().strip() and not self._list.isVisible():
+                QTimer.singleShot(0, lambda: self._on_text(self._edit.text()))
+        if obj is self._edit and ev.type() == QEvent.Type.KeyPress:
+            k = ev.key()
+            vis = self._list.isVisible()
+            if k in (Qt.Key.Key_Down, Qt.Key.Key_Up) and vis:
+                r = self._list.currentRow()
+                r += 1 if k == Qt.Key.Key_Down else -1
+                self._list.setCurrentRow(max(0, min(self._list.count() - 1, r)))
+                return True
+            if k in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                # 一覧が出ていれば選ぶ。出ていなくても OK ボタンは押さない
+                if vis and self._list.currentItem() is not None:
+                    self._on_pick(self._list.currentItem())
+                return True
+            if k == Qt.Key.Key_Escape:
+                # 一覧を出したままの Esc はダイアログではなく一覧を閉じる
+                if vis:
+                    self._list.hide()
+                    return True
+                if self._edit.text():
+                    self._edit.clear()
+                    return True
+        return super().eventFilter(obj, ev)
+
+
+def install_settings_search(dialog: QDialog, layout, placeholder: str = ""):
+    """ダイアログの一番上に設定項目の検索を差し込む"""
+    bar = SettingsSearchBar(dialog, placeholder)
+    layout.insertWidget(0, bar)
+    dialog._search_bar = bar
+    return bar
+
+
 class NgSettingsDialog(QDialog):
     def __init__(self, settings: AppSettings, parent=None):
         super().__init__(parent)
@@ -3923,6 +4266,8 @@ class NgSettingsDialog(QDialog):
         from PySide6.QtGui import QColor
         lay = QVBoxLayout(self)
         nb  = QTabWidget(); lay.addWidget(nb, 1)
+        install_settings_search(
+            self, lay, "設定項目を検索（例: 画像, スレッド, 逆NG）")
 
         # ────────────────────────────────────────
         # Tab 0: NGワード
@@ -4818,6 +5163,8 @@ class AppSettingsDialog(QDialog):
     def _build(self):
         lay = QVBoxLayout(self)
         nb  = QTabWidget(); lay.addWidget(nb, 1)
+        install_settings_search(
+            self, lay, "設定項目を検索（例: タブ, 画像, キャッシュ, 更新）")
 
         def _scroll(widget):
             sa = QScrollArea(); sa.setWidgetResizable(True); sa.setWidget(widget)
@@ -6820,6 +7167,8 @@ class BoardSettingsDialog(QDialog):
     def _build(self):
         lay = QVBoxLayout(self)
         nb  = QTabWidget(); lay.addWidget(nb, 1)
+        install_settings_search(
+            self, lay, "設定項目を検索（例: カタログ, 自動更新, 文字）")
 
         def _scroll(widget):
             sa = QScrollArea(); sa.setWidgetResizable(True); sa.setWidget(widget)
