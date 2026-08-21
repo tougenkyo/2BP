@@ -689,6 +689,9 @@ class MainWindow(QMainWindow):
         hm.addAction(QAction("GitHub 2BPを開く", self,
             triggered=lambda: _open_url("https://github.com/tougenkyo/2BP")))
         hm.addSeparator()
+        hm.addAction(QAction("ショートカットを作る(&S)…", self,
+                             triggered=self._make_shortcuts))
+        hm.addSeparator()
         hm.addAction(QAction("バージョン情報(&A)…", self, triggered=self._show_about))
 
         # Ctrl+F は WindowShortcut で一元管理（メニューに表示しない）
@@ -5395,6 +5398,52 @@ class MainWindow(QMainWindow):
                         self.setWindowIcon(icon)
                         return
 
+    def _make_shortcuts(self):
+        """デスクトップとスタートメニューに 2BP のショートカットを作る。
+
+        2BP は python.exe から起動するので、実行中の窓をそのままタスクバーへ
+        ピン留めすると Python 本体が登録されてしまい、そこから 2BP を起動できない。
+        ここで作るショートカットには起動時と同じ AppUserModelID を書き込むので、
+        これをピン留めすれば実行中の窓と同じボタンにまとまる。"""
+        import futaba2b_shortcut as _sc_mod
+        if sys.platform != "win32":
+            QMessageBox.information(self, "ショートカットを作る",
+                                    "ショートカットの作成は Windows のみ対応です。")
+            return
+        ret = QMessageBox.question(
+            self, "ショートカットを作る",
+            "デスクトップとスタートメニューに 2BP のショートカットを作ります。\n"
+            "よろしいですか？\n\n"
+            "（同じ名前のショートカットがある場合は作り直します）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        # ウインドウアイコンと同じ絵を .ico にして使う（.lnk は png を扱えない）
+        _png = ""
+        _theme_root = Path(__file__).parent / "theme"
+        for _d in [ThemeManager.theme_dir(), _theme_root]:
+            _p = _d / "icon.png"
+            if _p.exists():
+                _png = str(_p)
+                break
+        r = _sc_mod.install_shortcuts(Path(__file__).parent, _png)
+        if not r["created"]:
+            QMessageBox.warning(
+                self, "ショートカットを作る",
+                "ショートカットを作れませんでした。\n\n"
+                + "\n".join(r["failed"]))
+            return
+        _msg = ("ショートカットを作りました。\n\n"
+                + "\n".join("　" + p for p in r["created"]) + "\n\n"
+                "タスクバーに置くときは、作られた 2BP のショートカットを右クリック\n"
+                "→「詳細」→「タスクバーにピン留めする」を選んでください。\n\n"
+                "起動中の 2BP のボタンを直接ピン留めすると、2BP ではなく\n"
+                "Python 本体が登録されてしまいます。")
+        if r["failed"]:
+            _msg += "\n\n作れなかった場所:\n" + "\n".join("　" + p for p in r["failed"])
+        QMessageBox.information(self, "ショートカットを作る", _msg)
+
     def _show_about(self):
         QMessageBox.information(self, "バージョン情報",
             f"2BP ─ ふたばちゃんねる専用ブラウザ\nバージョン {APP_VER}\n\n"
@@ -6143,6 +6192,18 @@ def _setup_file_logging():
 def main():
     from futaba2b_app_qt import APP_VER
     print(f"2BP v{APP_VER}  起動", flush=True)
+
+    # ── タスクバーの識別子（AppUserModelID）──────────────────────────────
+    # Windows はタスクバーのボタンとピン留めをこの識別子で結び付ける。
+    # 何もしないと python.exe のものになるため、実行中の窓をピン留めすると
+    # 2BP ではなく Python 本体が登録されてしまう。ヘルプ →「ショートカットを
+    # 作る」で作る .lnk にも同じ識別子を書き込むので、そちらをピン留めすれば
+    # 実行中の窓と同じボタンにまとまる。窓を作る前に呼ぶ必要がある。
+    try:
+        import futaba2b_shortcut as _sc_mod
+        _sc_mod.set_process_app_id()
+    except Exception:
+        pass
 
     # ── ログ出力（黒いコンソール）の表示/非表示 ──────────────────────────
     # 設定 show_console が False（既定）なら、起動時に Windows のコンソール
