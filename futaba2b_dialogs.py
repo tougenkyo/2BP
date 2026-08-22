@@ -5227,6 +5227,12 @@ class AppSettingsDialog(QDialog):
         cat_hover_lay.addWidget(self._cat_rev_top)
         cat_hover_lay.addWidget(self._cat_ng_section)
         cat_hover_lay.addWidget(self._cat_quarantine)
+        self._cat_scroll_top = QCheckBox("更新したら先頭に戻る")
+        self._cat_scroll_top.setToolTip(
+            "カタログを更新した時にページの先頭へ戻します。\n"
+            "OFF（既定）だと、更新前に見ていた位置のままになります。\n"
+            "スレが増減した分は多少ずれます。")
+        cat_hover_lay.addWidget(self._cat_scroll_top)
         # 並び替え=履歴 のときの「自書」スレの扱い
         _hs_lay = QHBoxLayout(); _hs_lay.setContentsMargins(0, 0, 0, 0)
         self._hist_self_mode = _NoWheelComboBox()
@@ -6332,6 +6338,8 @@ class AppSettingsDialog(QDialog):
         self._cat_common_id_bottom.setChecked(getattr(s, "catalog_common_id_bottom", False))
         self._cat_rev_top.setChecked(getattr(s, "catalog_reverse_ng_top", True))
         self._cat_ng_section.setChecked(getattr(s, "catalog_ng_section", False))
+        self._cat_scroll_top.setChecked(
+            getattr(s, "catalog_scroll_top_on_reload", False))
         self._hist_self_mode.setCurrentIndex(
             max(0, min(2, int(getattr(s, "history_self_mode", 0) or 0))))
         self._hist_sort_mode.setCurrentIndex(
@@ -6516,6 +6524,7 @@ class AppSettingsDialog(QDialog):
         s.catalog_common_id_bottom = self._cat_common_id_bottom.isChecked()
         s.catalog_reverse_ng_top = self._cat_rev_top.isChecked()
         s.catalog_ng_section = self._cat_ng_section.isChecked()
+        s.catalog_scroll_top_on_reload = self._cat_scroll_top.isChecked()
         s.history_self_mode        = self._hist_self_mode.currentIndex()
         s.history_sort_mode        = self._hist_sort_mode.currentIndex()
         s.catalog_show_email      = False  # メール欄バッジは常にOFF

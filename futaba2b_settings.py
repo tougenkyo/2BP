@@ -546,6 +546,9 @@ class AppSettings:
         self.catalog_reverse_ng_top: bool = True
         # NGで隠したスレをカタログ最下部にまとめる（誤爆の確認用）
         self.catalog_ng_section: bool = False
+        # カタログを更新した時に先頭へ戻すか。
+        # False（既定）＝更新前に見ていた位置のまま。True＝従来どおり先頭へ。
+        self.catalog_scroll_top_on_reload: bool = False
         # 履歴表示で「自書」スレをどう扱うか 0=そのまま / 1=上部にまとめる / 2=自書のみ
         self.history_self_mode: int = 0
         # 履歴表示（並び替え=履歴）の並び基準
@@ -1060,6 +1063,8 @@ class AppSettings:
             self.catalog_common_id_bottom = bool(raw.get("catalog_common_id_bottom", False))
             self.catalog_reverse_ng_top = bool(raw.get("catalog_reverse_ng_top", True))
             self.catalog_ng_section = bool(raw.get("catalog_ng_section", False))
+            self.catalog_scroll_top_on_reload = bool(
+                raw.get("catalog_scroll_top_on_reload", False))
             self.history_self_mode = int(raw.get("history_self_mode", 0))
             self.history_sort_mode = max(0, min(2, int(raw.get("history_sort_mode", 0))))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
@@ -1296,6 +1301,7 @@ class AppSettings:
                         "catalog_common_id_bottom":  self.catalog_common_id_bottom,
                         "catalog_reverse_ng_top":    self.catalog_reverse_ng_top,
                         "catalog_ng_section":        self.catalog_ng_section,
+                        "catalog_scroll_top_on_reload": self.catalog_scroll_top_on_reload,
                         "history_self_mode":         self.history_self_mode,
                         "history_sort_mode":         self.history_sort_mode,
                         "catalog_show_email":    self.catalog_show_email,

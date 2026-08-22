@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.445"
+APP_VER = "0.9.446"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9791,7 +9791,13 @@ class CatalogView(_MouseGestureMixin, QWidget):
         先頭に戻る（「カタログ更新してから移動すると先頭に戻る」の正体）。
         位置合わせは読み込むHTMLの末尾に仕込んだ小さなスクリプトで行う。
         読み込み完了後に外から scrollTo すると、その前に先頭が1フレーム
-        描かれてちらつくため。"""
+        描かれてちらつくため。
+
+        設定「更新したら先頭に戻る」がONの時は控えず、従来どおり先頭から出す。"""
+        if getattr(self._settings, "catalog_scroll_top_on_reload", False):
+            self._pending_scroll = 0
+            self._load_html_via_tempfile(html, base_url)
+            return
         _done = {"v": False}
 
         def _go(y=None):
