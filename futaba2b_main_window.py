@@ -5985,8 +5985,8 @@ class MainWindow(QMainWindow):
         _gap_ms = 0 if len(tasks) <= 8 else (80 if len(tasks) <= 24 else 150)
 
         def _restore_pins_and_active():
-            """全タブ生成後に、保存時の type/no で実タブを照合してピン留め・
-            アクティブ内側タブを復元する（タブ位置は保存順のまま保持済み）"""
+            """全タブ生成後に、保存時の type/no で実タブを照合して
+            並び順・ピン留め・アクティブ内側タブを復元する"""
             def _match_widget(_pane, _t):
                 _type, _no = _t.get("type"), _t.get("no")
                 for k in range(_pane.count()):
@@ -6015,6 +6015,19 @@ class MainWindow(QMainWindow):
                 if pane is None:
                     continue
                 saved = entry.get("inner_tabs", [])
+                # 並び順の復元。タブは保存順に addTab しているので普通はその
+                # ままだが、カタログだけは作る時に必ず先頭へ差し込まれるので
+                # （_show_board_catalog）、放っておくと左端に寄ってしまう。
+                # 保存した並びに合わせて入れ替える。開けなかったタブは飛ばす。
+                _order = []
+                for t in saved:
+                    wv = _match_widget(pane, t)
+                    if wv is not None and wv not in _order:
+                        _order.append(wv)
+                _bar = pane._tabs.tabBar()
+                if _order and hasattr(_bar, "reorder_tabs"):
+                    if _bar.reorder_tabs(_order):
+                        pane._refresh_tab_bar()
                 # ピン留め復元
                 for t in saved:
                     if t.get("pinned"):

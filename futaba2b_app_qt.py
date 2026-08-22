@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.442"
+APP_VER = "0.9.443"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1179,6 +1179,56 @@ class WrapTabBar(QTabBar):
         self._drag_widget_order = []
         self._drag_text_order   = []
         self._drag_tip_order    = []
+
+    def reorder_tabs(self, widgets: list) -> bool:
+        """タブの並びを widgets の順に確定する（前回の並びの復元用）。
+
+        ドラッグ移動と違って一気に確定するので、QTabBar.moveTab でページごと
+        動かす（テキスト・ツールチップは Qt が連動して動かす）。ただし色・
+        アイコン・幅・ID/隔離の印はインデックスを鍵に持っているため、そのままだと
+        別のタブに付いてしまう。ウィジェットを鍵に移し替えてから並べ直す。
+
+        widgets に無いタブは後ろに残る。戻り値=並べ替えたか。"""
+        tw = self.parent()
+        n  = self.count()
+        if tw is None or n == 0:
+            return False
+        want = []
+        for w in widgets:
+            if tw.indexOf(w) >= 0 and w not in want:
+                want.append(w)
+        if not want or [tw.widget(i) for i in range(len(want))] == want:
+            return False
+        # インデックス鍵の見た目 → ウィジェット鍵へ退避
+        keep = {}
+        for i in range(n):
+            keep[tw.widget(i)] = (
+                self._tab_icons.get(i), self._tab_colors.get(i),
+                self._tab_bg_colors.get(i),
+                i in self._tab_id_set, i in self._tab_quar_set)
+        cur_w = tw.currentWidget()
+        for pos, w in enumerate(want):
+            cur = tw.indexOf(w)
+            if cur >= 0 and cur != pos:
+                self.moveTab(cur, pos)
+        self._tab_icons.clear(); self._tab_colors.clear()
+        self._tab_bg_colors.clear(); self._tab_width_cache.clear()
+        self._tab_id_set.clear(); self._tab_quar_set.clear()
+        self._tab_rects_cache_key = None
+        for i in range(n):
+            ic, col, bg, is_id, is_quar = keep.get(
+                tw.widget(i), (None, None, None, False, False))
+            if ic  is not None: self._tab_icons[i]     = ic
+            if col is not None: self._tab_colors[i]    = col
+            if bg  is not None: self._tab_bg_colors[i] = bg
+            if is_id:   self._tab_id_set.add(i)
+            if is_quar: self._tab_quar_set.add(i)
+        if cur_w is not None:
+            ci = tw.indexOf(cur_w)
+            if ci >= 0:
+                tw.setCurrentIndex(ci)
+        self.update()
+        return True
 
     def mouseDoubleClickEvent(self, e):
         # 1回目の押下で setCurrentIndex によりアクティブ行が最下段へ reflow し、
