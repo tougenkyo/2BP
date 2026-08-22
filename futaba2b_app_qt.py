@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.444"
+APP_VER = "0.9.445"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2743,9 +2743,13 @@ def _cat_scroll_go_js(y_expr: str) -> str:
     スレ側の _SCROLL_KEEP_JS と考え方は同じだが、あちらは目印のレスと
     隠しカバー(__anch)を前提にしている。カタログにはどちらも無いので別に持つ。"""
     return ("var __y=(" + y_expr + ")|0,__t=0,__ok=false;"
-            "function __go(){if(__ok)return;"
-            "if(window.scrollY>=__y-2){__ok=true;return;}"
-            "window.scrollTo(0,__y);"
+            # 位置が決まるまで隠しているカバー(__catanch)を外す。
+            # 1回当ててから外す。先に外すと先頭が見えてしまう。
+            "function __show(){var s=document.getElementById('__catanch');"
+            "if(s)s.remove();}"
+            "function __go(){if(__ok){__show();return;}"
+            "if(window.scrollY>=__y-2){__ok=true;__show();return;}"
+            "window.scrollTo(0,__y);__show();"
             "if(window.scrollY>=__y-2){__ok=true;return;}"
             "if(__t++<40)setTimeout(__go,33);}"
             "function __again(){if(!__ok){__t=0;__go();}}"
@@ -9814,10 +9818,22 @@ class CatalogView(_MouseGestureMixin, QWidget):
         QTimer.singleShot(400, _go)
 
     def _inject_keep_scroll_js(self, html: str) -> str:
-        """控えた位置へ戻すスクリプトを body の末尾に足す"""
+        """控えた位置へ戻す仕掛けをHTMLに足す。
+
+        ・位置合わせのスクリプトは body の末尾（要素が揃った所）
+        ・そこへ届く前に描き始めてしまうので、head で一旦隠しておく
+          （カタログは件数が多く、隠さないと先頭が一瞬見える＝ちらつき）
+        隠したままにならないよう、時間切れでも必ず戻す。"""
         y = int(getattr(self, "_pending_scroll", 0) or 0)
         if y <= 0 or "</body>" not in html:
             return html
+        if "<head>" in html:
+            html = html.replace(
+                "<head>",
+                '<head><style id="__catanch">html{visibility:hidden}</style>'
+                '<script>setTimeout(function(){var s='
+                'document.getElementById("__catanch");if(s)s.remove();},1500);'
+                '</script>', 1)
         return html.replace(
             "</body>",
             "<script>(function(){" + _cat_scroll_go_js(str(y)) + "})();</script></body>",
