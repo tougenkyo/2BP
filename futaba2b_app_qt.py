@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.443"
+APP_VER = "0.9.444"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2728,6 +2728,31 @@ class _ElideLabel(QLabel):
         painter.setPen(palette.color(palette.ColorRole.WindowText))
         painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided)
         painter.end()
+
+def _cat_scroll_go_js(y_expr: str) -> str:
+    """カタログのスクロール位置を y_expr へ戻す JS を組み立てる。
+
+    1回 scrollTo するだけでは戻らないことがある。サムネがまだ読めていない
+    うちはページが短く、指定位置がその時の下端に丸められて先頭付近へ落ちる。
+    そこで、届くまで少しの間かけ直す。さらに、裏のタブで読み込み直した時は
+    高さが決まらず届かないまま打ち切られるので、表に出た時にもかけ直す。
+
+    一度でも届いたら（利用者が自分でそこより下へ動かした場合も含めて）
+    それ以降は何もしない。あとから引き戻して操作を邪魔しないため。
+
+    スレ側の _SCROLL_KEEP_JS と考え方は同じだが、あちらは目印のレスと
+    隠しカバー(__anch)を前提にしている。カタログにはどちらも無いので別に持つ。"""
+    return ("var __y=(" + y_expr + ")|0,__t=0,__ok=false;"
+            "function __go(){if(__ok)return;"
+            "if(window.scrollY>=__y-2){__ok=true;return;}"
+            "window.scrollTo(0,__y);"
+            "if(window.scrollY>=__y-2){__ok=true;return;}"
+            "if(__t++<40)setTimeout(__go,33);}"
+            "function __again(){if(!__ok){__t=0;__go();}}"
+            "__go();window.addEventListener('load',__again);"
+            "document.addEventListener('visibilitychange',function(){"
+            "if(!document.hidden)__again();});")
+
 
 def add_del_hidden_thread(settings, url: str):
     """削除依頼(del)が受理されたスレを「隠す」リストへ入れて覚える。
@@ -9340,6 +9365,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._tmp_html_path: str = ""
         self._cat_page_live = False   # カタログページのDOMがロード完了済みか（body入替可能か）
         self._pending_light_body: str | None = None  # ロード完了前に来たマージ再描画body（loadFinished後に適用）
+        self._pending_scroll = 0      # 読み込み直す前に控えたスクロール位置
         self._light_render_once = False  # _re_render_light 実行中フラグ（_renderでbody入替に切替）
         self._showing_history: bool = False  # 表示中が履歴由来のエントリか
         self._hovering: bool = False  # マウスがカタログエントリ上にあるか
@@ -9754,6 +9780,49 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._pending_light_body = None
         self._view.load(QUrl.fromLocalFile(tmp.name))
 
+    def _load_catalog_keep_scroll(self, html: str, base_url: QUrl):
+        """今のスクロール位置を控えてからカタログを読み込み直す。
+
+        カタログ更新は毎回ページごと読み込み直すので、何もしないと必ず
+        先頭に戻る（「カタログ更新してから移動すると先頭に戻る」の正体）。
+        位置合わせは読み込むHTMLの末尾に仕込んだ小さなスクリプトで行う。
+        読み込み完了後に外から scrollTo すると、その前に先頭が1フレーム
+        描かれてちらつくため。"""
+        _done = {"v": False}
+
+        def _go(y=None):
+            if _done["v"]:
+                return
+            _done["v"] = True
+            if y is not None:
+                try:
+                    self._pending_scroll = max(0, int(y or 0))
+                except (TypeError, ValueError):
+                    pass          # 読めなければ前に控えた位置を使う
+            self._load_html_via_tempfile(
+                self._inject_keep_scroll_js(html), base_url)
+
+        if not self._cat_page_live:
+            _go()                 # まだ生きていない＝読み取れない
+            return
+        try:
+            self._view.page().runJavaScript("window.scrollY", _go)
+        except Exception:
+            _go()
+            return
+        # 返事が来ないことがある（破棄中のページ等）。来なくても必ず読み込む
+        QTimer.singleShot(400, _go)
+
+    def _inject_keep_scroll_js(self, html: str) -> str:
+        """控えた位置へ戻すスクリプトを body の末尾に足す"""
+        y = int(getattr(self, "_pending_scroll", 0) or 0)
+        if y <= 0 or "</body>" not in html:
+            return html
+        return html.replace(
+            "</body>",
+            "<script>(function(){" + _cat_scroll_go_js(str(y)) + "})();</script></body>",
+            1)
+
     def _on_cat_load_finished(self, ok: bool):
         """カタログページのロード完了。body入替を解禁し、ロード中に届いた
         マージ再描画（_pending_light_body）があればここで適用する。"""
@@ -9767,12 +9836,16 @@ class CatalogView(_MouseGestureMixin, QWidget):
         """カタログの body だけを差し替える（ページナビゲーションなし・スクロール位置維持）。
         head の CSS/qwebchannel/スクロールJSはそのまま残る。カタログの body には
         script要素が無くハンドラは全てインライン属性のため、innerHTML入替で機能が保たれる。
-        フルリロードで発生する白フラッシュ／スクロールバー伸縮（ちらつき）を避ける。"""
+        フルリロードで発生する白フラッシュ／スクロールバー伸縮（ちらつき）を避ける。
+
+        入替直後の1回だけ scrollTo しても戻らないことがある。サムネがまだ
+        読めていない間はページが短く、指定位置が下端に丸められて先頭付近に
+        落ちるため。届くまで少しの間かけ直す（_cat_scroll_go_js を使う）。"""
         import json as _json
         body_js = _json.dumps(body_inner, ensure_ascii=False)
         js = ("(function(){var y=window.scrollY;"
               "document.body.innerHTML=" + body_js + ";"
-              "window.scrollTo(0,y);})();")
+              + _cat_scroll_go_js("y") + "})();")
         try:
             self._view.page().runJavaScript(js)
         except Exception:
@@ -9999,6 +10072,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             self._email_cache.clear()   # 板が変わったらemailキャッシュは無効
             self._catalog_json_cache.clear()
             self._catalog_json_nos = set()
+            self._pending_scroll = 0    # 別の板の位置に戻しても意味がない
         self._board = board
         self._restore_view_state()   # UI を復元 (シグナルブロック済み)
         # ビュー状態が未保存の板は、板別設定のカタログソートを初期値として適用
@@ -11058,7 +11132,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
                             self_post_section=(_hist_render and
                                 getattr(self._settings, "history_self_mode", 0) == 1))
         # マージ再描画（_re_render_light 経由）はフルリロードせず body のみ入替える。
-        # 通常描画（カタログ取得・ソート・検索等）は従来どおりフルロード（先頭に戻る挙動を維持）。
+        # 通常描画（カタログ取得・ソート・検索等）はフルロードだが、読み込む
+        # HTMLに位置合わせを仕込んで、更新前に見ていた位置へ戻す。
         _light = self._light_render_once
         _swapped = False
         if _light:
@@ -11075,7 +11150,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
                     self._pending_light_body = _body_inner
                 _swapped = True
         if not _swapped:
-            self._load_html_via_tempfile(_cat_html, QUrl("https://www.2chan.net/"))
+            self._load_catalog_keep_scroll(_cat_html, QUrl("https://www.2chan.net/"))
 
         # catalog_read_counts: 未登録スレのみ現在のレス数を基準値として登録する
         # （既登録スレは上書きしない → +N がリセットされない）
