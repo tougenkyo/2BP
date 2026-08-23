@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.453"
+APP_VER = "0.9.454"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2821,6 +2821,11 @@ class DelRequestQueue(QObject):
     RETRY_SEC   = (15, 30, 60, 120)      # 断られた時に置く時間
     MAX_TRIES   = 1 + len(RETRY_SEC)
 
+    # 送り直しても結果が変わらない返事。ここに当たったら1回で打ち切る。
+    # 「同じIPから…」はもう依頼が入っている＝済んでいるという意味なので、
+    # 何度も送り直しても仕方がない（受理と同じ扱いにする）。
+    DONE_WORDS = ("同じIP", "同じip", "同じアイピー")
+
     def __init__(self, fetcher, parent=None):
         super().__init__(parent)
         self._fetcher = fetcher
@@ -2832,9 +2837,17 @@ class DelRequestQueue(QObject):
         self._timer.timeout.connect(self._tick)
         self._bg_done.connect(self._on_done)
 
+    @classmethod
+    def is_already_done(cls, msg: str) -> bool:
+        """「同じIPから…」等、送り直しても意味がない（＝もう入っている）返事か"""
+        t = str(msg or "")
+        return any(w in t for w in cls.DONE_WORDS)
+
     # ── 公開API ──────────────────────────────────────────────────────────
-    def enqueue(self, board, no: int, url: str, kind: str = "res") -> bool:
-        """1件積む。同じものが既に待っていれば積まない（二重送信よけ）"""
+    def enqueue(self, board, no: int, url: str, kind: str = "res",
+                on_done=None) -> bool:
+        """1件積む。同じものが既に待っていれば積まない（二重送信よけ）。
+        on_done(ok, msg, url, no, kind) は結果が出た時にUIスレッドで呼ぶ。"""
         try:
             no = int(no or 0)
         except (TypeError, ValueError):
@@ -2845,7 +2858,8 @@ class DelRequestQueue(QObject):
             if it["no"] == no and it["url"] == url:
                 return False
         self._items.append({"board": board, "no": no, "url": url or "",
-                            "kind": kind or "res", "tries": 0, "at": 0.0})
+                            "kind": kind or "res", "tries": 0, "at": 0.0,
+                            "cb": on_done})
         self.changed.emit(len(self._items))
         if not self._timer.isActive():
             self._timer.start()
@@ -2888,19 +2902,51 @@ class DelRequestQueue(QObject):
 
     def _on_done(self, it, ok: bool, msg: str):
         self._sending = False
-        if ok or it["tries"] >= self.MAX_TRIES:
+        # 「同じIPから…」＝もう依頼が入っている。送り直さず、受理と同じ扱い
+        _already = (not ok) and self.is_already_done(msg)
+        if _already:
+            print(f"[DelQueue] No.{it['no']} は既に依頼済みでした（{msg}）")
+        if ok or _already or it["tries"] >= self.MAX_TRIES:
             if it in self._items:
                 self._items.remove(it)
             self.changed.emit(len(self._items))
             if not self._items:
                 self._timer.stop()
-            self.finished.emit(bool(ok), msg, it["url"], it["no"], it["kind"])
+            _ok = bool(ok or _already)
+            _cb = it.get("cb")
+            if _cb is not None:
+                try:
+                    _cb(_ok, msg, it["url"], it["no"], it["kind"])
+                except RuntimeError:
+                    pass            # 依頼元のタブが閉じられていた
+                except Exception as e:
+                    print(f"[DelQueue] 結果の反映に失敗: {e}")
+            self.finished.emit(_ok, msg, it["url"], it["no"], it["kind"])
             return
         wait = self.RETRY_SEC[min(it["tries"] - 1, len(self.RETRY_SEC) - 1)]
         it["at"] = time.monotonic() + wait
         print(f"[DelQueue] No.{it['no']} は断られました（{msg}）。"
               f"{wait}秒後に送り直します（{it['tries']}/{self.MAX_TRIES}）")
         self.retrying.emit(msg, it["no"], wait)
+
+
+def find_del_queue(w):
+    """親をたどって MainWindow が持っている削除依頼の待ち行列を探す。
+
+    削除依頼はカタログ・スレ・タブ・板内検索のどこからでも出せるので、
+    生成元でいちいち渡さずに済むよう、使う時に上から借りる。
+    見つからなければ None（その場合は呼び出し側がその場で1回だけ送る）。"""
+    seen = 0
+    while w is not None and seen < 30:
+        q = getattr(w, "_del_queue", None)
+        if q is not None:
+            return q
+        m = getattr(w, "_main", None)          # BoardPane は _main を持つ
+        if m is not None and getattr(m, "_del_queue", None) is not None:
+            return m._del_queue
+        w = w.parentWidget() if hasattr(w, "parentWidget") else None
+        seen += 1
+    return None
 
 
 class BoardPane(QWidget):
@@ -9016,8 +9062,21 @@ class ThreadView(_MouseGestureMixin, QWidget):
         if hide:
             self._hide_res_after_del(no)
         self._settings.save()
+        # 送信は待ち行列に任せる（間隔を空けて送り、断られたら送り直す）
+        _q = find_del_queue(self)
+        if _q is not None:
+            _ref = _wr.ref(self)
+            def _cb(ok, msg, _u, _n, _k, _r=_ref):
+                _s = _r()
+                if _s is not None:
+                    _s._del_result.emit(bool(ok), msg or "")
+            if _q.enqueue(board, no, turl, "res", _cb):
+                return
         def _do():
-            ok2, msg = self._fetcher.report_del(board, no, thread_url=turl)
+            try:
+                ok2, msg = self._fetcher.report_del(board, no, thread_url=turl)
+            except Exception as e:      # 行列が無い時はここでは送り直さない
+                ok2, msg = False, str(e)
             self._del_result.emit(ok2, msg)
         threading.Thread(target=_do, daemon=True).start()
 
@@ -10196,6 +10255,16 @@ class CatalogView(_MouseGestureMixin, QWidget):
         no = int(m.group(1))
         board = self._board
         fetcher = self._fetcher
+        # 送信は待ち行列に任せる（間隔を空けて送り、断られたら送り直す）
+        _q = find_del_queue(self)
+        if _q is not None:
+            _ref = _wr.ref(self)
+            def _cb(ok, msg, _u, _n, _k, _r=_ref):
+                _s = _r()
+                if _s is not None:
+                    _s._catalog_del_result.emit(bool(ok), msg or "", _u)
+            _q.enqueue(board, no, url, "thread", _cb)
+            return
         def _do():
             try:
                 ok, msg = fetcher.report_del(board, no, thread_url=url)
@@ -11683,7 +11752,7 @@ class BoardSearchView(QWidget):
             return
         board, fetcher = self._board, self._fetcher
         _kind = "スレ" if kind == "thread" else "レス"
-        _q = getattr(self, "_del_queue", None)
+        _q = getattr(self, "_del_queue", None) or find_del_queue(self)
         if _q is not None:
             if not hasattr(self, "_my_del_nos"):
                 self._my_del_nos = set()
