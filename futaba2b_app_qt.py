@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.456"
+APP_VER = "0.9.457"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6385,6 +6385,31 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 '</script>'
             )
             html = html.replace('<head>', '<head>' + _hide, 1)
+            # 本文の末尾でも一度合わせて、そこで隠すのをやめる。
+            # 読み込み完了(loadFinished)まで隠したままだと、その間ずっと
+            # 真っ白に見える（レスや画像が多いほど長い＝「タブを切り替えると
+            # 一瞬真っ白」の正体）。要素は本文の末尾で出そろっているので、
+            # ここで合わせれば大抵はもう正しい位置に出せる。
+            # 画像で高さが変わるぶんは、従来どおり読み込み完了後に直す。
+            _a_no, _a_off = "", 0
+            if _anchor:
+                try:
+                    _a_no  = str(_anchor[0] or "")
+                    _a_off = int(_anchor[1] or 0)
+                except (TypeError, ValueError, IndexError):
+                    _a_no, _a_off = "", 0
+            html = html.replace(
+                '</body>',
+                '<script>(function(){'
+                'function s(){var e=document.getElementById("__anch");'
+                'if(e)e.remove();}'
+                'try{'
+                f'var n="{_a_no}",o={_a_off},y={max(0, int(self._pending_scroll))};'
+                'var el=n?document.getElementById("r"+n):null;'
+                'if(el){window.scrollTo(0,'
+                'el.getBoundingClientRect().top+window.scrollY-o);}'
+                'else if(y>0){window.scrollTo(0,y);}'
+                '}catch(_e){}s();})();</script></body>', 1)
 
         tmp = tempfile.NamedTemporaryFile(
             mode='w', suffix='.html', encoding='utf-8', delete=False)
