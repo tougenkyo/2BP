@@ -1141,6 +1141,27 @@ function handleCatMouseDown(url, e) {
 }
 function addThreadNg(url) { _b('addThreadNg', [url]); }
 function catalogDel(url)   { _b('catalogDel',  [url]); }
+/* サムネが読めなかった時の差し替え。
+   ふたばは過去ログになるとサムネ(/thumb/)だけ先に消すことがあり、
+   本画像(/src/)は残っている。手元のキャッシュ → 本画像 の順に試す。
+   （キャッシュを先に見るのは、通信せずに済むうえ本画像も消えた後でも
+     出せるため）。どれも駄目なら諦めて、繰り返し試さない。 */
+function thumbFB(im) {
+    var s = +(im.dataset.fbstep || 0);
+    var f = im.getAttribute('data-full') || '';
+    if (!f) { im.dataset.fbstep = '9'; return; }
+    if (s === 0) {
+        var m = f.match(/^https?:\\/\\/([^\\/]+)(\\/.*)$/);
+        if (window.__imgcache && m) {
+            im.dataset.fbstep = '1';
+            im.src = window.__imgcache + m[1] + m[2];
+            return;
+        }
+        s = 1;
+    }
+    if (s <= 1) { im.dataset.fbstep = '2'; im.src = f; return; }
+    im.dataset.fbstep = '9';
+}
 /* 削除依頼の結果を受けてカタログの見た目を確定する。
    受理された(ok)ならカタログから除く。断られたら元に戻す（消さない）。 */
 function catalogDelDone(url, ok) {
@@ -2473,6 +2494,7 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
             img_html = (
                 f'<div class="thumb">'
                 f'<img src="{tu}"{_dim} loading="lazy" data-full="{eu}" '
+                f'onerror="thumbFB(this)" '
                 f'onclick="openImg(\'{eu}\',{img_tab_idx})" '
                 f'onmousedown="if(event.button===1){{event.preventDefault();openImgBg(\'{eu}\',{img_tab_idx});}}">'
                 f'</div>'
@@ -2795,6 +2817,7 @@ def thread_to_html(thread, show_deleted: bool = False,
         f'{_usr}'
         f'<script>{ID_POPUP_JS}</script>'
         f'{WEBCHANNEL_JS}'
+        f'{img_cache_root_js()}'
         f'<script>{_scroll_js}</script>'
         f'</head><body{body_class}>{body}{footer_html}</body></html>'
     )
@@ -3402,6 +3425,19 @@ def _sr_hit_html(h, keyword: str, thread_url_esc: str) -> str:
             f'<div class="sr-meta">{"".join(meta)}</div>'
             f'{thumb}<div class="sr-com">'
             f'{_sr_mark_keyword(h.comment_html, keyword)}</div></div>')
+
+
+def img_cache_root_js() -> str:
+    """画像キャッシュ(data/img)を file:// で指す1行を返す。
+
+    サムネがふたばから消えた時の差し替え先に使う（thumbFB）。
+    取れなければ空を返し、その場合は本画像への差し替えだけになる。"""
+    try:
+        from pathlib import Path as _P
+        u = _P("data/img").resolve().as_uri().rstrip("/") + "/"
+        return f'<script>window.__imgcache="{u}";</script>'
+    except Exception:
+        return ""
 
 
 def _sr_page(body: str, user_css: str = "") -> str:

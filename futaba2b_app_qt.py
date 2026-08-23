@@ -90,7 +90,8 @@ from futaba2b_models   import (BoardInfo, BoardCategory, AutoRefreshEntry, Catal
 from futaba2b_network  import FutabaFetcher
 from futaba2b_settings import AppSettings, NgFilter
 from futaba2b_html     import (thread_to_html, catalog_to_html, render_res, search_to_html,
-                               THREAD_CSS, WEBCHANNEL_JS)
+                               THREAD_CSS, WEBCHANNEL_JS,
+                               img_cache_root_js as _img_cache_root_js)
 from futaba2b_bridge   import ThreadBridge, CatalogBridge
 from futaba2b_const    import UA, ThemeManager as _TM
 
@@ -123,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.447"
+APP_VER = "0.9.448"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -7720,7 +7721,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             img_tag = (f' <img class="{_qt_cls}" src="{res.thumb_url}" loading="lazy"'
                        f' onclick="openImg(\'{res.image_url}\',{_ii});return false;"'
                        f' onmousedown="if(event.button===1){{event.preventDefault();openImgBg(\'{res.image_url}\',{_ii});}}"'
-                       f' data-full="{res.image_url}">'
+                       f' data-full="{res.image_url}" onerror="thumbFB(this)">'
                        if res.image_url and res.thumb_url else "")
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
@@ -7791,6 +7792,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             f"<style>{THREAD_CSS}{_qt_add}</style>"
             f"{_usr_q}"
             f"{WEBCHANNEL_JS}"
+            f"{_img_cache_root_js()}"
             f"{_scroll_js}"
             f"</head><body{self._page_body_class('quote')}>{getattr(self,'_error_banner_html','')}{chr(10).join(rows)}"
             f"{self._expiry_banner_html(self._thread)}{res_pool}{self._thread_footer_html(self._thread)}"
@@ -7891,7 +7893,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             img_tag = (f' <img class="{_qt_cls}" src="{res.thumb_url}" loading="lazy"'
                        f' onclick="openImg(\'{res.image_url}\',{_ii});return false;"'
                        f' onmousedown="if(event.button===1){{event.preventDefault();openImgBg(\'{res.image_url}\',{_ii});}}"'
-                       f' data-full="{res.image_url}">'
+                       f' data-full="{res.image_url}" onerror="thumbFB(this)">'
                        if res.image_url and res.thumb_url else "")
             txt = _esc(_short(res))
             no_str = f'<a class="qt-no" href="#r{no}" onclick="delRes({no},this);return false;">No.{no}</a>'
@@ -8078,7 +8080,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                               ' data-full="'+_ua+'">')
             else:
                 _media = ('<img src="'+_esc(it['thumb'], quote=True)+'" loading="lazy"'
-                          ' data-full="'+_ua+'">')
+                          ' data-full="'+_ua+'" onerror="thumbFB(this)">')
             items.append(
                 '<div class="'+_gi_cls+'" data-res-no="'+str(r.no)+'" data-img-url="'+_ua+'"'
                 ' onclick="_giClick(event,'+str(idx)+',this)"'
@@ -8124,6 +8126,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
               f'<style>{THREAD_CSS}{_img_add}</style>'
               f'{_usr_i}'
               f'{WEBCHANNEL_JS}'
+              f'{_img_cache_root_js()}'
               '<script>'+_img_js+'</script>'
               f'{_scroll_js_img}'
               f'</head><body{self._page_body_class("image")}>{getattr(self,"_error_banner_html","")}<div class="wrap"><div class="grid">{"".join(items)}</div></div>'
