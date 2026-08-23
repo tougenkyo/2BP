@@ -40,7 +40,8 @@ from futaba2b_app_qt import (
     BoardSearchView,
     AutoRefreshManager, AutoRefreshDialog,
     _compute_interval_sec,
-    _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view, _safe_run_js,
+    _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
+    _dispose_tab_view_later, _safe_run_js,
     _schedule_gc,
     _JapaneseLineEdit,
     suppress_context_menu as _suppress_ctx_menu,
@@ -2285,7 +2286,7 @@ class MainWindow(QMainWindow):
                         pane.tab_closing.emit(view)
                         self._ar_mgr.remove_by_view(view)
                         tabs.removeTab(idx)
-                        _dispose_tab_view(view)
+                        _dispose_tab_view_later(view)
                     else:
                         # 最後の1枚は閉じない（従来動作）。実際には閉じていないので
                         # 履歴には積まず、_auto_closed の印も付けない。
@@ -2624,7 +2625,7 @@ class MainWindow(QMainWindow):
         idx = inner.indexOf(view)
         if idx >= 0:
             inner.removeTab(idx)
-            _dispose_tab_view(view)
+            _dispose_tab_view_later(view)
 
     def _step_tab(self, delta: int):
         """スレタブを左右に移動する。端まで来たら反対の端へ回り込む。
@@ -2908,7 +2909,7 @@ class MainWindow(QMainWindow):
                 if isinstance(w, ThreadView) and w._thread and w._thread.url == url:
                     if pane._tabs.count() > 1:
                         pane._tabs.removeTab(ii)
-                        _dispose_tab_view(w)
+                        _dispose_tab_view_later(w)
                     self._refresh_tab_pane(); return
 
     def _on_tab_pane_select(self, url: str):

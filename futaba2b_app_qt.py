@@ -123,7 +123,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.446"
+APP_VER = "0.9.447"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -189,6 +189,22 @@ class _NoWheelComboBox(QComboBox):
 
 
 
+def _dispose_tab_view_later(w, delay_ms: int = 50):
+    """タブを外した後の破棄を、タブバーが描き直されてから行う。
+
+    1000レス級の重いスレは WebEngine のページを切り離すところで時間が
+    かかることがあり、閉じた流れの中でそのままやると、タブが消えるのが
+    そのぶん遅れて「押しても数秒閉じない」ように見える（実況スレの報告）。
+    先に隠してからタイマーへ逃がすので、見た目は即座に閉じる。"""
+    if w is None:
+        return
+    try:
+        w.hide()
+    except (AttributeError, RuntimeError):
+        pass
+    QTimer.singleShot(max(0, delay_ms), lambda _w=w: _dispose_tab_view(_w))
+
+
 def _dispose_tab_view(w):
     """閉じたタブのビューをUIスレッドで確実に破棄するヘルパー。
     removeTab() はウィジェットを削除しないため、参照が切れたビューは
@@ -208,6 +224,8 @@ def _dispose_tab_view(w):
         w._disposed = True
     except (AttributeError, RuntimeError):
         return
+    import time as _t_dis
+    _t0_dis = _t_dis.perf_counter()
     try:
         if hasattr(w, 'cleanup'):
             w.cleanup()
@@ -217,6 +235,10 @@ def _dispose_tab_view(w):
         w.deleteLater()
     except Exception:
         pass
+    # 遅い時だけ出す。「閉じるのに数秒かかる」報告を切り分けるための手掛かり
+    _dt_dis = _t_dis.perf_counter() - _t0_dis
+    if _dt_dis > 0.3:
+        print(f"[Close] ビューの破棄に {_dt_dis*1000:.0f} ms かかりました")
     _schedule_gc()   # 破棄後に遅延GCで循環参照(BS4/Qt)を回収しRSSを下げる
 
 
@@ -2680,7 +2702,7 @@ class InnerTabWidget(QTabWidget):
         if isinstance(w, CatalogView): return   # カタログタブは閉じない
         self.tab_closing.emit(w)   # 閉じる前にビューを通知
         self.removeTab(idx)
-        _dispose_tab_view(w)
+        _dispose_tab_view_later(w)
 
 
 
@@ -3153,7 +3175,7 @@ class BoardPane(QWidget):
 
         self._tabs.removeTab(idx)
         if not isinstance(w, CatalogView):
-            _dispose_tab_view(w)
+            _dispose_tab_view_later(w)
 
         # 履歴内の残りインデックスを補正（閉じたタブ以降をデクリメント）
         self._tab_history = [
@@ -3729,45 +3751,57 @@ class BoardPane(QWidget):
                 QTimer.singleShot(_delay, lambda v=_w: v.load(self._board))
                 _delay += 250
 
+    # まとめて閉じる時は破棄を少しずつずらす。重いスレを何枚も同時に
+    # 畳むと、そのぶん固まって「閉じたのに操作できない」時間になる。
+    _BULK_DISPOSE_STEP_MS = 60
+
     def _gesture_close_all(self):
         """全てのビューを閉じる（マウスジェスチャー用）。
         カタログタブとピン留めタブは他の「閉じる」操作と同様に残す。"""
+        _n = 0
         for i in range(self._tabs.count() - 1, -1, -1):
             _w = self._tabs.widget(i)
             if isinstance(_w, CatalogView) or _w in self._pinned:
                 continue
             self.tab_closing.emit(_w)
             self._tabs.removeTab(i)
-            _dispose_tab_view(_w)
+            _dispose_tab_view_later(_w, 50 + _n * self._BULK_DISPOSE_STEP_MS)
+            _n += 1
         if self._tabs.count() == 0:
             self._tab_stack.setCurrentIndex(1)
             self._title_lbl.setFullText("")
 
     def _ctx_close_others(self):
         keep = self._ctx_tab_idx
+        _n = 0
         for i in range(self._tabs.count() - 1, -1, -1):
             _w = self._tabs.widget(i)
             if i != keep and not isinstance(_w, CatalogView) and _w not in self._pinned:
                 self.tab_closing.emit(_w)
                 self._tabs.removeTab(i)
-                _dispose_tab_view(_w)
+                _dispose_tab_view_later(_w, 50 + _n * self._BULK_DISPOSE_STEP_MS)
+                _n += 1
                 if i < keep: keep -= 1
 
     def _ctx_close_left(self):
+        _n = 0
         for i in range(self._ctx_tab_idx - 1, -1, -1):
             _w = self._tabs.widget(i)
             if not isinstance(_w, CatalogView) and _w not in self._pinned:
                 self.tab_closing.emit(_w)
                 self._tabs.removeTab(i)
-                _dispose_tab_view(_w)
+                _dispose_tab_view_later(_w, 50 + _n * self._BULK_DISPOSE_STEP_MS)
+                _n += 1
 
     def _ctx_close_right(self):
+        _n = 0
         for i in range(self._tabs.count() - 1, self._ctx_tab_idx, -1):
             _w = self._tabs.widget(i)
             if not isinstance(_w, CatalogView) and _w not in self._pinned:
                 self.tab_closing.emit(_w)
                 self._tabs.removeTab(i)
-                _dispose_tab_view(_w)
+                _dispose_tab_view_later(_w, 50 + _n * self._BULK_DISPOSE_STEP_MS)
+                _n += 1
 
     def _ctx_add_fav(self):
         url = self._get_tab_url(self._ctx_tab_idx)
@@ -9058,9 +9092,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
         _bridge = getattr(self, '_bridge', None)
         self._page = self._profile = self._channel = self._bridge = None
 
-        # WebEngineView を空ページに差し替えて旧pageを完全に切り離す
+        # WebEngineView を空ページに差し替えて旧pageを完全に切り離す。
+        # 差し替えの前にビューを隠す。表示されたままだと、切り離しに合わせて
+        # 重いページ（1000レス級）の再合成が走り、そのぶん待たされる。
         try:
             if getattr(self, '_view', None) is not None:
+                self._view.hide()
                 blank = QWebEnginePage(self)
                 self._view.setPage(blank)
         except Exception:
