@@ -232,6 +232,10 @@ class CatalogBridge(QObject):
     copy_to_clipboard_requested = Signal(str)  # クリップボードコピー
     add_thread_ng_requested  = Signal(str)   # スレッドURLをNGに追加
     catalog_del_requested    = Signal(str)   # 削除依頼(del) → スレッドURL
+    # 削除依頼(del) をレス単位でも出せるようにしたもの。
+    # (スレURL, 対象No, "thread" or "res")。ふたばの del.php はどちらも
+    # 「番号」を送るだけで、スレ番号を送ればスレごとの依頼になる。
+    res_del_requested        = Signal(str, int, str)
     catalog_ng_image_requested = Signal(str, str)  # スレ画NG登録 (スレURL, サムネURL)
     catalog_ng_word_requested  = Signal(str, str)  # スレ文からNGワード登録 (スレURL, 本文)
     scroll_bottom_reached    = Signal()      # スクロール末尾 → 更新トリガー
@@ -276,6 +280,11 @@ class CatalogBridge(QObject):
     @Slot(str)
     def catalogDel(self, url: str):
         self.catalog_del_requested.emit(url)
+
+    @Slot(str, int, str)
+    def delRes(self, url: str, no: int, kind: str):
+        """JS: delRes(スレURL, 対象No, kind) → 削除依頼（レス単位／スレ単位）"""
+        self.res_del_requested.emit(url, int(no or 0), kind or "res")
 
     @Slot(str, str)
     def catalogNgImage(self, thread_url: str, thumb_url: str):

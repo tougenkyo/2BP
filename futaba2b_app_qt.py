@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.451"
+APP_VER = "0.9.452"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11377,6 +11377,7 @@ class BoardSearchView(QWidget):
         # 検索結果の右クリックから、スレを開かずにNG・削除依頼を出せるようにする
         self._bridge.add_thread_ng_requested.connect(self._on_add_thread_ng)
         self._bridge.catalog_del_requested.connect(self._on_search_del)
+        self._bridge.res_del_requested.connect(self._on_search_del_res)
         self._del_result.connect(self._on_search_del_result)
         self._result_ready.connect(self._on_result)
 
@@ -11519,51 +11520,64 @@ class BoardSearchView(QWidget):
         self._lbl.setText("このスレをNGにしました")
 
     def _on_search_del(self, url: str):
-        """右クリック→削除依頼(del)。カタログから出すものと同じ。
+        """スレ単位の削除依頼（URLだけ渡された時の入口）"""
+        m = re.search(r'res/(\d+)\.htm', url or "")
+        if m:
+            self._on_search_del_res(url, int(m.group(1)), "thread")
+
+    def _on_search_del_res(self, url: str, no: int, kind: str = "res"):
+        """削除依頼(del)を出す。kind="thread" ならスレごと、"res" ならその
+        レスだけ。ふたばの del.php はどちらも番号を送るだけで、スレ番号を
+        送ればスレ扱いになる。
 
         送信は1回だけで、つながらなくても送り直さない（同じ依頼が二重に
-        届くのを避ける）。受理された時だけ「隠す」記録を残す。"""
-        if not url or not self._board:
+        届くのを避ける）。受理された時だけ記録を残す。"""
+        if not url or not self._board or not no:
             return
-        m = re.search(r'res/(\d+)\.htm', url)
-        if not m:
-            return
-        no = int(m.group(1))
         board, fetcher = self._board, self._fetcher
-        self._lbl.setText(f"削除依頼を送信中… No.{no}")
+        _kind = "スレ" if kind == "thread" else "レス"
+        self._lbl.setText(f"{_kind}の削除依頼を送信中… No.{no}")
 
         def _do():
             try:
                 ok, msg = fetcher.report_del(board, no, thread_url=url)
             except Exception as e:      # つながらなくても送り直さない
                 ok, msg = False, str(e)
-            print(f"[SEARCH_DEL] No.{no} ok={ok} msg={msg!r}")
+            print(f"[SEARCH_DEL] {kind} No.{no} ok={ok} msg={msg!r}")
             _self = _wr.ref(self)()
             if _self is not None:
-                _self._del_result.emit(bool(ok), msg or "", url)
+                _self._del_result.emit(bool(ok), msg or "",
+                                       f"{url}\t{no}\t{kind}")
         threading.Thread(target=_do, daemon=True).start()
 
-    def _on_search_del_result(self, ok: bool, msg: str, url: str):
+    def _on_search_del_result(self, ok: bool, msg: str, key: str):
         """削除依頼の結果を結果一覧へ返す。ふたばは「操作が早すぎます」等で
-        受け付けないことがあるので、受理された時だけ記録して印を付ける。"""
+        受け付けないことがあるので、受理された時だけ記録して印を付ける。
+        断られた時はボタンを押せる状態に戻す（出し直せるように）。"""
+        _p = (key or "").split("\t")
+        url  = _p[0] if _p else ""
+        no   = int(_p[1]) if len(_p) > 1 and _p[1].isdigit() else 0
+        kind = _p[2] if len(_p) > 2 else "res"
         text = (msg or ("登録しました" if ok else "削除依頼に失敗しました")).strip()
         if ok:
-            add_del_hidden_thread(self._settings, url)
-            _m = re.search(r'res/(\d+)\.htm', url or "")
-            if _m:
+            # スレごとの依頼が通った時だけ、カタログ・履歴からも隠す
+            if kind == "thread":
+                add_del_hidden_thread(self._settings, url)
+            if no:
                 _lst = self._settings.del_res_nos.setdefault(url, [])
-                _no = int(_m.group(1))
-                if _no not in _lst:
-                    _lst.append(_no)
+                if no not in _lst:
+                    _lst.append(no)
                     self._settings.save()
+        _kind = "スレ" if kind == "thread" else "レス"
         try:
-            self._lbl.setText(("削除依頼: " if ok else "削除依頼に失敗: ") + text)
+            self._lbl.setText(
+                (f"{_kind}の削除依頼: " if ok else f"{_kind}の削除依頼に失敗: ") + text)
         except RuntimeError:
             return                    # 閉じられたタブ
-        _u = (url or "").replace("\\", "\\\\").replace('"', '\\"')
-        _safe_run_js(self._view,
-                     'if(window.srDelDone)srDelDone("%s",%s);'
-                     % (_u, "true" if ok else "false"))
+        if no:
+            _safe_run_js(self._view,
+                         'if(window.srDelDone)srDelDone(%d,%s);'
+                         % (no, "true" if ok else "false"))
 
     def reload(self):
         """更新ボタン等から呼ばれた時は、同じ語で引き直す"""

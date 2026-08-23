@@ -3340,11 +3340,27 @@ body {
 }
 .sr-hit:hover { background: rgba(128,0,0,0.06); }
 .sr-hit::after { content: ""; display: block; clear: both; }
-/* 右クリックからNG・削除依頼した結果を、開かなくても見て分かるようにする。
-   スレ単位の操作なので、そのスレのかたまり全体に印を付ける */
-.sr-thread.sr-pending { opacity: 0.45; }
+/* del ボタン。スレの見出しにも各レスにも置く（押すとすぐ送る） */
+.sr-del {
+    display: inline-block; margin-left: 6px; padding: 0 5px;
+    font-size: 8pt; font-weight: normal; cursor: pointer;
+    color: #a00; border: 1px solid #a00; border-radius: 3px;
+    background: rgba(170,0,0,0.06); vertical-align: middle;
+    -webkit-user-select: none; user-select: none;
+}
+.sr-del:hover { background: #a00; color: #fff; }
+.sr-del.sr-del-busy { opacity: 0.5; pointer-events: none; }
+.sr-del.sr-del-ok   { color: #060; border-color: #060; background: rgba(0,102,0,0.08); }
+.sr-del.sr-del-ok::after { content: "済"; }
+.sr-del.sr-del-ng   { color: #888; border-color: #888; background: none; }
+
+/* NG・削除依頼の結果を、開かなくても見て分かるようにする。
+   スレ単位はそのスレのかたまり全体、レス単位はその行だけに印を付ける */
+.sr-thread.sr-pending, .sr-hit.sr-pending { opacity: 0.45; }
 .sr-thread.sr-nged, .sr-thread.sr-deled { opacity: 0.5; }
-.sr-thread.sr-nged .sr-com, .sr-thread.sr-deled .sr-com { text-decoration: line-through; }
+.sr-hit.sr-deled { opacity: 0.5; }
+.sr-thread.sr-nged .sr-com, .sr-thread.sr-deled .sr-com,
+.sr-hit.sr-deled .sr-com { text-decoration: line-through; }
 .sr-thread.sr-nged .sr-th-head::after  { content: " ＮＧにした"; color: var(--no-color, #800000); }
 .sr-thread.sr-deled .sr-th-head::after { content: " 削除依頼を出した"; color: var(--no-color, #800000); }
 .sr-meta { font-size: 8pt; color: var(--date-color, #800000); }
@@ -3409,13 +3425,44 @@ function srMarkDone(url, cls) {
     var g = srGroups(url);
     for (var i = 0; i < g.length; i++) g[i].classList.add(cls);
 }
-function srDelDone(url, ok) {
-    var g = srGroups(url);
-    for (var i = 0; i < g.length; i++) {
-        g[i].classList.remove('sr-pending');
-        if (ok) g[i].classList.add('sr-deled');
+/* delボタン（スレの見出し or レスの行）。押すとすぐ送る。
+   結果が返るまでは薄くして、二重に押せないようにする。 */
+function srDelClick(ev, btn) {
+    ev.preventDefault(); ev.stopPropagation();
+    if (btn.classList.contains('sr-del-busy')) return;
+    var url  = btn.getAttribute('data-del-url') || '';
+    var no   = Number(btn.getAttribute('data-del-no') || 0);
+    var kind = btn.getAttribute('data-del-kind') || 'res';
+    if (!url || !no) return;
+    srDelSetState(no, 'pending');
+    _b('delRes', [url, no, kind]);
+}
+/* del の対象（スレなら塊、レスならその行）と、押したボタンを返す */
+function srDelBtn(no) {
+    return document.querySelector('.sr-del[data-del-no="' + no + '"]');
+}
+function srDelTarget(no) {
+    var b = srDelBtn(no);
+    if (!b || !b.closest) return null;
+    return (b.getAttribute('data-del-kind') === 'thread')
+        ? b.closest('.sr-thread') : b.closest('.sr-hit');
+}
+/* state: pending=送信中 / ok=受理 / ng=断られた（押し直せる） */
+function srDelSetState(no, state) {
+    var b = srDelBtn(no), t = srDelTarget(no);
+    if (b) {
+        b.classList.remove('sr-del-busy', 'sr-del-ok', 'sr-del-ng');
+        if (state === 'pending') b.classList.add('sr-del-busy');
+        else if (state === 'ok') b.classList.add('sr-del-ok', 'sr-del-busy');
+        else if (state === 'ng') b.classList.add('sr-del-ng');
+    }
+    if (t) {
+        t.classList.remove('sr-pending');
+        if (state === 'pending') t.classList.add('sr-pending');
+        else if (state === 'ok') t.classList.add('sr-deled');
     }
 }
+function srDelDone(no, ok) { srDelSetState(no, ok ? 'ok' : 'ng'); }
 document.addEventListener('contextmenu', function(e) {
     /* スレの見出しでも、その下の各レスの行でも同じメニューを出す */
     var el = e.target.closest ? e.target.closest('.sr-hit, .sr-th-head') : null;
@@ -3438,10 +3485,20 @@ document.addEventListener('contextmenu', function(e) {
         addThreadNg(url);
         srMarkDone(url, 'sr-nged');
     });
-    ctxAddItem(menu, '削除依頼(del)', function(){
-        catalogDel(url);
-        /* 受理されるとは限らないので、結果(srDelDone)を待つ間は薄く出す */
-        srMarkDone(url, 'sr-pending');
+    /* レスの行で押した時は、そのレスだけの削除依頼も選べるようにする */
+    if (no) {
+        var tno = Number((url.match(/res\\/(\\d+)\\.htm/) || [0, 0])[1]);
+        if (no !== tno) {
+            ctxAddItem(menu, 'このレスの削除依頼(del)', function(){
+                srDelSetState(no, 'pending');
+                _b('delRes', [url, no, 'res']);
+            }, true);
+        }
+    }
+    ctxAddItem(menu, 'このスレの削除依頼(del)', function(){
+        var tno = Number((url.match(/res\\/(\\d+)\\.htm/) || [0, 0])[1]);
+        if (tno) srDelSetState(tno, 'pending');
+        _b('delRes', [url, tno, 'thread']);
     }, true);
     document.body.appendChild(menu);
     ctxFit(menu);
@@ -3476,9 +3533,21 @@ def _sr_mark_keyword(com_html: str, keyword: str) -> str:
     return "".join(out)
 
 
+def _sr_del_btn(url_esc: str, no: int, kind: str) -> str:
+    """検索結果に置く del ボタン。押すとその場で削除依頼を送る。
+
+    kind="thread" はスレごと、"res" はそのレスだけ。ふたばの del.php は
+    どちらも「レス番号」を送るだけで、スレ番号を送ればスレ扱いになる。"""
+    return (f'<span class="sr-del" data-del-url="{url_esc}" data-del-no="{no}"'
+            f' data-del-kind="{kind}"'
+            f' title="{"このスレ" if kind == "thread" else "このレス"}の削除依頼を出す"'
+            f' onclick="srDelClick(event,this)">del</span>')
+
+
 def _sr_hit_html(h, keyword: str, thread_url_esc: str) -> str:
     meta = [f'<span class="sr-date">{_html.escape(_sr_time(h.datetime_str))}</span>',
-            f'<span class="sr-no">No.{h.no}</span>']
+            f'<span class="sr-no">No.{h.no}</span>',
+            _sr_del_btn(thread_url_esc, h.no, "res")]
     if h.is_op:
         meta.append('<span class="sr-op">スレ本文</span>')
     thumb = ""
@@ -3604,7 +3673,9 @@ def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
         body.append(
             f'<div class="sr-thread">'
             f'<div class="sr-th-head" data-url="{_u}" '
-            f"onclick=\"srOpen('{_u}',0)\">スレ No.{th_no}{_sub_html}"
+            f"onclick=\"srOpen('{_u}',0)\">スレ No.{th_no} "
+            + _sr_del_btn(_u, th_no, "thread")
+            + f'{_sub_html}'
             f' <span class="sr-th-cnt">（{len(ghits)}件）</span></div>')
         for h in ghits:
             body.append(_sr_hit_html(h, kw, _u))
