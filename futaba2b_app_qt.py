@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.452"
+APP_VER = "0.9.453"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2799,6 +2799,110 @@ def add_del_hidden_thread(settings, url: str):
     settings.save()
 
 
+class DelRequestQueue(QObject):
+    """削除依頼(del)の送信待ち行列。
+
+    ふたばは短い間に何度も送ると「操作が早すぎます」で断る。荒らしのスレを
+    まとめて片付ける時はまさにこれに当たるので、間隔を空けて1件ずつ送り、
+    断られたぶんは時間を置いて送り直す。待ち件数は changed で知らせる
+    （ステータスバーの右端に出す）。
+
+    ※投稿(POST)は接続エラーでも送り直さない決まりにしているが、削除依頼は
+      ここだけ例外にしている。二重に届いても同じ依頼が重なるだけで、投稿の
+      ように内容が二重に載ることはないため（利用者の要望）。
+      送り直しには上限があり、無限には試さない。"""
+
+    changed   = Signal(int)                        # 待ち件数
+    finished  = Signal(bool, str, str, int, str)   # ok, msg, url, no, kind
+    retrying  = Signal(str, int, int)              # msg, no, 何秒後に送り直すか
+    _bg_done  = Signal(object, bool, str)          # BG→UI
+
+    MIN_GAP_SEC = 3.0                    # 送信と送信の間隔
+    RETRY_SEC   = (15, 30, 60, 120)      # 断られた時に置く時間
+    MAX_TRIES   = 1 + len(RETRY_SEC)
+
+    def __init__(self, fetcher, parent=None):
+        super().__init__(parent)
+        self._fetcher = fetcher
+        self._items: list = []
+        self._sending = False
+        self._last_sent = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+        self._bg_done.connect(self._on_done)
+
+    # ── 公開API ──────────────────────────────────────────────────────────
+    def enqueue(self, board, no: int, url: str, kind: str = "res") -> bool:
+        """1件積む。同じものが既に待っていれば積まない（二重送信よけ）"""
+        try:
+            no = int(no or 0)
+        except (TypeError, ValueError):
+            return False
+        if board is None or no <= 0:
+            return False
+        for it in self._items:
+            if it["no"] == no and it["url"] == url:
+                return False
+        self._items.append({"board": board, "no": no, "url": url or "",
+                            "kind": kind or "res", "tries": 0, "at": 0.0})
+        self.changed.emit(len(self._items))
+        if not self._timer.isActive():
+            self._timer.start()
+        self._tick()
+        return True
+
+    def pending(self) -> int:
+        return len(self._items)
+
+    def stop(self):
+        self._timer.stop()
+
+    # ── 中身 ─────────────────────────────────────────────────────────────
+    def _tick(self):
+        if not self._items:
+            self._timer.stop()
+            return
+        if self._sending:
+            return
+        now = time.monotonic()
+        if now - self._last_sent < self.MIN_GAP_SEC:
+            return
+        it = next((x for x in self._items if x["at"] <= now), None)
+        if it is None:
+            return                      # まだ待ち時間の途中
+        self._sending = True
+        self._last_sent = now
+        it["tries"] += 1
+        _f, _b, _no, _u = self._fetcher, it["board"], it["no"], it["url"]
+
+        def _do(_it=it):
+            try:
+                ok, msg = _f.report_del(_b, _no, thread_url=_u)
+            except Exception as e:
+                ok, msg = False, str(e)
+            print(f"[DelQueue] No.{_no} ({_it['kind']}) "
+                  f"{_it['tries']}回目 ok={ok} msg={msg!r}")
+            self._bg_done.emit(_it, bool(ok), msg or "")
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_done(self, it, ok: bool, msg: str):
+        self._sending = False
+        if ok or it["tries"] >= self.MAX_TRIES:
+            if it in self._items:
+                self._items.remove(it)
+            self.changed.emit(len(self._items))
+            if not self._items:
+                self._timer.stop()
+            self.finished.emit(bool(ok), msg, it["url"], it["no"], it["kind"])
+            return
+        wait = self.RETRY_SEC[min(it["tries"] - 1, len(self.RETRY_SEC) - 1)]
+        it["at"] = time.monotonic() + wait
+        print(f"[DelQueue] No.{it['no']} は断られました（{msg}）。"
+              f"{wait}秒後に送り直します（{it['tries']}/{self.MAX_TRIES}）")
+        self.retrying.emit(msg, it["no"], wait)
+
+
 class BoardPane(QWidget):
     """1板につき1個。新着/返信/更新/自動更新の共通ツールバー + タブを管理する。"""
     tab_closing = Signal(object)   # タブが閉じられる直前にビューを通知
@@ -3871,16 +3975,35 @@ class BoardPane(QWidget):
                 or f"{board.base_url}res/{no}.htm")
         # 受理された後に隠すかどうかは設定（全般 →「削除依頼(del)」）に従う
         hide = bool(getattr(self._settings, "del_hide_after_report", True))
+        # 送信は待ち行列に任せる（間隔を空けて送り、断られたら送り直す）
+        _q = getattr(self._main, "_del_queue", None) if self._main else None
+        if _q is not None:
+            if not hasattr(self, "_del_hide_by_no"):
+                self._del_hide_by_no = {}
+            if _q.enqueue(board, no, turl, "thread"):
+                self._del_hide_by_no[no] = hide
+                _n = _q.pending()
+                self._set_status(f"削除依頼を送ります… No.{no}"
+                                 + (f"（待ち {_n}件）" if _n > 1 else ""))
+            return
         self._set_status(f"削除依頼を送信中… No.{no}")
         _f = self._fetcher
         def _do():
             try:
                 ok, msg = _f.report_del(board, no, thread_url=turl)
-            except Exception as e:      # つながらなくても送り直さない
+            except Exception as e:      # 行列が無い時はここでは送り直さない
                 ok, msg = False, str(e)
             print(f"[TAB_DEL] No.{no} ok={ok} msg={msg!r}")
             self._del_result.emit(bool(ok), msg or "", turl, hide)
         threading.Thread(target=_do, daemon=True).start()
+
+    def on_del_queue_finished(self, ok: bool, msg: str, url: str,
+                              no: int, kind: str):
+        """行列から返ってきた結果のうち、このペインが積んだぶんを反映する"""
+        _map = getattr(self, "_del_hide_by_no", None)
+        if not _map or no not in _map:
+            return
+        self._on_ctx_del_result(ok, msg, url, bool(_map.pop(no)))
 
     def _on_ctx_del_result(self, ok: bool, msg: str, url: str, hide: bool):
         """削除依頼の結果を出す。
@@ -11317,6 +11440,8 @@ class BoardSearchView(QWidget):
         self._keyword  = ""
         self._inflight = False
         self._tmp_html_path: str = ""
+        self._del_queue = None          # set_del_queue で受け取る
+        self._my_del_nos: set = set()   # 自分が積んだ削除依頼のNo
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -11525,23 +11650,56 @@ class BoardSearchView(QWidget):
         if m:
             self._on_search_del_res(url, int(m.group(1)), "thread")
 
+    def set_del_queue(self, queue):
+        """削除依頼の送信待ち行列を受け取る（MainWindow が持っているもの）。
+        断られたぶんを時間を置いて送り直すのはこの行列の仕事。"""
+        self._del_queue = queue
+        if queue is not None:
+            queue.finished.connect(self._on_queue_finished)
+            queue.retrying.connect(self._on_queue_retrying)
+
+    def _on_queue_finished(self, ok: bool, msg: str, url: str, no: int, kind: str):
+        """行列から返ってきた結果。自分が積んだぶんだけ拾う"""
+        if no in getattr(self, "_my_del_nos", set()):
+            self._my_del_nos.discard(no)
+            self._on_search_del_result(ok, msg, f"{url}\t{no}\t{kind}")
+
+    def _on_queue_retrying(self, msg: str, no: int, wait: int):
+        if no not in getattr(self, "_my_del_nos", set()):
+            return
+        try:
+            self._lbl.setText(f"削除依頼 No.{no}: {msg} → {wait}秒後に送り直します")
+        except RuntimeError:
+            pass
+
     def _on_search_del_res(self, url: str, no: int, kind: str = "res"):
         """削除依頼(del)を出す。kind="thread" ならスレごと、"res" ならその
         レスだけ。ふたばの del.php はどちらも番号を送るだけで、スレ番号を
         送ればスレ扱いになる。
 
-        送信は1回だけで、つながらなくても送り直さない（同じ依頼が二重に
-        届くのを避ける）。受理された時だけ記録を残す。"""
+        送信は待ち行列に任せる（間隔を空けて1件ずつ、断られたら時間を置いて
+        送り直す）。行列が無い場面ではその場で1回だけ送る。"""
         if not url or not self._board or not no:
             return
         board, fetcher = self._board, self._fetcher
         _kind = "スレ" if kind == "thread" else "レス"
+        _q = getattr(self, "_del_queue", None)
+        if _q is not None:
+            if not hasattr(self, "_my_del_nos"):
+                self._my_del_nos = set()
+            if _q.enqueue(board, no, url, kind):
+                self._my_del_nos.add(no)
+                _n = _q.pending()
+                self._lbl.setText(
+                    f"{_kind}の削除依頼を送ります… No.{no}"
+                    + (f"（待ち {_n}件）" if _n > 1 else ""))
+            return
         self._lbl.setText(f"{_kind}の削除依頼を送信中… No.{no}")
 
         def _do():
             try:
                 ok, msg = fetcher.report_del(board, no, thread_url=url)
-            except Exception as e:      # つながらなくても送り直さない
+            except Exception as e:      # 行列が無い時はここでは送り直さない
                 ok, msg = False, str(e)
             print(f"[SEARCH_DEL] {kind} No.{no} ok={ok} msg={msg!r}")
             _self = _wr.ref(self)()

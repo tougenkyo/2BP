@@ -37,7 +37,7 @@ from futaba2b_app_qt import (
     APP_VER, _DebugPage, WrapTabBar, Interceptor, InnerTabWidget,
     BoardTreePane, BoardPane,
     VideoPlayerWindow, ThreadView, CatalogView, ImageTabView, ImageWindow,
-    BoardSearchView,
+    BoardSearchView, DelRequestQueue,
     AutoRefreshManager, AutoRefreshDialog,
     _compute_interval_sec,
     _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
@@ -256,6 +256,11 @@ class MainWindow(QMainWindow):
         self._image_window = None   # 画像表示モード=ウインドウ の単一インスタンス
         self._ar_mgr       = AutoRefreshManager(self._fetcher, self._settings, self)
         self._ar_dlg: "AutoRefreshDialog | None" = None
+        # 削除依頼(del)の送信待ち行列。間隔を空けて1件ずつ送り、断られたぶんは
+        # 時間を置いて送り直す。待ち件数はステータスバーの右端に出す。
+        self._del_queue    = DelRequestQueue(self._fetcher, self)
+        self._del_queue.changed.connect(self._on_del_queue_changed)
+        self._del_queue.finished.connect(self._on_del_queue_finished)
         # 右ボタン＋ホイールのタブ移動。WebEngineの中のウィジェットが受け取る
         # ホイールも拾えるよう、アプリ全体のフィルタとして入れる
         self._rb_wheel_armed = 0.0   # タブ移動直後（右クリックメニュー抑止）の時刻
@@ -404,6 +409,7 @@ class MainWindow(QMainWindow):
 
         self._st_log = _lbl("起動中…")  # ログ領域（右端まで伸びる）
         self._st_scroll = _lbl()         # 末尾スクロール残回数
+        self._st_delq = _lbl()           # 削除依頼の送信待ち件数（右端）
 
         # 左寄せで順番に追加（ログだけ stretch=1 で残余幅を埋める）
         for w in [self._st_viewers, _sep(),
@@ -415,6 +421,8 @@ class MainWindow(QMainWindow):
                   self._st_scroll,  _sep()]:
             self._status.addWidget(w)
         self._status.addWidget(self._st_log, 1)  # stretch=1
+        # 削除依頼の待ち件数は右端に出す（普段は空）
+        self._status.addPermanentWidget(self._st_delq)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter = self._splitter
@@ -1939,11 +1947,29 @@ class MainWindow(QMainWindow):
         else:
             view.focus_input()
 
+    def _on_del_queue_changed(self, n: int):
+        """削除依頼の送信待ち件数をステータスバーの右端に出す（0なら消す）"""
+        try:
+            self._st_delq.setText(f"削除依頼 待ち {n}件" if n else "")
+        except RuntimeError:
+            pass
+
+    def _on_del_queue_finished(self, ok, msg, url, no, kind):
+        """行列の結果を、それを積んだ板ペインへ配る（タブの右クリック由来）"""
+        for i in range(self._outer_tabs.count()):
+            w = self._outer_tabs.widget(i)
+            if isinstance(w, BoardPane):
+                try:
+                    w.on_del_queue_finished(ok, msg, url, no, kind)
+                except Exception:
+                    pass
+
     def _new_board_search_view(self, pane, board):
         """板内検索タブを1枚作って板ペインに足す（配線はここに集約）。
         新規に開く時と、前回のタブを戻す時の両方から呼ぶ。"""
         view = BoardSearchView(self._fetcher, self._settings, pane)
         view.set_board(board)
+        view.set_del_queue(self._del_queue)
         view.thread_open.connect(self._open_thread_url)
         view.thread_open_bg.connect(self._open_thread_url_bg)
         view.thread_open_at.connect(self._open_thread_url_at)
@@ -6189,6 +6215,12 @@ class MainWindow(QMainWindow):
         try:
             if getattr(self, "_ar_mgr", None) is not None:
                 self._ar_mgr.stop()
+        except Exception:
+            pass
+        try:
+            # 終了中に削除依頼を送り直しに行かせない（待ちは持ち越さない）
+            if getattr(self, "_del_queue", None) is not None:
+                self._del_queue.stop()
         except Exception:
             pass
         try:
