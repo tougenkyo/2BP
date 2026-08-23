@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.448"
+APP_VER = "0.9.449"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11306,6 +11306,7 @@ class BoardSearchView(QWidget):
     status_info    = Signal(object)
     title_changed  = Signal(str)   # タブ見出しの更新
     _result_ready  = Signal(object)   # BG→UI (SearchResult)
+    _del_result    = Signal(bool, str, str)   # 削除依頼の結果 (ok, msg, スレURL)
 
     def __init__(self, fetcher: FutabaFetcher, settings: AppSettings, parent=None):
         super().__init__(parent)
@@ -11373,6 +11374,10 @@ class BoardSearchView(QWidget):
         self._bridge.url_open_requested.connect(_open_url)
         self._bridge.copy_to_clipboard_requested.connect(
             lambda t: QGuiApplication.clipboard().setText(t))
+        # 検索結果の右クリックから、スレを開かずにNG・削除依頼を出せるようにする
+        self._bridge.add_thread_ng_requested.connect(self._on_add_thread_ng)
+        self._bridge.catalog_del_requested.connect(self._on_search_del)
+        self._del_result.connect(self._on_search_del_result)
         self._result_ready.connect(self._on_result)
 
         _self_ref = _wr.ref(self)
@@ -11500,6 +11505,65 @@ class BoardSearchView(QWidget):
         tmp.write(html); tmp.close()
         self._tmp_html_path = tmp.name
         self._view.load(QUrl.fromLocalFile(tmp.name))
+
+    # ── 検索結果の右クリック（開かずにNG・削除依頼） ─────────────────────
+
+    def _on_add_thread_ng(self, url: str):
+        """右クリック→このスレをNGにする。カタログから入れた時と同じ記録を使う
+        （荒らしのコピペスレを、いちいち開かずに落とせるように）。"""
+        if not url:
+            return
+        if url not in self._settings.ng_thread_urls:
+            self._settings.ng_thread_urls.append(url)
+            self._settings.save()
+        self._lbl.setText("このスレをNGにしました")
+
+    def _on_search_del(self, url: str):
+        """右クリック→削除依頼(del)。カタログから出すものと同じ。
+
+        送信は1回だけで、つながらなくても送り直さない（同じ依頼が二重に
+        届くのを避ける）。受理された時だけ「隠す」記録を残す。"""
+        if not url or not self._board:
+            return
+        m = re.search(r'res/(\d+)\.htm', url)
+        if not m:
+            return
+        no = int(m.group(1))
+        board, fetcher = self._board, self._fetcher
+        self._lbl.setText(f"削除依頼を送信中… No.{no}")
+
+        def _do():
+            try:
+                ok, msg = fetcher.report_del(board, no, thread_url=url)
+            except Exception as e:      # つながらなくても送り直さない
+                ok, msg = False, str(e)
+            print(f"[SEARCH_DEL] No.{no} ok={ok} msg={msg!r}")
+            _self = _wr.ref(self)()
+            if _self is not None:
+                _self._del_result.emit(bool(ok), msg or "", url)
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_search_del_result(self, ok: bool, msg: str, url: str):
+        """削除依頼の結果を結果一覧へ返す。ふたばは「操作が早すぎます」等で
+        受け付けないことがあるので、受理された時だけ記録して印を付ける。"""
+        text = (msg or ("登録しました" if ok else "削除依頼に失敗しました")).strip()
+        if ok:
+            add_del_hidden_thread(self._settings, url)
+            _m = re.search(r'res/(\d+)\.htm', url or "")
+            if _m:
+                _lst = self._settings.del_res_nos.setdefault(url, [])
+                _no = int(_m.group(1))
+                if _no not in _lst:
+                    _lst.append(_no)
+                    self._settings.save()
+        try:
+            self._lbl.setText(("削除依頼: " if ok else "削除依頼に失敗: ") + text)
+        except RuntimeError:
+            return                    # 閉じられたタブ
+        _u = (url or "").replace("\\", "\\\\").replace('"', '\\"')
+        _safe_run_js(self._view,
+                     'if(window.srDelDone)srDelDone("%s",%s);'
+                     % (_u, "true" if ok else "false"))
 
     def reload(self):
         """更新ボタン等から呼ばれた時は、同じ語で引き直す"""

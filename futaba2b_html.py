@@ -3340,6 +3340,12 @@ body {
 }
 .sr-hit:hover { background: rgba(128,0,0,0.06); }
 .sr-hit::after { content: ""; display: block; clear: both; }
+/* 右クリックからNG・削除依頼した結果を、開かなくても見て分かるようにする */
+.sr-hit.sr-pending { opacity: 0.45; }
+.sr-hit.sr-nged, .sr-hit.sr-deled { opacity: 0.5; }
+.sr-hit.sr-nged .sr-com, .sr-hit.sr-deled .sr-com { text-decoration: line-through; }
+.sr-hit.sr-nged .sr-meta::after  { content: " ＮＧにした"; color: var(--no-color, #800000); }
+.sr-hit.sr-deled .sr-meta::after { content: " 削除依頼を出した"; color: var(--no-color, #800000); }
 .sr-meta { font-size: 8pt; color: var(--date-color, #800000); }
 .sr-meta .sr-no { color: var(--no-color, #800000); margin-left: 6px; }
 .sr-meta .sr-op { color: var(--name-color, #117743); font-weight: bold; margin-left: 6px; }
@@ -3380,6 +3386,51 @@ document.addEventListener('auxclick', function(ev) {
         ev.preventDefault();
         srOpen(el.getAttribute('data-url'), 1, Number(el.getAttribute('data-no') || 0));
     }
+}, true);
+/* 検索結果の右クリックメニュー。荒らしのコピペスレを、開かずにNGにしたり
+   削除依頼を出したりするためのもの（カタログの右クリックと同じ並び）。
+   ctxAddItem 等の部品は WEBCHANNEL_JS 側にある。 */
+function srMarkDone(url, cls) {
+    var els = document.querySelectorAll('.sr-hit[data-url="' + url + '"]');
+    for (var i = 0; i < els.length; i++) els[i].classList.add(cls);
+}
+function srDelDone(url, ok) {
+    var els = document.querySelectorAll('.sr-hit[data-url="' + url + '"]');
+    for (var i = 0; i < els.length; i++) {
+        els[i].classList.remove('sr-pending');
+        if (ok) els[i].classList.add('sr-deled');
+    }
+}
+document.addEventListener('contextmenu', function(e) {
+    var el = e.target.closest ? e.target.closest('.sr-hit') : null;
+    if (!el || typeof ctxAddItem !== 'function') return;
+    e.preventDefault();
+    var old = document.getElementById('__ng_ctx');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var url = el.getAttribute('data-url') || '';
+    var no  = Number(el.getAttribute('data-no') || 0);
+    if (!url) return;
+    var menu = document.createElement('div');
+    menu.id = '__ng_ctx';
+    menu.className = 'ng-ctx';
+    menu.style.left = (e.pageX + 2) + 'px';
+    menu.style.top  = (e.pageY + 2) + 'px';
+    ctxAddItem(menu, 'スレを開く',                 function(){ srOpen(url, 0, no); });
+    ctxAddItem(menu, 'バックグラウンドで開く',     function(){ srOpen(url, 1, no); });
+    ctxAddItem(menu, 'URLをコピーする',            function(){ _b('copyToClipboard', [url]); });
+    ctxAddSep(menu);
+    ctxAddItem(menu, 'このスレをNGにする', function(){
+        addThreadNg(url);
+        srMarkDone(url, 'sr-nged');
+    });
+    ctxAddItem(menu, '削除依頼(del)', function(){
+        catalogDel(url);
+        /* 受理されるとは限らないので、結果(srDelDone)を待つ間は薄く出す */
+        srMarkDone(url, 'sr-pending');
+    }, true);
+    document.body.appendChild(menu);
+    ctxFit(menu);
+    ctxArmClose('__ng_ctx');
 }, true);
 """
 
