@@ -37,7 +37,7 @@ from futaba2b_app_qt import (
     APP_VER, _DebugPage, WrapTabBar, Interceptor, InnerTabWidget,
     BoardTreePane, BoardPane,
     VideoPlayerWindow, ThreadView, CatalogView, ImageTabView, ImageWindow,
-    BoardSearchView, DelRequestQueue,
+    BoardSearchView, DelRequestQueue, apply_page_bg,
     AutoRefreshManager, AutoRefreshDialog,
     _compute_interval_sec,
     _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
@@ -5358,6 +5358,10 @@ class MainWindow(QMainWindow):
                     # ホイールのスクロール量も再読込なしで反映
                     if hasattr(_v, 'apply_wheel_scroll_setting'):
                         _v.apply_wheel_scroll_setting()
+                    # テーマを変えたらページの地の色も合わせ直す
+                    # （合わせないと、次に読み込み直す時だけ前の色が出る）
+                    if hasattr(_v, '_view'):
+                        apply_page_bg(_v._view)
         # テーマ変更をステータスバーへ再適用（個別styleSheetはアプリ全体スタイルより
         # 優先されるため、明示的に塗り直さないと色が変わらない）
         self._apply_statusbar_theme()

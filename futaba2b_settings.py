@@ -546,6 +546,10 @@ class AppSettings:
         self.catalog_reverse_ng_top: bool = True
         # NGで隠したスレをカタログ最下部にまとめる（誤爆の確認用）
         self.catalog_ng_section: bool = False
+        # ページ(スレ/カタログ)の地の色。読み込み直す間に出る色に使う。
+        # 既定は白なので、user.css で暗くしていると切替のたびに白く
+        # ちらつく。実際に描かれた色を覚えて、次の起動でも1回目から使う。
+        self.page_bg_last: str = ""
         # カタログを更新した時に先頭へ戻すか。
         # False（既定）＝更新前に見ていた位置のまま。True＝従来どおり先頭へ。
         self.catalog_scroll_top_on_reload: bool = False
@@ -1063,6 +1067,7 @@ class AppSettings:
             self.catalog_common_id_bottom = bool(raw.get("catalog_common_id_bottom", False))
             self.catalog_reverse_ng_top = bool(raw.get("catalog_reverse_ng_top", True))
             self.catalog_ng_section = bool(raw.get("catalog_ng_section", False))
+            self.page_bg_last = str(raw.get("page_bg_last", "") or "")
             self.catalog_scroll_top_on_reload = bool(
                 raw.get("catalog_scroll_top_on_reload", False))
             self.history_self_mode = int(raw.get("history_self_mode", 0))
@@ -1302,6 +1307,7 @@ class AppSettings:
                         "catalog_reverse_ng_top":    self.catalog_reverse_ng_top,
                         "catalog_ng_section":        self.catalog_ng_section,
                         "catalog_scroll_top_on_reload": self.catalog_scroll_top_on_reload,
+                        "page_bg_last":              self.page_bg_last,
                         "history_self_mode":         self.history_self_mode,
                         "history_sort_mode":         self.history_sort_mode,
                         "catalog_show_email":    self.catalog_show_email,

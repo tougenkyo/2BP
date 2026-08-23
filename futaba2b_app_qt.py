@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.457"
+APP_VER = "0.9.459"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2930,6 +2930,100 @@ class DelRequestQueue(QObject):
         self.retrying.emit(msg, it["no"], wait)
 
 
+# 前回ページに描かれていた地の色。user.css で色を変えている場合、テーマの値
+# では合わないので、実際に描かれた色を覚えて次から使う（起動直後の1回目も
+# 白/クリームが出ないように、設定にも残す）。
+_PAGE_BG_LAST = ""
+
+
+def apply_page_bg(view, page=None, settings=None):
+    """WebEngine のページ背景を、ページの地の色に合わせる。
+
+    既定は白。ページを読み込み直す間や、位置合わせのために中身を隠している
+    間はこの色が出るので、切り替えのたびに白くちらつく。user.css で body の
+    色を変えても効かない（これはページの中ではなく、ページの外側の色）。
+
+    使う色は「前に実際に描かれていた色 → テーマの地の色」の順。
+    ビュー側のパレットも合わせておく（合成が間に合わない一瞬のぶん）。"""
+    try:
+        from PySide6.QtGui import QColor, QPalette
+        _pref = _PAGE_BG_LAST or (
+            str(getattr(settings, "page_bg_last", "") or "") if settings else "")
+        col = QColor(_pref) if _pref else QColor()
+        if not col.isValid():
+            col = QColor(_TM.thread("body_bg", "#FFFFEE"))
+        if not col.isValid():
+            return
+        p = page if page is not None else (
+            view.page() if view is not None and hasattr(view, "page") else None)
+        if p is not None:
+            p.setBackgroundColor(col)
+        if view is not None:
+            view.setAutoFillBackground(True)
+            pal = view.palette()
+            pal.setColor(QPalette.ColorRole.Window, col)
+            pal.setColor(QPalette.ColorRole.Base, col)
+            view.setPalette(pal)
+    except Exception:
+        pass
+
+
+def sync_page_bg_from_body(view, settings=None):
+    """読み込み終わったページの body の地の色を、ページ背景にも反映する。
+
+    テーマだけ見ると user.css で色を変えている場合に食い違う。実際に
+    描かれている色を採ればどちらでも合う。透明・取得失敗なら何もしない。
+    次の起動でも1回目から使えるよう、設定にも残す。"""
+    try:
+        page = view.page()
+    except Exception:
+        return
+    if page is None:
+        return
+
+    def _cb(val):
+        try:
+            from PySide6.QtGui import QColor, QPalette
+            s = str(val or "").strip()
+            if not s or "rgba(0, 0, 0, 0)" in s or s == "transparent":
+                return
+            col = QColor()
+            col.setNamedColor(s)
+            if not col.isValid():
+                import re as _re_c
+                m = _re_c.findall(r"\d+", s)
+                if len(m) < 3:
+                    return
+                col = QColor(int(m[0]), int(m[1]), int(m[2]))
+            if not col.isValid():
+                return
+            page.setBackgroundColor(col)
+            view.setAutoFillBackground(True)
+            pal = view.palette()
+            pal.setColor(QPalette.ColorRole.Window, col)
+            pal.setColor(QPalette.ColorRole.Base, col)
+            view.setPalette(pal)
+            global _PAGE_BG_LAST
+            _name = col.name()
+            if _name != _PAGE_BG_LAST:
+                _PAGE_BG_LAST = _name
+                # 次の起動でも1回目から使えるよう覚えておく
+                if settings is not None and getattr(
+                        settings, "page_bg_last", None) != _name:
+                    try:
+                        settings.page_bg_last = _name
+                    except Exception:
+                        pass
+        except (RuntimeError, Exception):
+            pass
+    try:
+        page.runJavaScript(
+            "document.body?getComputedStyle(document.body).backgroundColor:''",
+            _cb)
+    except Exception:
+        pass
+
+
 def find_del_queue(w):
     """親をたどって MainWindow が持っている削除依頼の待ち行列を探す。
 
@@ -4862,6 +4956,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._channel.registerObject("bridge", self._bridge)
         self._page.setWebChannel(self._channel)
         self._view = QWebEngineView(self._page, self)
+        # 読み込み直す間に白が出ないよう、ページの地の色をテーマに合わせる
+        apply_page_bg(self._view, self._page, self._settings)
         self._view.setZoomFactor(_default_zoom())  # テキストを標準サイズに
         lay.addWidget(self._view)
         self._find_bar = _FindBar(lambda: self._page, self)
@@ -7331,6 +7427,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """ページ読込完了後にスクロール位置を復元"""
         # スレッドページのDOMがロード完了 → モード切替をDOM入替で行える
         self._thread_page_live = True
+        # 実際に描かれている地の色をページ背景にも反映する
+        # （user.css で色を変えていても、次の読み込み直しで白くならない）
+        sync_page_bg_from_body(self._view, self._settings)
         self._flush_pending_frags()
         # 板設定を変えた後に返信モードへ戻ると、生成済みHTML(_last_html)に
         # 焼かれた古いぼかし設定のまま表示されるため、読込完了時に合わせ直す
@@ -9728,6 +9827,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._channel.registerObject("bridge", self._bridge)
         self._page.setWebChannel(self._channel)
         self._view = _CatalogWebView(self._page, self)
+        apply_page_bg(self._view, self._page, self._settings)  # 切替時の白を防ぐ
         self._view.setZoomFactor(_default_zoom())
         self._view._source_callback = self._show_catalog_source
         self._view.loadFinished.connect(self._on_cat_load_finished)
@@ -10110,6 +10210,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         """カタログページのロード完了。body入替を解禁し、ロード中に届いた
         マージ再描画（_pending_light_body）があればここで適用する。"""
         self._cat_page_live = bool(ok)
+        sync_page_bg_from_body(self._view, self._settings)   # 白を防ぐ
         _body = self._pending_light_body
         self._pending_light_body = None
         if ok and _body is not None:
@@ -11595,6 +11696,7 @@ class BoardSearchView(QWidget):
         self._channel.registerObject("bridge", self._bridge)
         self._page.setWebChannel(self._channel)
         self._view = _CatalogWebView(self._page, self)
+        apply_page_bg(self._view, self._page, self._settings)  # 切替時の白を防ぐ
         self._view.setZoomFactor(_default_zoom())
         lay.addWidget(self._view)
         self._find_bar = _FindBar(lambda: self._page, self)
