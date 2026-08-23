@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.454"
+APP_VER = "0.9.455"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9171,6 +9171,14 @@ class ThreadView(_MouseGestureMixin, QWidget):
                     f'(function(){{var el=document.getElementById("r{no}");'
                     f'if(el)el.classList.add("deleted");}})();'
                 )
+            # ふたばが「登録しました」以外を返している時は、それをそのまま出す。
+            # 待ち行列は「同じIPから…」（＝もう依頼が入っている）を受理として
+            # 扱うので、固定文だけだと「さっき出したのか」が分からなくなる。
+            # 画像だけ削除は「画像を削除しました」がこちらの説明なので触らない。
+            _srv = (msg or "").strip()
+            if (_srv and _srv != "登録しました"
+                    and not getattr(self, "_pending_del_onlyimg", False)):
+                _msg_txt = _srv
             safe = _msg_txt.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
             self._view.page().runJavaScript(f'showDelMsg("{safe}")')
             self._refresh_deleted_res_dom()  # 即時実行（2100ms遅延廃止）
