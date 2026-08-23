@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.455"
+APP_VER = "0.9.456"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6256,6 +6256,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
         _dead_now = _is_error or bool(getattr(thread, 'is_full', False))
         if not self._first_load_done and _dead_now:
             self._opened_dead = True
+            # 「1000に達していただけ（まだ読める）」と「もう消えていた(404)」を
+            # 区別しておく。前者はそのあと実際に落ちた時に閉じてよい
+            # （1000到達と落ちたは別のできごと。混同すると
+            #   「1000行ったスレが落ちても残り続ける」になる）。
+            self._opened_dead_full = (not _is_error) and bool(
+                getattr(thread, 'is_full', False))
         self._first_load_done = True
         if _is_error:
             self.thread_error.emit(thread.error)

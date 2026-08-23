@@ -1048,6 +1048,7 @@ class MainWindow(QMainWindow):
                 return
 
         view = ThreadView(self._fetcher, self._settings, inner)
+        view._from_restore = bool(getattr(self, "_restoring_tabs", False))
         view.open_reply_window.connect(
             lambda qno, qt, b=board, n=no: self._open_reply(b, n, qno, qt))
         view.open_image_tab.connect(self._open_image_tab)
@@ -1650,6 +1651,7 @@ class MainWindow(QMainWindow):
                 inner.setCurrentIndex(i); w.reload_thread(); return
         from futaba2b_app_qt import ThreadView as _TV
         view = _TV(self._fetcher, self._settings, inner)
+        view._from_restore = bool(getattr(self, "_restoring_tabs", False))
         view.open_reply_window.connect(
             lambda qno, qt, b=board, n=no: self._open_reply(b, n, qno, qt))
         view.open_image_tab.connect(self._open_image_tab)
@@ -1776,6 +1778,7 @@ class MainWindow(QMainWindow):
             if isinstance(w, ThreadView) and getattr(w, '_thread_no', None) == no:
                 return
         view = ThreadView(self._fetcher, self._settings, pane)
+        view._from_restore = bool(getattr(self, "_restoring_tabs", False))
         view.open_reply_window.connect(
             lambda qno, qt, b=board, n=no: self._open_reply(b, n, qno, qt))
         view.open_image_tab.connect(self._open_image_tab)
@@ -2218,13 +2221,28 @@ class MainWindow(QMainWindow):
             # 瞬間に既に404（dead-on-arrival, _known_res_count==0）のスレが大量に
             # 自動オープンされ、放置するとそれらが閉じられず404タブが累積するため、
             # 逆NG由来は開いた直後の404でも閉じる。
-            if getattr(view, "_known_res_count", 0) == 0 and not _rev_auto_close:
+            # 前回のタブ状態から戻したタブは「開いた直後」ではないので対象にする
+            # （戻した時点でもう落ちていた、を閉じられるようにする）
+            if (getattr(view, "_known_res_count", 0) == 0 and not _rev_auto_close
+                    and not getattr(view, "_from_restore", False)):
                 should_close = False
             # タブを開いた瞬間に既に死んでいた（1000到達済み・最初から404）スレは
             # 自動クローズしない（ユーザーが意図的に開いた死亡スレを勝手に閉じない）。
             # _opened_dead は初回読み込み時に死亡を検出した場合のみ True になる。
             # 逆NG自動オープン由来は「意図的に開いた」ではないため例外（上と同じ理由で閉じる）。
-            if getattr(view, "_opened_dead", False) and not _rev_auto_close:
+            _od = getattr(view, "_opened_dead", False)
+            # ただし次の2つは「意図的に開いた死亡スレ」ではないので閉じてよい。
+            #  ・開いた時は1000だっただけ（まだ読めた）で、そのあと実際に落ちた
+            #    → 1000到達と落ちたは別のできごと。ここで止めると
+            #      「1000行ったスレが落ちても残り続ける」になる
+            #  ・前回のタブ状態から戻したタブ
+            #    → 自分で開き直したのではなく、前から開いていたもの。
+            #      再起動したら落ちていた、は掃除の対象
+            if _od and getattr(view, "_opened_dead_full", False) and not is_full:
+                _od = False
+            if _od and getattr(view, "_from_restore", False):
+                _od = False
+            if _od and not _rev_auto_close:
                 should_close = False
             if should_close:
                 # 一度自動クローズ済みのスレは再表示後クローズしない（url基準・既存ロジック維持）
@@ -4850,6 +4868,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("板タブを開いてからログを開いてください", 3000)
             return
         view = ThreadView(self._fetcher, self._settings, inner)
+        view._from_restore = bool(getattr(self, "_restoring_tabs", False))
         # 表示・ローカル操作系のみ配線（投稿/AR/スレ落ち/NG即閉じは配線しない）
         view.open_image_tab.connect(self._open_image_tab)
         view.open_image_tab_bg.connect(self._open_image_tab_bg)
