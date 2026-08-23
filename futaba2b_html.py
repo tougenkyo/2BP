@@ -3360,6 +3360,10 @@ body {
 }
 """
 
+# 検索結果でも右クリックメニューを出すので、その見た目を足す。
+# これが無いとメニューがただの箱になり、ページの一番下に出てしまう。
+SEARCH_CSS += CTX_MENU_CSS
+
 SEARCH_JS = """
 /* no を渡すとそのレスまでスクロールして見せる。0 ならスレの頭から */
 function srOpen(url, bg, no) {
@@ -3422,11 +3426,10 @@ document.addEventListener('contextmenu', function(e) {
     var url = el.getAttribute('data-url') || '';
     var no  = Number(el.getAttribute('data-no') || 0);
     if (!url) return;
-    var menu = document.createElement('div');
-    menu.id = '__ng_ctx';
-    menu.className = 'ng-ctx';
-    menu.style.left = (e.pageX + 2) + 'px';
-    menu.style.top  = (e.pageY + 2) + 'px';
+    /* カタログと同じ作り方をする。自前で div を作ると見た目の指定（位置も）が
+       付かず、ページの一番下にただの箱が出るだけになる。位置は fixed なので
+       ページ座標(pageX)ではなく画面座標(clientX)を渡すこと。 */
+    var menu = ctxMakeMenu('__ng_ctx', e.clientX, e.clientY, 9999);
     ctxAddItem(menu, 'スレを開く',                 function(){ srOpen(url, 0, no); });
     ctxAddItem(menu, 'バックグラウンドで開く',     function(){ srOpen(url, 1, no); });
     ctxAddItem(menu, 'URLをコピーする',            function(){ _b('copyToClipboard', [url]); });
