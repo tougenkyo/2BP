@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.459"
+APP_VER = "0.9.460"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3022,6 +3022,50 @@ def sync_page_bg_from_body(view, settings=None):
             _cb)
     except Exception:
         pass
+
+
+def keep_page_awake(view, page, seconds: int = 20):
+    """タブを裏へ回した直後は、ページを「表示中」のままにしておく。
+
+    ウィジェットを隠すと QtWebEngine は Chromium に「見えなくなった」と伝え、
+    描き終えた絵が手放される。戻した時はもう一度描き直すので、その1〜2コマは
+    地の色だけが出る（＝タブを切り替えた時のちらつき）。
+
+    すぐ戻ってくる使い方が多いので、しばらくは表示中のままにして絵を
+    持たせておく。放置されたタブは時間が来たら手放して資源を返す
+    （全部を起こしっぱなしにすると、裏のタブも描き続けて重くなる）。"""
+    if page is None:
+        return
+
+    # 「見えなくなった」を Chromium へ伝えるのは、こちらの hideEvent が
+    # 終わったあと。その場で表示中に戻しても上書きされるので、1回だけ
+    # イベントループへ回してから戻す。
+    def _hold(_p=page, _v=view):
+        try:
+            if _v.isVisible():
+                return                    # もう戻ってきている
+            _p.setVisible(True)
+        except (RuntimeError, Exception):
+            pass
+    QTimer.singleShot(0, _hold)
+
+    t = getattr(view, "_page_sleep_timer", None)
+    if t is None:
+        t = QTimer(view)
+        t.setSingleShot(True)
+        view._page_sleep_timer = t
+
+        def _sleep(_v=view):
+            try:
+                if _v.isVisible():
+                    return                    # 戻ってきているので起きたまま
+                _p = getattr(_v, "_page", None)
+                if _p is not None:
+                    _p.setVisible(False)      # 放置された → 手放す
+            except (RuntimeError, Exception):
+                pass
+        t.timeout.connect(_sleep)
+    t.start(max(1, int(seconds)) * 1000)
 
 
 def find_del_queue(w):
@@ -8781,6 +8825,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
         except Exception:
             return defaults
 
+    def hideEvent(self, event):
+        """裏へ回った直後は、描いた絵を手放させない（切替のちらつき対策）"""
+        super().hideEvent(event)
+        keep_page_awake(self, getattr(self, "_page", None))
+
     def showEvent(self, event):
         """このスレタブがアクティブ化されたら、保留していたそうだね/返信通知を表示する。"""
         super().showEvent(event)
@@ -10205,6 +10254,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
             "</body>",
             "<script>(function(){" + _cat_scroll_go_js(str(y)) + "})();</script></body>",
             1)
+
+    def hideEvent(self, event):
+        """裏へ回った直後は、描いた絵を手放させない（切替のちらつき対策）"""
+        super().hideEvent(event)
+        keep_page_awake(self, getattr(self, "_page", None))
 
     def _on_cat_load_finished(self, ok: bool):
         """カタログページのロード完了。body入替を解禁し、ロード中に届いた
