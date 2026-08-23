@@ -3340,12 +3340,13 @@ body {
 }
 .sr-hit:hover { background: rgba(128,0,0,0.06); }
 .sr-hit::after { content: ""; display: block; clear: both; }
-/* 右クリックからNG・削除依頼した結果を、開かなくても見て分かるようにする */
-.sr-hit.sr-pending { opacity: 0.45; }
-.sr-hit.sr-nged, .sr-hit.sr-deled { opacity: 0.5; }
-.sr-hit.sr-nged .sr-com, .sr-hit.sr-deled .sr-com { text-decoration: line-through; }
-.sr-hit.sr-nged .sr-meta::after  { content: " ＮＧにした"; color: var(--no-color, #800000); }
-.sr-hit.sr-deled .sr-meta::after { content: " 削除依頼を出した"; color: var(--no-color, #800000); }
+/* 右クリックからNG・削除依頼した結果を、開かなくても見て分かるようにする。
+   スレ単位の操作なので、そのスレのかたまり全体に印を付ける */
+.sr-thread.sr-pending { opacity: 0.45; }
+.sr-thread.sr-nged, .sr-thread.sr-deled { opacity: 0.5; }
+.sr-thread.sr-nged .sr-com, .sr-thread.sr-deled .sr-com { text-decoration: line-through; }
+.sr-thread.sr-nged .sr-th-head::after  { content: " ＮＧにした"; color: var(--no-color, #800000); }
+.sr-thread.sr-deled .sr-th-head::after { content: " 削除依頼を出した"; color: var(--no-color, #800000); }
 .sr-meta { font-size: 8pt; color: var(--date-color, #800000); }
 .sr-meta .sr-no { color: var(--no-color, #800000); margin-left: 6px; }
 .sr-meta .sr-op { color: var(--name-color, #117743); font-weight: bold; margin-left: 6px; }
@@ -3390,19 +3391,30 @@ document.addEventListener('auxclick', function(ev) {
 /* 検索結果の右クリックメニュー。荒らしのコピペスレを、開かずにNGにしたり
    削除依頼を出したりするためのもの（カタログの右クリックと同じ並び）。
    ctxAddItem 等の部品は WEBCHANNEL_JS 側にある。 */
+/* 検索結果はレス単位で返るので、1つのスレが見出し＋複数行になる。
+   NG・削除依頼はスレ単位の操作なので、印はスレのかたまりごとに付ける。 */
+function srGroups(url) {
+    var out = [], els = document.querySelectorAll('[data-url="' + url + '"]');
+    for (var i = 0; i < els.length; i++) {
+        var g = els[i].closest ? els[i].closest('.sr-thread') : null;
+        if (g && out.indexOf(g) < 0) out.push(g);
+    }
+    return out;
+}
 function srMarkDone(url, cls) {
-    var els = document.querySelectorAll('.sr-hit[data-url="' + url + '"]');
-    for (var i = 0; i < els.length; i++) els[i].classList.add(cls);
+    var g = srGroups(url);
+    for (var i = 0; i < g.length; i++) g[i].classList.add(cls);
 }
 function srDelDone(url, ok) {
-    var els = document.querySelectorAll('.sr-hit[data-url="' + url + '"]');
-    for (var i = 0; i < els.length; i++) {
-        els[i].classList.remove('sr-pending');
-        if (ok) els[i].classList.add('sr-deled');
+    var g = srGroups(url);
+    for (var i = 0; i < g.length; i++) {
+        g[i].classList.remove('sr-pending');
+        if (ok) g[i].classList.add('sr-deled');
     }
 }
 document.addEventListener('contextmenu', function(e) {
-    var el = e.target.closest ? e.target.closest('.sr-hit') : null;
+    /* スレの見出しでも、その下の各レスの行でも同じメニューを出す */
+    var el = e.target.closest ? e.target.closest('.sr-hit, .sr-th-head') : null;
     if (!el || typeof ctxAddItem !== 'function') return;
     e.preventDefault();
     var old = document.getElementById('__ng_ctx');
