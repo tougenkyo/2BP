@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.462"
+APP_VER = "0.9.463"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3058,15 +3058,94 @@ def snap_view_later(w):
     QTimer.singleShot(0, lambda _w=w: snap_view(_w))
 
 
-def show_snap(w, ms: int = 120):
-    """控えた1枚を、中身が描き直されるまで被せる"""
+def _snap_debug_on() -> bool:
+    import os as _o
+    return bool(_o.environ.get("BP_SNAP_DEBUG"))
+
+
+SNAP_DEBUG = _snap_debug_on()   # 環境変数 BP_SNAP_DEBUG=1 で毎回ログに出す
+
+
+def _tiny(pm):
+    """比べやすいよう 24x24 に縮めた QImage を返す"""
+    try:
+        if pm is None or pm.isNull():
+            return None
+        im = pm.toImage().scaled(24, 24,
+                                 Qt.AspectRatioMode.IgnoreAspectRatio,
+                                 Qt.TransformationMode.FastTransformation)
+        return None if im.isNull() else im
+    except (RuntimeError, Exception):
+        return None
+
+
+def _img_close(a, b, tol: int = 12) -> bool:
+    """縮めた2枚がだいたい同じか（＝控えと同じ絵が描かれたか）"""
+    if a is None or b is None:
+        return False
+    try:
+        diff = 0
+        n = 0
+        for y in range(0, 24, 2):
+            for x in range(0, 24, 2):
+                pa, pb = a.pixel(x, y), b.pixel(x, y)
+                diff += (abs(((pa >> 16) & 255) - ((pb >> 16) & 255))
+                         + abs(((pa >> 8) & 255) - ((pb >> 8) & 255))
+                         + abs((pa & 255) - (pb & 255)))
+                n += 3
+        return n > 0 and (diff / n) <= tol
+    except (RuntimeError, Exception):
+        return False
+
+
+def _is_uniform(im) -> bool:
+    """縮めた絵が一様（＝まだ何も描かれていない地の色だけ）か"""
+    if im is None:
+        return True
+    try:
+        base = im.pixel(0, 0)
+        for y in range(0, 24, 2):
+            for x in range(0, 24, 2):
+                p = im.pixel(x, y)
+                if (abs(((p >> 16) & 255) - ((base >> 16) & 255)) > 8
+                        or abs(((p >> 8) & 255) - ((base >> 8) & 255)) > 8
+                        or abs((p & 255) - (base & 255)) > 8):
+                    return False
+        return True
+    except (RuntimeError, Exception):
+        return False
+
+
+def view_is_blank(v) -> bool:
+    """ビューがまだ何も描いていない（一様な地の色だけ）か"""
+    try:
+        return _is_uniform(_tiny(v.grab()))
+    except (RuntimeError, Exception):
+        return False
+
+
+def show_snap(w, max_ms: int = 1500):
+    """控えた1枚を、中身が描き直されるまで被せる。
+
+    時間で切ると、しばらく離れていたタブほど描き直しに時間がかかるので
+    間に合わない（10枚くらい行き来すると出る、の正体）。実際に描かれたのを
+    見届けてから外す。何かで描かれないままでも被せっぱなしにしないよう、
+    上限の時間も置く。"""
     pm = getattr(w, "_snap_pixmap", None)
     v = getattr(w, "_view", None)
-    if pm is None or v is None:
+    if v is None:
         return
     try:
-        if pm.isNull() or pm.size() != v.size():
-            return                      # 大きさが変わっていたら当てにしない
+        if pm is None or pm.isNull():
+            if SNAP_DEBUG:
+                print("[Flicker] 控えが無いので被せられません")
+            return
+        if pm.size() != v.size():
+            if SNAP_DEBUG:
+                print(f"[Flicker] 大きさ違いで使えません "
+                      f"{pm.size().width()}x{pm.size().height()} → "
+                      f"{v.size().width()}x{v.size().height()}")
+            return
         lb = getattr(w, "_snap_label", None)
         if lb is None:
             lb = QLabel(w)
@@ -3076,23 +3155,36 @@ def show_snap(w, ms: int = 120):
         lb.setGeometry(v.geometry())
         lb.show()
         lb.raise_()
-        t = getattr(w, "_snap_timer", None)
-        if t is None:
-            t = QTimer(w)
-            t.setSingleShot(True)
-            w._snap_timer = t
-
-            def _off(_w=w):
-                _l = getattr(_w, "_snap_label", None)
-                if _l is not None:
-                    try:
-                        _l.hide()
-                    except RuntimeError:
-                        pass
-            t.timeout.connect(_off)
-        t.start(max(16, int(ms)))
+        w._snap_tiny = _tiny(pm)      # 描き直しの見届けに使う
+        _watch_snap(w, time.monotonic(), max(100, int(max_ms)))
     except (RuntimeError, Exception):
         pass
+
+
+def _watch_snap(w, t0: float, max_ms: int):
+    """描き直されたら被せをやめる。25msごとに見る"""
+    def _tick(_w=w, _t0=t0, _max=max_ms):
+        try:
+            v = getattr(_w, "_view", None)
+            lb = getattr(_w, "_snap_label", None)
+            if v is None or lb is None or not lb.isVisible():
+                return                    # また裏へ回った等
+            el = (time.monotonic() - _t0) * 1000.0
+            # 「控えと同じ絵になった」か「何か描かれた」で描き直し完了とみなす。
+            # 前者を見るのは、中身の少ないスレだと描けていても一様に見えるため。
+            _now = v.grab()
+            _drawn = (_img_close(getattr(_w, "_snap_tiny", None), _tiny(_now))
+                      or not _is_uniform(_tiny(_now)))
+            if _drawn or el >= _max:
+                lb.hide()
+                if SNAP_DEBUG or el > 250:
+                    print(f"[Flicker] 描き直しまで {el:.0f}ms "
+                          f"（{'描けた' if _drawn else '時間切れ'}）")
+                return
+            QTimer.singleShot(25, _tick)
+        except (RuntimeError, Exception):
+            pass
+    QTimer.singleShot(16, _tick)
 
 
 def keep_page_awake(view, page, seconds: int = 20):
