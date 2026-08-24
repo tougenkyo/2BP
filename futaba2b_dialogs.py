@@ -7346,7 +7346,8 @@ class BoardSettingsDialog(QDialog):
                 sp.setEnabled(chk.isChecked())
         ar_lay.addWidget(_thread_rows)
 
-        self._ar_use_default_catalog = QCheckBox("カタログのデフォルト間隔を使う")
+        self._ar_use_default_catalog = QCheckBox(
+            "カタログのデフォルト間隔を使う（OFFにすると最後の設定を引き継ぐ）")
         ar_lay.addWidget(self._ar_use_default_catalog)
         _catalog_rows = QWidget(); _tc_form = QFormLayout(_catalog_rows)
         _tc_form.setContentsMargins(16, 0, 0, 0)

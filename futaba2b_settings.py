@@ -461,6 +461,10 @@ class AppSettings:
         self.ar_last_intervals: list[int]  = [3600, 1800, 600, 120, 60, 30]
         # 自動更新ダイアログ: 各行のチェック状態 [50%, 25%, 10%, 5%, 1%]
         self.ar_last_checks:   list[bool]  = [False, False, False, False, False]
+        # 自動更新ダイアログ: カタログで最後に設定した間隔（秒）。
+        # スレ用(ar_last_intervals)と分けている。一緒にしていた頃は、
+        # カタログを1分にするとスレまで1分になり、その逆も起きていた。
+        self.ar_last_catalog_interval: int = 600
         # 自動追加時のデフォルト間隔（スレ・カタログ別）
         self.ar_default_thread_intervals:  list = [3600, 1800, 600, 120, 60, 30]
         self.ar_default_thread_checks:     list = [False, False, False, False, False]
@@ -929,6 +933,11 @@ class AppSettings:
             } if isinstance(_raw_ms, dict) else {}
             self.ar_last_intervals   = raw.get("ar_last_intervals", [3600, 1800, 600, 120, 60, 30])
             self.ar_last_checks      = raw.get("ar_last_checks",    [False]*5)
+            try:
+                self.ar_last_catalog_interval = max(
+                    1, int(raw.get("ar_last_catalog_interval", 600)))
+            except (TypeError, ValueError):
+                self.ar_last_catalog_interval = 600
             self.ar_default_thread_intervals  = raw.get("ar_default_thread_intervals",  [3600, 1800, 600, 120, 60, 30])
             self.ar_default_thread_checks     = raw.get("ar_default_thread_checks",     [False]*5)
             self.ar_default_catalog_intervals = raw.get("ar_default_catalog_intervals", [600])
@@ -1397,6 +1406,7 @@ class AppSettings:
                         "max_saved_by_board": _max_saved_bb,
                         "ar_last_intervals": self.ar_last_intervals,
                         "ar_last_checks":    self.ar_last_checks,
+                        "ar_last_catalog_interval": self.ar_last_catalog_interval,
                         "ar_default_thread_intervals":  self.ar_default_thread_intervals,
                         "ar_default_thread_checks":     self.ar_default_thread_checks,
                         "ar_default_catalog_intervals": self.ar_default_catalog_intervals,

@@ -1606,8 +1606,11 @@ class MainWindow(QMainWindow):
             ivals = list(_bs.ar_default_catalog_intervals or [600])
             interval_sec = max(1, int(ivals[0] if ivals else 600))
         else:
-            last_vals = list(getattr(self._settings, 'ar_last_intervals', [3600]))
-            interval_sec = max(1, int(last_vals[0] if last_vals else 3600))
+            # OFF = 最後にカタログへ設定した間隔を引き継ぐ。
+            # 以前はスレ用の ar_last_intervals[0] を見ていたため、スレを
+            # 1分に設定するとカタログまで1分になっていた。
+            interval_sec = max(1, int(
+                getattr(self._settings, 'ar_last_catalog_interval', 600) or 600))
 
         adaptive = [dict(r) for r in AR_ADAPTIVE_DEFAULTS]
         # カタログはpct=100の1行のみ使用。interval_secを実際の間隔に合わせる

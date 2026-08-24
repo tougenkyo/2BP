@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.466"
+APP_VER = "0.9.467"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -13622,10 +13622,16 @@ class AutoRefreshDialog(QDialog):
         if _s is None:
             last_vals = [60, 30, 10, 2, 1]
             last_chks = [False, False, False, False]
-        elif _is_cat and getattr(_def_src, "ar_use_default_catalog", False):
-            _c_ivals = getattr(_def_src, "ar_default_catalog_intervals", [60])
-            last_vals = list(_c_ivals) + [30, 10, 2, 1]  # カタログは1行だけ使うが長さ合わせ
-            last_chks = [False, False, False, False]
+        elif _is_cat:
+            # カタログは100%の1行だけ使う。板設定のデフォルトを使わない時は
+            # 「最後にカタログへ設定した間隔」を引き継ぐ（スレ用とは別に覚える）。
+            if getattr(_def_src, "ar_use_default_catalog", False):
+                _c_ivals = getattr(_def_src, "ar_default_catalog_intervals", [600])
+                _c0 = int(_c_ivals[0]) if _c_ivals else 600
+            else:
+                _c0 = int(getattr(_s, "ar_last_catalog_interval", 600) or 600)
+            last_vals = [max(1, _c0), 1800, 600, 120, 60, 30]   # 2行目以降は使わない
+            last_chks = [False, False, False, False, False]
         elif not _is_cat and getattr(_def_src, "ar_use_default_thread", False):
             last_vals = list(getattr(_def_src, "ar_default_thread_intervals",
                                      [60, 30, 10, 2, 1]))
@@ -14060,10 +14066,18 @@ class AutoRefreshDialog(QDialog):
 
         adaptive = self._collect_adaptive_intervals()
 
-        # 最後に設定した値とチェック状態を記憶
+        # 最後に設定した値とチェック状態を記憶する。
+        # カタログとスレは別々に覚える。ひとまとめにしていた頃は、カタログを
+        # 1分にするとスレの既定まで1分になり、その逆も起きていた
+        # （「カタログのデフォルト間隔を使う」をOFFにしているのに
+        #   カタログが1分で登録される、の原因）。
         if self._settings is not None:
-            self._settings.ar_last_intervals = [r["interval_sec"] for r in adaptive]
-            self._settings.ar_last_checks    = [r["enabled"]      for r in adaptive]
+            if _is_cat_apply:
+                _c0 = adaptive[0]["interval_sec"] if adaptive else 600
+                self._settings.ar_last_catalog_interval = max(1, int(_c0))
+            else:
+                self._settings.ar_last_intervals = [r["interval_sec"] for r in adaptive]
+                self._settings.ar_last_checks    = [r["enabled"]      for r in adaptive]
             self._settings.save()
 
         # ── 実際の残り件数%でカウントダウン初期値を計算 ──────────────────
