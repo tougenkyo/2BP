@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.461"
+APP_VER = "0.9.462"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2693,6 +2693,7 @@ class InnerTabWidget(QTabWidget):
         self.setMovable(False)
         self.tabCloseRequested.connect(self._on_close)
 
+
     def _on_close(self, idx: int):
         # 中クリック連打では、閉じた直後のタブバー再配置と次のクリックが競合して
         # 既に無いインデックス／破棄中のビューが渡ることがある。
@@ -3021,6 +3022,76 @@ def sync_page_bg_from_body(view, settings=None):
             "document.body?getComputedStyle(document.body).backgroundColor:''",
             _cb)
     except Exception:
+        pass
+
+
+def snap_view(w, min_interval: float = 0.15):
+    """タブを離れた直後に、最後に描かれていた中身を1枚控える。
+
+    タブを切り替えると、切り替え先が描き直されるまでの1〜3コマは何も
+    描かれていない地の色だけになる（＝ちらつき）。戻ってきた時にこの控えを
+    被せておけば、その間も前と同じ絵が出ていることになる。
+
+    隠れる最中(hideEvent の中)に撮ると真っ黒しか撮れないので、隠れ終わって
+    から撮る。隠れた後でも最後に描いた絵は残っているので中身は撮れる。
+    連続で送っている最中に毎回撮ると重いので、少しの間は撮り直さない。"""
+    v = getattr(w, "_view", None)
+    if v is None:
+        return
+    now = time.monotonic()
+    if now - getattr(w, "_snap_at", 0.0) < min_interval:
+        return
+    try:
+        if v.width() < 8 or v.height() < 8:
+            return
+        pm = v.grab()
+        if pm.isNull():
+            return                   # まだ何も描かれていない
+        w._snap_pixmap = pm
+        w._snap_at = now
+    except (RuntimeError, Exception):
+        pass
+
+
+def snap_view_later(w):
+    """隠れ終わってから控える（hideEvent から呼ぶ）"""
+    QTimer.singleShot(0, lambda _w=w: snap_view(_w))
+
+
+def show_snap(w, ms: int = 120):
+    """控えた1枚を、中身が描き直されるまで被せる"""
+    pm = getattr(w, "_snap_pixmap", None)
+    v = getattr(w, "_view", None)
+    if pm is None or v is None:
+        return
+    try:
+        if pm.isNull() or pm.size() != v.size():
+            return                      # 大きさが変わっていたら当てにしない
+        lb = getattr(w, "_snap_label", None)
+        if lb is None:
+            lb = QLabel(w)
+            lb.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            w._snap_label = lb
+        lb.setPixmap(pm)
+        lb.setGeometry(v.geometry())
+        lb.show()
+        lb.raise_()
+        t = getattr(w, "_snap_timer", None)
+        if t is None:
+            t = QTimer(w)
+            t.setSingleShot(True)
+            w._snap_timer = t
+
+            def _off(_w=w):
+                _l = getattr(_w, "_snap_label", None)
+                if _l is not None:
+                    try:
+                        _l.hide()
+                    except RuntimeError:
+                        pass
+            t.timeout.connect(_off)
+        t.start(max(16, int(ms)))
+    except (RuntimeError, Exception):
         pass
 
 
@@ -8829,10 +8900,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """裏へ回った直後は、描いた絵を手放させない（切替のちらつき対策）"""
         super().hideEvent(event)
         keep_page_awake(self, getattr(self, "_page", None))
+        snap_view_later(self)   # 戻ってきた時に被せる絵を控える
 
     def showEvent(self, event):
         """このスレタブがアクティブ化されたら、保留していたそうだね/返信通知を表示する。"""
         super().showEvent(event)
+        show_snap(self)      # 描き直されるまで前の絵を被せる
         q = self._pending_self_res_popups
         if q:
             pending = q[:]
@@ -10260,6 +10333,12 @@ class CatalogView(_MouseGestureMixin, QWidget):
         """裏へ回った直後は、描いた絵を手放させない（切替のちらつき対策）"""
         super().hideEvent(event)
         keep_page_awake(self, getattr(self, "_page", None))
+        snap_view_later(self)   # 戻ってきた時に被せる絵を控える
+
+    def showEvent(self, event):
+        """描き直されるまで前の絵を被せる（切替のちらつき対策）"""
+        super().showEvent(event)
+        show_snap(self)
 
     def _on_cat_load_finished(self, ok: bool):
         """カタログページのロード完了。body入替を解禁し、ロード中に届いた
