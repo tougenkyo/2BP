@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.463"
+APP_VER = "0.9.464"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5784,7 +5784,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._known_res_count = 0
             # 「削除:見る」の状態は触らない。作り直したHTMLに show-deleted を
             # 載せるので、NGの使う/解除で勝手に隠れることはない
-            self._show_impl(self._thread)
+            # 取り直したのではなく手元のモデルから描き直しているだけ
+            self._local_redraw = True
+            try:
+                self._show_impl(self._thread)
+            finally:
+                self._local_redraw = False
         self._capture_scroll_anchor(_go)
 
     def _on_del_toggle(self):
@@ -5985,7 +5990,14 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return
         self._known_res_count = 0   # 全体再描画を強制
         self._pending_scroll = scroll_y
-        self._show_impl(self._thread)
+        # 取り直したのではなく、手元のモデルから描き直しているだけ。
+        # 「読み込めた」ことにすると、落ちたスレの 404 表示が消えて自動更新まで
+        # 復活してしまう（タブを切り替えた時にNG再描画が走るため）。
+        self._local_redraw = True
+        try:
+            self._show_impl(self._thread)
+        finally:
+            self._local_redraw = False
 
     def _reload_with_scroll_diff(self, scroll_y: float):
         """差分更新候補の場合も現在位置を控えておく。
@@ -6516,7 +6528,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         else:
             self._del_btn_action.setVisible(False)
             self._del_showing = False
-        self.thread_loaded.emit(thread.no, new_count)
+        # 手元のモデルから描き直しただけの時は「読み込めた」ことにしない。
+        # ここを通すと、落ちたスレでも自動更新への自動登録が走ってしまう。
+        if not getattr(self, "_local_redraw", False):
+            self.thread_loaded.emit(thread.no, new_count)
         # 更新後のimg_listを画像タブに通知（NG対象レスの画像は除外）
         if self._img_list:
             _flst, _ = self._filter_img_list_for_tab(self._img_list, "")
@@ -6581,9 +6596,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
             # _recovered_from_error（前回キャッシュ付きエラー）のときしか解除しておらず、
             # 通信エラー赤帯や「新着なし」サイクルでは一度赤くなると戻らなかった。
             # 赤が無いときは _clear_error_tab 側が no-op（タブ色が c_error のときだけ解除）。
-            if getattr(self, '_has_error_band', False):
-                self._clear_error_band()
-            self.thread_recovered.emit()
+            # 手元のモデルから描き直しただけの時は「復旧した」ことにしない。
+            # 落ちたスレでNG再描画が走ると、404の赤帯と表示が消えてしまう。
+            if not getattr(self, "_local_redraw", False):
+                if getattr(self, '_has_error_band', False):
+                    self._clear_error_band()
+                self.thread_recovered.emit()
         # 1000レス到達 → thread_deadで自動保存・自動更新停止を起動
         if getattr(thread, 'is_full', False):
             QTimer.singleShot(0, lambda: self.thread_dead.emit(thread.url or ""))

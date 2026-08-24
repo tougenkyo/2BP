@@ -1528,7 +1528,11 @@ class MainWindow(QMainWindow):
             return   # URL 未確定 or 既に登録済み
 
         # スレが落ちている・1000レス到達の場合は追加しない（サイレント）
-        if th.error or getattr(th, 'is_full', False):
+        # view._is_dead も見る。手元のモデルから描き直しただけの時に
+        # 「読み込めた」扱いでここへ来ると、落ちたスレの自動更新が復活して
+        # しまうため（タブ切替でのNG再描画で起きていた）。
+        if (th.error or getattr(th, 'is_full', False)
+                or getattr(view, '_is_dead', False)):
             return
 
         # デフォルト設定 or 最後に使った設定から adaptive_intervals を構築
