@@ -2708,6 +2708,7 @@ def thread_to_html(thread, show_deleted: bool = False,
                    blur_ul: bool = False,
                    blur_level: str = "mid",
                    pseudo_expiring: bool = False,
+                   hide_expiry: bool = False,
                    sort_by_sodane: bool = False) -> tuple[str, list]:
     """ThreadData → (HTML文字列, 画像リスト)"""
     img_list: list = []
@@ -2762,7 +2763,9 @@ def thread_to_html(thread, show_deleted: bool = False,
     rows.append('<div class="thread-end"></div>')
     # 落ちかけ判定: contdispを赤字にするJSが存在する = thread.is_expiring
     # 仮赤字(pseudo_expiring)設定ONで保存残りが少ない場合も同じバナーを出す
-    is_expiring = thread.is_expiring or pseudo_expiring
+    # 既に落ちたスレでは出さない（「もうすぐ消えます」と「落ちました」が並ぶし、
+    # 出るか出ないかがモデルの持ち物次第で変わって見えるため）
+    is_expiring = (thread.is_expiring or pseudo_expiring) and not hide_expiry
     if is_expiring:
         rows.append(
             f'<div class="expiry-banner">'

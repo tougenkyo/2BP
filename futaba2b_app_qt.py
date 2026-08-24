@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.464"
+APP_VER = "0.9.465"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4929,6 +4929,36 @@ def _build_error_band_js(text: str) -> str:
             "}catch(_){}})();")
 
 
+# 「最終更新」の時刻だけが違うHTMLを同じものと見なすための指紋。
+# 描き直した結果が今出ているものと変わらないなら、読み込み直さずに済ませる。
+_FOOTER_RE = re.compile(r'<div class="page-footer">.*?</div>', re.S)
+
+
+def _html_sig(html: str) -> str:
+    import hashlib
+    body = _FOOTER_RE.sub("", html or "")
+    return hashlib.md5(body.encode("utf-8", "ignore")).hexdigest()
+
+
+_BODY_OPEN_RE = re.compile(r'<body[^>]*>', re.I)
+
+
+def _wrap_body_banner(html: str, banner: str) -> str:
+    """赤帯をページの一番上と一番下へ差し込む。
+
+    body には class が付くことがある（IDの色分け等）。"<body>" の文字列
+    置換だと、その時だけ上の帯が入らず下にしか出ていなかった。"""
+    if not banner or not html:
+        return html
+    m = _BODY_OPEN_RE.search(html)
+    if m:
+        html = html[:m.end()] + banner + html[m.end():]
+    i = html.rfind("</body>")
+    if i >= 0:
+        html = html[:i] + banner + html[i:]
+    return html
+
+
 # ── 再描画をまたいで表示位置を戻すためのJS ────────────────────────────────
 # 画像の読み込みで高さが伸びるため、位置合わせは1回では決まらず何度かやり直す。
 # その間に利用者が操作したら打ち切る（引き戻され続けるのを防ぐ）。ただし最初の
@@ -5023,6 +5053,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._load_pending    = False
         self._was_error       = False  # 前回表示がエラー（キャッシュ）バナー付きだったか
         self._error_banner_html = ""   # エラー(キャッシュ表示)時の赤帯バナーHTML（画像/引用モードでも使用）
+        # スレ落ち確定の赤帯。自動更新のdielong検知は thread.error を立てないため、
+        # 手元のモデルから描き直すと 404 の赤帯だけが消えてしまう。一度確定したら
+        # ここに控えておき、作り直すたびに貼り直す。
+        self._dead_banner_html = ""
         self._pending_redraw  = False  # 非表示時にAR更新が来た→アクティブ化時に再描画する
         self._ng_dirty        = False  # NG設定変更で全再描画を保留（非可視タブ用）。
                                         # 差分追記(_pending_frags)ではなく、モデルからの
@@ -6350,7 +6384,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
                                               scroll_top_count=getattr(self._settings,'scroll_top_count',0),
                                               footer_html=_make_thread_footer(thread),
                                               my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-                                              pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
+                                              pseudo_expiring=_is_pseudo_red_thread(thread, self._settings),
+                                              hide_expiry=getattr(self, '_is_dead', False),
+                                              sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
                 blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1],
                 blur_level=self._blur_level('reply'))
         _t1 = _t.time()
@@ -6363,10 +6399,16 @@ class ThreadView(_MouseGestureMixin, QWidget):
             banner = (f'<div style="background:#a00;color:#fff;padding:4px 8px;font-size:8pt;">'
                       f'⚠ {thread.error}{_cn}</div>')
             self._error_banner_html = banner
-            html = html.replace("<body>", f"<body>{banner}", 1)
-            html = html.replace("</body>", f"{banner}</body>", 1)   # 上下に表示
+            html = _wrap_body_banner(html, banner)                   # 上下に表示
         else:
-            self._error_banner_html = ""
+            # 自動更新のスレ落ち検知(dielong)は thread.error を立てないので、
+            # ここへ来た＝「エラーではない」ではなく「モデルに落ちた印が無い」だけ。
+            # 控えておいた赤帯を貼り直さないと、NG再描画などで作り直した瞬間に
+            # 「404 スレッドが落ちました」が消えてしまう。
+            _dead = (getattr(self, "_dead_banner_html", "")
+                     if getattr(self, "_is_dead", False) else "")
+            self._error_banner_html = _dead
+            html = _wrap_body_banner(html, _dead)
         # 全体再描画でバナーの有無が確定する → エラー状態を記録
         # （次回更新が差分更新かどうかの判定に使う。復旧時は全体再描画を強制してバナーを消す）
         # ※ タブのエラー赤／上下赤帯の解除は正常系共通の _update_ui_after_show（後段で
@@ -6401,8 +6443,20 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._update_ui_after_show(thread, new_count, _is_error)
             self._set_view_mode(_om)
         else:
-            self._load_html_via_tempfile(html, base_url)
-            self._update_ui_after_show(thread, new_count, _is_error)
+            # 手元のモデルから描き直しただけで、出来上がりが今出ているものと
+            # 同じなら読み込み直さない。NG再描画はタブへ戻るたびに走ることが
+            # あり、そのたびにページを読み込み直すと、何も変わっていないのに
+            # 画面が作り直される（＝「切り替えると読み込みが走る」の正体）。
+            _same = (getattr(self, "_local_redraw", False)
+                     and not _om
+                     and getattr(self, "_thread_page_live", False)
+                     and _html_sig(html) == getattr(self, "_loaded_html_sig", ""))
+            if _same:
+                self._drop_pending_scroll()
+            else:
+                self._load_html_via_tempfile(html, base_url)
+            self._update_ui_after_show(thread, new_count, _is_error,
+                                       skip_mode_reload=_same)
             if _om:
                 self._pending_open_mode = ''
                 def _apply_open_mode(ok, _m=_om, _self=self):
@@ -6653,6 +6707,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
 
         # ページモード追跡: デフォルトは返信モード（image/quoteレンダラーがロード後に上書き）
         self._loaded_page_mode = ''
+        # 今出しているHTMLの指紋。描き直しても中身が変わらない時に、
+        # 読み込み直しを省くための目印（_show_impl で見る）。
+        self._loaded_html_sig = _html_sig(html)
         # 新規ナビゲーション開始 → ロード完了まではDOM入替不可（loadFinishedで再びTrue）
         self._thread_page_live = False
         # フルロードするHTMLは最新モデルから生成され保留分の新着を含むため、
@@ -6788,6 +6845,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         try:
             self._view.page().runJavaScript(_build_error_band_js(text))
             self._has_error_band = True
+            self._err_band_text = text   # 読み込み直した時に貼り直す
         except Exception:
             pass
 
@@ -6795,8 +6853,22 @@ class ThreadView(_MouseGestureMixin, QWidget):
         try:
             self._view.page().runJavaScript(_build_error_band_js(""))
             self._has_error_band = False
+            self._err_band_text = ""
         except Exception:
             pass
+
+    def _restore_bands(self):
+        """読み込み直した後に赤帯を貼り直す。
+
+        赤帯はDOMへ差し込んでいるだけなので、手元のモデルから作り直すと
+        消えてしまう。エラーや落ちた状態は続いているので貼り直す。"""
+        if getattr(self, "_has_error_band", False):
+            _t = getattr(self, "_err_band_text", "")
+            if _t:
+                _safe_run_js(getattr(self, "_view", None),
+                             _build_error_band_js(_t))
+        if getattr(self, "_is_dead", False) and getattr(self, "_dead_banner_html", ""):
+            self._inject_dead_banner()   # 既に帯があれば何もしない
 
     def _inject_dead_banner(self):
         """スレ落ち確定時、表示中ページの最上部・最下部へ赤帯(404)を注入する。
@@ -6809,6 +6881,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                       'padding:6px 8px;font-size:9pt;font-weight:bold;text-align:center;">'
                       '⚠ 404 スレッドが落ちました</div>')
             self._error_banner_html = banner   # モード再描画でも先頭に残す
+            self._dead_banner_html  = banner   # 作り直しても残す（模様替えで消さない）
             _h = _json.dumps(banner)
             js = ("(function(){try{"
                   "if(!document.body) return;"
@@ -7652,6 +7725,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """ページ読込完了後にスクロール位置を復元"""
         # スレッドページのDOMがロード完了 → モード切替をDOM入替で行える
         self._thread_page_live = True
+        self._restore_bands()   # 読み込み直しで消えた赤帯を貼り直す
         # 実際に描かれている地の色をページ背景にも反映する
         # （user.css で色を変えていても、次の読み込み直しで白くならない）
         sync_page_bg_from_body(self._view, self._settings)
@@ -7763,9 +7837,15 @@ class ThreadView(_MouseGestureMixin, QWidget):
             show_deleted=self._del_showing,
             footer_html=_footer(thread),
             my_nos=self._get_my_nos(thread), id_warn_count=getattr(self._settings,'id_warn_count',5),
-            pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
+            pseudo_expiring=_is_pseudo_red_thread(thread, self._settings),
+            hide_expiry=getattr(self, '_is_dead', False),
+            sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
                 blur_res=self._blur_flags('reply')[0], blur_ul=self._blur_flags('reply')[1],
                 blur_level=self._blur_level('reply'))
+        # 赤帯（キャッシュ表示・スレ落ち）はモデルに残らないので貼り直す。
+        # ここを通ったHTMLはタブを戻した時の再ロードにそのまま使われるため、
+        # 貼り直さないと切り替えただけで赤帯が消える。
+        html = _wrap_body_banner(html, getattr(self, "_error_banner_html", ""))
         self._last_html = html
         self._last_html_dirty = False
 
@@ -8076,6 +8156,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         未取得時は空文字を返す（表示しない）。"""
         if not thread:
             return ""
+        if getattr(self, "_is_dead", False):
+            return ""       # 既に落ちたスレに「もうすぐ消えます」は出さない
         txt = self._expiry_text(thread)
         if not txt:
             return ""
@@ -8096,7 +8178,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """「このスレは古いので、もうすぐ消えます。」バナー。返信モード(thread_to_html)は
         自前で出しているが、画像/引用モードは独自HTMLのためここで同一バナーを提供する。
         赤字(is_expiring)・仮赤字(設定ON時の保存残1/10以下)のどちらでも表示する。"""
-        if not thread:
+        if not thread or getattr(self, "_is_dead", False):
             return ""
         if not (thread.is_expiring or _is_pseudo_red_thread(thread, self._settings)):
             return ""
@@ -12984,15 +13066,17 @@ class AutoRefreshManager(QObject):
                                       footer_html=view._thread_footer_html(thread),
                                       my_nos=self._get_my_nos_for_view(view, thread),
                 id_warn_count=getattr(self._settings,'id_warn_count',5),
-                pseudo_expiring=_is_pseudo_red_thread(thread, self._settings), sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
+                pseudo_expiring=_is_pseudo_red_thread(thread, self._settings),
+                hide_expiry=getattr(view, '_is_dead', False),
+                sort_by_sodane=getattr(self._settings, 'sort_by_sodane', False),
                 blur_res=view._blur_flags('reply')[0], blur_ul=view._blur_flags('reply')[1],
                 blur_level=view._blur_level('reply'))
             _cn = '' if 'キャッシュ表示' in (thread.error or '') else ' (キャッシュ表示)'
             banner = (f'<div style="background:#a00;color:#fff;padding:6px 8px;'
                       f'font-size:9pt;font-weight:bold;text-align:center;">'
                       f'⚠ {thread.error}{_cn}</div>')
-            html = html.replace("<body>", f"<body>{banner}", 1)
-            html = html.replace("</body>", f"{banner}</body>", 1)
+            view._error_banner_html = banner   # 作り直しでも消えないよう控える
+            html = _wrap_body_banner(html, banner)
             view._thread = thread
             view._known_res_count = 0
             # 落ちたスレの更新はここでキャッシュのフルレンダーに切り替わる。
