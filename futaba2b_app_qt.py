@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.460"
+APP_VER = "0.9.461"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9779,6 +9779,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._cat_page_live = False   # カタログページのDOMがロード完了済みか（body入替可能か）
         self._pending_light_body: str | None = None  # ロード完了前に来たマージ再描画body（loadFinished後に適用）
         self._pending_scroll = 0      # 読み込み直す前に控えたスクロール位置
+        self._cat_head_sig = ""       # 今出しているページの見出し（CSS/JS/body属性）
         self._light_render_once = False  # _re_render_light 実行中フラグ（_renderでbody入替に切替）
         self._showing_history: bool = False  # 表示中が履歴由来のエントリか
         self._hovering: bool = False  # マウスがカタログエントリ上にあるか
@@ -10270,7 +10271,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
         if ok and _body is not None:
             self._apply_catalog_body_swap(_body)
 
-    def _apply_catalog_body_swap(self, body_inner: str):
+    def _apply_catalog_body_swap(self, body_inner: str, to_top: bool = False):
         """カタログの body だけを差し替える（ページナビゲーションなし・スクロール位置維持）。
         head の CSS/qwebchannel/スクロールJSはそのまま残る。カタログの body には
         script要素が無くハンドラは全てインライン属性のため、innerHTML入替で機能が保たれる。
@@ -10281,9 +10282,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
         落ちるため。届くまで少しの間かけ直す（_cat_scroll_go_js を使う）。"""
         import json as _json
         body_js = _json.dumps(body_inner, ensure_ascii=False)
-        js = ("(function(){var y=window.scrollY;"
-              "document.body.innerHTML=" + body_js + ";"
-              + _cat_scroll_go_js("y") + "})();")
+        if to_top:
+            # 設定「更新したら先頭に戻る」がONの時
+            js = ("(function(){document.body.innerHTML=" + body_js + ";"
+                  "window.scrollTo(0,0);})();")
+        else:
+            js = ("(function(){var y=window.scrollY;"
+                  "document.body.innerHTML=" + body_js + ";"
+                  + _cat_scroll_go_js("y") + "})();")
         try:
             self._view.page().runJavaScript(js)
         except Exception:
@@ -10521,6 +10527,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
             self._catalog_json_cache.clear()
             self._catalog_json_nos = set()
             self._pending_scroll = 0    # 別の板の位置に戻しても意味がない
+            self._cat_head_sig = ""     # 板が変わったら読み込み直す（先頭から出す）
         self._board = board
         self._restore_view_state()   # UI を復元 (シグナルブロック済み)
         # ビュー状態が未保存の板は、板別設定のカタログソートを初期値として適用
@@ -11584,20 +11591,36 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # HTMLに位置合わせを仕込んで、更新前に見ていた位置へ戻す。
         _light = self._light_render_once
         _swapped = False
-        if _light:
-            _bi = _cat_html.find('<body>')
-            _bj = _cat_html.rfind('</body>')
-            if _bi >= 0 and _bj > _bi:
-                _body_inner = _cat_html[_bi + 6:_bj]
-                # 入替で旧DOM要素が消えると onmouseleave が発火しないため先に閉じる
-                self._on_cat_hover_leave()
-                if self._cat_page_live:
-                    self._apply_catalog_body_swap(_body_inner)
-                else:
-                    # 初回フルロードがまだ完了していない → loadFinished 後に適用
-                    self._pending_light_body = _body_inner
-                _swapped = True
+        # <head>〜<body ...> までを「見出し」として切り出す。ここが前と同じなら
+        # CSSもJSもbodyの属性も変わっていないので、中身だけ入れ替えれば足りる。
+        _bs = _cat_html.find('<body')
+        _bj = _cat_html.find('>', _bs) if _bs >= 0 else -1
+        _be = _cat_html.rfind('</body>')
+        _head_sig   = _cat_html[:_bj + 1] if _bj > 0 else ""
+        _body_inner = _cat_html[_bj + 1:_be] if (_bj > 0 and _be > _bj) else ""
+        if _light and _body_inner:
+            # 入替で旧DOM要素が消えると onmouseleave が発火しないため先に閉じる
+            self._on_cat_hover_leave()
+            if self._cat_page_live:
+                self._apply_catalog_body_swap(_body_inner)
+            else:
+                # 初回フルロードがまだ完了していない → loadFinished 後に適用
+                self._pending_light_body = _body_inner
+            _swapped = True
+        if (not _swapped and _body_inner and self._cat_page_live
+                and _head_sig and _head_sig == getattr(self, "_cat_head_sig", "")):
+            # 普段の更新もここ。ページを読み込み直さないので、白い間が出ない
+            # （読み込み直すと、前の絵を捨ててから新しい絵を描くまでの
+            #   1〜2コマだけ地の色が出る＝カタログ更新後のちらつき）。
+            self._on_cat_hover_leave()
+            self._apply_catalog_body_swap(
+                _body_inner,
+                to_top=bool(getattr(self._settings,
+                                    "catalog_scroll_top_on_reload", False)))
+            _swapped = True
         if not _swapped:
+            # 見た目の指定が変わった時（列数・文字数・user.css等）だけ読み込み直す
+            self._cat_head_sig = _head_sig
             self._load_catalog_keep_scroll(_cat_html, QUrl("https://www.2chan.net/"))
 
         # catalog_read_counts: 未登録スレのみ現在のレス数を基準値として登録する
