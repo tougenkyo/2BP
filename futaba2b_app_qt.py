@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.467"
+APP_VER = "0.9.468"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1681,12 +1681,15 @@ class _MouseGestureMixin:
         elif action == "refresh_current": _mw("_refresh_current")
         elif action == "refresh_board":   _mw("_refresh_board")
         elif action == "refresh_all_tabs": _pane("_gesture_refresh_all")
-        elif action == "catalog":         _mw("_show_board_catalog")
+        # 「カタログ表示」は出すだけ。取り直しは「この板の更新」の役目
+        # （出すだけのつもりで毎回更新が走っていた。タブをクリックした時は
+        #   走らないので、同じ「戻る」でも挙動が食い違っていた）
+        elif action == "catalog":         _mw("_show_board_catalog", None, False)
         # 2BPには futaba.htm のスレ一覧ページを表示するビューが無く、板の表示は
         # カタログに一本化されている。旧実装は _show_board_view("board") を呼んで
         # いたが、この関数は view 引数を見ておらず結局カタログを出していた。
         # 動作は変えず（既存の割り当てをそのまま活かす）、同じものだと分かる形にする。
-        elif action == "board_top":       _mw("_show_board_catalog")
+        elif action == "board_top":       _mw("_show_board_catalog", None, False)
         elif action == "reply":           _mw("_reply_current")
         elif action == "new_thread":      _mw("_new_thread")
         elif action == "find_in_view":    _mw("_find_in_view")

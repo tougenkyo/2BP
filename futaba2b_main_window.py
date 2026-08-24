@@ -622,7 +622,7 @@ class MainWindow(QMainWindow):
 
         bm = mb.addMenu("板・スレッド(&B)")
         bm.addAction(QAction("カタログ(&C)", self,
-                             triggered=lambda: self._show_board_catalog(),
+                             triggered=lambda: self._show_board_catalog(reload=False),
                              shortcut=_sc("catalog")))
         bm.addAction(QAction("この板の更新(&B)", self,
                              triggered=self._refresh_board, shortcut=_sc("refresh_board")))
@@ -883,8 +883,15 @@ class MainWindow(QMainWindow):
             f"板を開いています: {self._board_display_name(board.name, board.url)}")
         self._show_board_catalog(board)
 
-    def _show_board_catalog(self, board: BoardInfo | None = None):
-        """板のカタログタブを前面に出して再取得する（無ければ作る）。
+    def _show_board_catalog(self, board: BoardInfo | None = None,
+                            reload: bool = True):
+        """板のカタログタブを前面に出す（無ければ作る）。
+
+        reload=True なら取り直す（「この板の更新」）。False なら出すだけで
+        通信しない（「カタログ表示」）。既に開いているカタログへ戻るだけの
+        つもりで取り直していたため、アクションやジェスチャーで戻ると毎回
+        更新が走っていた（タブをクリックした時は走らない＝挙動が食い違う）。
+        まだ何も出ていないカタログは、reload=False でも一度は取りに行く。
 
         旧名は _show_board_view(view, board) だったが、view 引数は一度も
         参照されておらず、"board" を渡しても "catalog" と同じ動作だった。
@@ -912,6 +919,12 @@ class MainWindow(QMainWindow):
             w = inner.widget(i)
             if isinstance(w, CatalogView):
                 inner.setCurrentIndex(i)
+                # 出すだけの時は取り直さない。ただし中身が空（まだ一度も
+                # 取れていない）なら取りに行く。
+                if not reload and getattr(w, "_all_entries", None):
+                    self._st_log.setText(
+                        f"カタログ: {self._board_display_name(board.name, board.url)}")
+                    return
                 self._st_log.setText(
                     f"カタログ更新中: {self._board_display_name(board.name, board.url)}")
                 def _catset_existing(_b=board, _v=w):
