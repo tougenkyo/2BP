@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.465"
+APP_VER = "0.9.466"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2764,22 +2764,46 @@ def _cat_scroll_go_js(y_expr: str) -> str:
     一度でも届いたら（利用者が自分でそこより下へ動かした場合も含めて）
     それ以降は何もしない。あとから引き戻して操作を邪魔しないため。
 
+    ページが短いうちは scrollTo しない。届かない位置を指定すると下端へ
+    丸められ、そのまま「一番下に飛ぶ」ことになるため。高さが足りてから
+    1回だけ当てる。届かないまま時間切れになったら、動かさずに諦める。
+
+    表に出た時のかけ直しは1回だけにする。ずっと構えたままにすると、
+    タブへ戻るたびに古い位置へ引き戻される。
+
     スレ側の _SCROLL_KEEP_JS と考え方は同じだが、あちらは目印のレスと
     隠しカバー(__anch)を前提にしている。カタログにはどちらも無いので別に持つ。"""
-    return ("var __y=(" + y_expr + ")|0,__t=0,__ok=false;"
+    return ("var __y=(" + y_expr + ")|0,__t=0,__armed=true;"
+            # 前の戻し係が残っていたら退場させる。body だけ入れ替える更新では
+            # document のリスナが消えず、放っておくと古い位置を狙う係が何人も
+            # 居座って、タブへ戻るたびに引っ張り合いになる。
+            "try{if(window.__catgo)window.__catgo();}catch(e){}"
             # 位置が決まるまで隠しているカバー(__catanch)を外す。
-            # 1回当ててから外す。先に外すと先頭が見えてしまう。
             "function __show(){var s=document.getElementById('__catanch');"
             "if(s)s.remove();}"
-            "function __go(){if(__ok){__show();return;}"
-            "if(window.scrollY>=__y-2){__ok=true;__show();return;}"
-            "window.scrollTo(0,__y);__show();"
-            "if(window.scrollY>=__y-2){__ok=true;return;}"
-            "if(__t++<40)setTimeout(__go,33);}"
-            "function __again(){if(!__ok){__t=0;__go();}}"
-            "__go();window.addEventListener('load',__again);"
-            "document.addEventListener('visibilitychange',function(){"
-            "if(!document.hidden)__again();});")
+            "function __off(){__armed=false;"
+            "document.removeEventListener('visibilitychange',__vis);"
+            "window.removeEventListener('load',__again);"
+            "if(window.__catgo===__off)window.__catgo=null;}"
+            "function __done(){if(!__armed)return;__show();__off();}"
+            "function __max(){return Math.max(0,"
+            "(document.documentElement.scrollHeight||0)-(window.innerHeight||0));}"
+            "function __go(){if(!__armed)return;"
+            "if(Math.abs(window.scrollY-__y)<=2){__done();return;}"
+            "if(document.hidden)return;"          # 裏では高さが決まらない
+            "if(__max()>=__y-2){window.scrollTo(0,__y);__done();return;}"
+            "if(__t++<60){setTimeout(__go,33);}else{__done();}}"
+            "function __again(){if(__armed){__t=0;__go();}}"
+            # 裏で読み込み直した時のために、表に出た時へ1回だけ持ち越す。
+            "function __vis(){if(document.hidden)return;"
+            "document.removeEventListener('visibilitychange',__vis);__again();}"
+            # 利用者が自分で動かしたら手を引く
+            "window.addEventListener('wheel',__done,{once:true,passive:true});"
+            "window.addEventListener('mousedown',__done,{once:true});"
+            "window.addEventListener('keydown',__done,{once:true});"
+            "window.__catgo=__off;__go();"
+            "window.addEventListener('load',__again);"
+            "document.addEventListener('visibilitychange',__vis);")
 
 
 def add_del_hidden_thread(settings, url: str):
