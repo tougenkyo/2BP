@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.469"
+APP_VER = "0.9.470"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -623,6 +623,10 @@ class WrapTabBar(QTabBar):
         self.setUsesScrollButtons(False)
         self.setDrawBase(False)
         self._cached_rows = 1
+        # 多段タブの段の並び順（今画面に出ている順。値はタブ番号順に組んだ段の番号）。
+        # これを覚えずに毎回タブ番号順から組み直していたため、画面の並びと関係の
+        # 無い位置へ段が飛び、段どうしが入れ替わったように見えていた。
+        self._row_perm: list = []
         self._tab_colors:   dict = {}   # idx → QColor（文字色: エラー赤・新着青）
         self._tab_bg_colors: dict = {}  # idx → QColor（背景色: 未読水色）
         self._tab_id_set:   set  = set()  # ID表示スレのタブindex（基底色=ピンク）
@@ -719,14 +723,36 @@ class WrapTabBar(QTabBar):
         # 設定でOFFにすると並びを固定する（選んだ拍子にタブが動くのを嫌う人向け）。
         if len(rows) > 1 and getattr(
                 getattr(self, '_settings', None), 'tab_active_row_bottom', True):
-            cur = self.currentIndex()
-            if cur >= 0:
-                for ri, row in enumerate(rows):
-                    if cur in row:
-                        if ri != len(rows) - 1:
-                            rows.append(rows.pop(ri))
-                        break
+            return self._order_rows(rows)
+        self._row_perm = []
         return rows
+
+    def _order_rows(self, rows: list) -> list:
+        """段の並びを決める。今出ている並びを起点に1段ずつ繰り上げる。
+
+        選んだタブの段を最下段へ送り、その下にあった段は1つずつ上へ上がる。
+        毎回タブ番号順の並びから組み直していた頃は、画面に出ている並びとの
+        つながりが切れ、段どうしが入れ替わったように見えていた
+        （例: 1段目=B,2段目=C,3段目=A の状態で B を選ぶと A と B だけが
+        　入れ替わって C は動かない）。今出ている並びから送れば、
+        　B→3段目・A→2段目・C→1段目 と1段ずつ動く。
+
+        同じ選択で何度呼んでも結果は変わらない（最下段にあれば動かさない）。"""
+        n = len(rows)
+        perm = self._row_perm
+        if sorted(perm) != list(range(n)):
+            perm = list(range(n))        # 段数が変わった → いったん番号順に戻す
+        cur = self.currentIndex()
+        if cur >= 0:
+            _nr = -1
+            for ri, row in enumerate(rows):
+                if cur in row:
+                    _nr = ri
+                    break
+            if _nr >= 0 and perm[-1] != _nr:
+                perm.append(perm.pop(perm.index(_nr)))
+        self._row_perm = perm
+        return [rows[i] for i in perm]
 
     def _tab_rects(self):
         # キャッシュ: サイズ・タブ数・テキスト・アイコン・ピンが
