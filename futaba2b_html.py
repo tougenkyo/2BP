@@ -2895,6 +2895,33 @@ def _make_scroll_bottom_js(n: int = 5, top_n: int = 0) -> str:
     )
 
 
+def is_ng_catalog_entry(e, ng_filter, ng_settings) -> bool:
+    """カタログのスレをNG（隠す）と見なすか。
+
+    catalog_to_html と CatalogView の両方から呼ぶ。判定を1か所にまとめて
+    おかないと、表示を絞る側と隠す側で食い違う。"""
+    if ng_filter is None:
+        return False
+    # URLの直接NG登録は ng_catalog_empty モードに関係なく常にNG
+    url = getattr(e, "thread_url", "")
+    if url and ng_settings and url in getattr(ng_settings, "ng_thread_urls", []):
+        return True
+    # スレ画がNG画像なら、ng_catalog_empty モードに関わらず常にNG
+    # （画像を指定して消したいのに設定次第で出るのは分かりにくいため）
+    try:
+        if ng_filter.classify_catalog_image(e) == "ng":
+            return True
+    except Exception:
+        pass
+    # ng_catalog_empty: 0=空タイトルのみNG, 1=NGワードに一致, 2=何もしない
+    _mode = getattr(ng_settings, "ng_catalog_empty", 2) if ng_settings else 2
+    if _mode == 0:
+        return not (getattr(e, "title", "") or "").strip()
+    elif _mode == 1:
+        return ng_filter.is_ng_catalog(e)
+    return False
+
+
 def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                      cols: int = 0, read_counts: dict = None,
                      thread_read_counts: dict = None,
@@ -2937,26 +2964,7 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
     _ng_hidden: list = []   # NGで隠したスレ（最下部にまとめる用）
 
     def _is_ng_entry(e) -> bool:
-        """エントリがNGかどうか判定（ng_catalog_emptyモードに従う）"""
-        if ng_filter is None:
-            return False
-        # URLの直接NG登録は ng_catalog_empty モードに関係なく常にNG
-        url = getattr(e, "thread_url", "")
-        if url and ng_settings and url in getattr(ng_settings, "ng_thread_urls", []):
-            return True
-        # スレ画がNG画像なら、ng_catalog_empty モードに関わらず常にNG
-        # （画像を指定して消したいのに設定次第で出るのは分かりにくいため）
-        try:
-            if ng_filter.classify_catalog_image(e) == "ng":
-                return True
-        except Exception:
-            pass
-        # ng_catalog_empty: 0=空タイトルのみNG, 1=NGワードに一致, 2=何もしない
-        if _ng_empty_mode == 0:
-            return not (e.title or "").strip()
-        elif _ng_empty_mode == 1:
-            return ng_filter.is_ng_catalog(e)
-        return False
+        return is_ng_catalog_entry(e, ng_filter, ng_settings)
 
     _rev_memo: dict = {}
 

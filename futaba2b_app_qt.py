@@ -90,7 +90,7 @@ from futaba2b_models   import (BoardInfo, BoardCategory, AutoRefreshEntry, Catal
 from futaba2b_network  import FutabaFetcher
 from futaba2b_settings import AppSettings, NgFilter
 from futaba2b_html     import (thread_to_html, catalog_to_html, render_res, search_to_html,
-                               THREAD_CSS, WEBCHANNEL_JS,
+                               THREAD_CSS, WEBCHANNEL_JS, is_ng_catalog_entry,
                                img_cache_root_js as _img_cache_root_js)
 from futaba2b_bridge   import ThreadBridge, CatalogBridge
 from futaba2b_const    import UA, ThemeManager as _TM
@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.470"
+APP_VER = "0.9.471"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -7832,6 +7832,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # 板設定を変えた後に返信モードへ戻ると、生成済みHTML(_last_html)に
         # 焼かれた古いぼかし設定のまま表示されるため、読込完了時に合わせ直す
         self.apply_blur_setting()
+        self._reapply_extract()   # 読み込み直しで消えた抽出を出し直す
         self._load_pending = False
         # 「このレスを見せて」の予約があれば、控えた位置より優先する。
         # 再読込の途中で _pending_anchor は今の表示位置に上書きされるため、
@@ -8690,6 +8691,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         def _after_swap(_r):
             # 非同期コールバックのため、この時点でタブが閉じられていることがある
             _safe_run_js(self._view, _pool_js, _after_pool)
+            self._reapply_extract()   # 入替で消えた抽出を出し直す
         _safe_run_js(self._view, js, _after_swap)
 
     def _image_mode_entries(self) -> list:
@@ -8920,6 +8922,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         def _after_swap(_r):
             # 非同期コールバックのため、この時点でタブが閉じられていることがある
             _safe_run_js(self._view, _pool_js, _after_pool)
+            self._reapply_extract()   # 入替で消えた抽出を出し直す
         _safe_run_js(self._view, js, _after_swap)
 
     def _on_gallery_img(self, idx: int):
@@ -8952,6 +8955,23 @@ class ThreadView(_MouseGestureMixin, QWidget):
         else:
             js = f'try{{extractPosts("");extractPostsPopup("{js_q}");}}catch(e){{}}'
         self._view.page().runJavaScript(js)
+
+    def _reapply_extract(self):
+        """抽出（ID抽出など）を出し直す。
+
+        抽出結果のパネルは body に足しているだけなので、ページを読み込み
+        直したり表示モードを入れ替えたりすると消える。抽出欄には文字が
+        残っているので、DOMが出来上がった所で出し直す。
+        （消えるのがスレごとに一度きりだったのは、二度目からは中身が
+        　変わらず読み込み直さなくなるため。）"""
+        if not hasattr(self, "_search_edit"):
+            return
+        try:
+            _q = self._search_edit.text().strip()
+        except RuntimeError:
+            return
+        if _q:
+            self._do_extract(_q)
 
     def _on_extract_mode_toggled(self, on: bool):
         """抽出の「ポップアップ」チェック切替 → 設定に保存し、現在の抽出を再適用"""
@@ -11309,6 +11329,20 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # 判定はボタンではなく「今持っているデータ」で行う（ボタン状態を見ると
         # 食い違ったタイミングで履歴が縦×横件に切られてしまう）。
         _hist = self.is_showing_history()
+        # NGで隠れるスレは表示枠を食わない。上限で切ってから隠していた頃は、
+        # 上限の外にあるNGスレが「NGで隠したスレ」にも出てこなかった
+        # （枠を素通しする隔離スレだけが出ていて、食い違って見えていた）。
+        # 先に外し、枠は生きているスレで埋めてから、最後に合流させる。
+        _ng_pulled: list = []
+        if (not _hist and getattr(self._settings, "ng_catalog_pack", True)
+                and self._settings.ng_filter is not None):
+            _keep = []
+            for e in entries:
+                if is_ng_catalog_entry(e, self._settings.ng_filter, self._settings):
+                    _ng_pulled.append(e)
+                else:
+                    _keep.append(e)
+            entries = _keep
         _cap = 0 if _hist else self._display_capacity()
         if _cap > 0 and len(entries) > _cap:
             entries = entries[:_cap]
@@ -11394,6 +11428,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 search_sections = (_m, list(_u) + _quar_entries)
             else:
                 entries = entries + _quar_entries
+        # 先に外しておいたNGスレを合流させる。catalog_to_html 側が
+        # 「NGで隠したスレ」へまとめる（まとめない設定なら黙って捨てられる）。
+        if _ng_pulled and getattr(self._settings, "catalog_ng_section", False):
+            if search_sections:
+                _m, _u = search_sections
+                search_sections = (_m, list(_u) + _ng_pulled)
+            else:
+                entries = entries + _ng_pulled
         if _hist:
             _ls = (self._local_sort_grp.checkedId()
                    if hasattr(self, '_local_sort_grp') else -1)
