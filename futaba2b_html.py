@@ -2960,6 +2960,10 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
     _rev_read_bg       = getattr(ng_settings, "ng_reverse_read_bg",       "#E8E8E8") if ng_settings else "#E8E8E8"
     _rev_read_border   = getattr(ng_settings, "ng_reverse_read_border",   "")        if ng_settings else ""
     _use_default       = getattr(ng_settings, "ng_reverse_use_default_color", True)  if ng_settings else True
+    # 「NGで隠したスレ」まとめの中の並べ替え（"" / "word" / "image"）
+    _ng_order          = getattr(ng_settings, "catalog_ng_section_order", "")        if ng_settings else ""
+    if _ng_order not in ("word", "image"):
+        _ng_order = ""
 
     _ng_hidden: list = []   # NGで隠したスレ（最下部にまとめる用）
 
@@ -3161,20 +3165,35 @@ def catalog_to_html(entries: list, char_limit: int = 6, img_size: int = 84,
                 rest.append(e)
         return rest
 
+    def _ng_reason_of(e) -> str:
+        """NGになった理由の短い文（誤爆に気づくための表示。並べ替えにも使う）"""
+        try:
+            return ng_filter.get_ng_reason_catalog(
+                e, title_chars=char_limit, ng_settings=ng_settings) or ""
+        except Exception:
+            return ""
+
+    def _ng_sort_key(reason: str) -> int:
+        """catalog_ng_section_order による並べ替え用。
+        0=上に出す組 / 1=下に出す組 / 2=どちらでもない（手動NG・本文が空など）"""
+        if reason.startswith("NGワード"):
+            return 0 if _ng_order == "word" else 1
+        if reason.startswith("NG画像"):
+            return 0 if _ng_order == "image" else 1
+        return 2
+
     def _ng_hidden_section(ngs):
         """NGで隠したスレを最下部にまとめて出す。誤爆に気づけるよう理由も添える。"""
         if not ngs:
             return ""
+        _pairs = [(e, _ng_reason_of(e)) for e in ngs]
+        if _ng_order:
+            # 安定ソートなので、同じ組の中の並びはカタログのままになる
+            _pairs.sort(key=lambda p: _ng_sort_key(p[1]))
         parts = ['<div class="sec-div"></div>',
                  f'<div class="sec-hdr ng-hdr">'
                  f'↓ NGで隠したスレ ({len(ngs)}件)</div>']
-        for e in ngs:
-            _reason = ""
-            try:
-                _reason = ng_filter.get_ng_reason_catalog(
-                    e, title_chars=char_limit, ng_settings=ng_settings) or ""
-            except Exception:
-                _reason = ""
+        for e, _reason in _pairs:
             parts.append(_make_entry(e, extra_cls=" ng-hidden-entry",
                                      note=_reason))
         return "".join(parts)

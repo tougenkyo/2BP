@@ -5226,6 +5226,27 @@ class AppSettingsDialog(QDialog):
         cat_hover_lay.addWidget(self._cat_common_id_bottom)
         cat_hover_lay.addWidget(self._cat_rev_top)
         cat_hover_lay.addWidget(self._cat_ng_section)
+        # そのまとめの中の並び順（NGワード／NG画像のどちらを上に出すか）
+        _ngo_lay = QHBoxLayout(); _ngo_lay.setContentsMargins(20, 0, 0, 0)
+        self._cat_ng_order = _NoWheelComboBox()
+        for _t in ("そのまま（カタログの並び順）", "NGワードを上", "NG画像を上"):
+            self._cat_ng_order.addItem(_t)
+        self._cat_ng_order.setToolTip(
+            "「NGで隠したスレ」の中の並び。\n"
+            "  そのまま     … カタログの並び順のまま（従来の動作）\n"
+            "  NGワードを上 … NGワードで隠したスレを先、NG画像で隠したスレを後\n"
+            "  NG画像を上   … その逆\n"
+            "同じ組の中はカタログの並び順のままです。\n"
+            "手動NG・本文が空で隠れたスレは、どちらを選んでも最後に出ます。")
+        _ngo_label = QLabel("まとめの中の並び:")
+        _ngo_lay.addWidget(_ngo_label)
+        _ngo_lay.addWidget(self._cat_ng_order)
+        _ngo_lay.addStretch()
+        cat_hover_lay.addLayout(_ngo_lay)
+        def _toggle_ng_order(on):
+            _ngo_label.setEnabled(on); self._cat_ng_order.setEnabled(on)
+        self._cat_ng_section.toggled.connect(_toggle_ng_order)
+        _toggle_ng_order(self._cat_ng_section.isChecked())
         cat_hover_lay.addWidget(self._cat_quarantine)
         self._cat_scroll_top = QCheckBox("更新したら先頭に戻る")
         self._cat_scroll_top.setToolTip(
@@ -6338,6 +6359,9 @@ class AppSettingsDialog(QDialog):
         self._cat_common_id_bottom.setChecked(getattr(s, "catalog_common_id_bottom", False))
         self._cat_rev_top.setChecked(getattr(s, "catalog_reverse_ng_top", True))
         self._cat_ng_section.setChecked(getattr(s, "catalog_ng_section", False))
+        self._cat_ng_order.setCurrentIndex(
+            {"word": 1, "image": 2}.get(
+                getattr(s, "catalog_ng_section_order", "") or "", 0))
         self._cat_scroll_top.setChecked(
             getattr(s, "catalog_scroll_top_on_reload", False))
         self._hist_self_mode.setCurrentIndex(
@@ -6524,6 +6548,8 @@ class AppSettingsDialog(QDialog):
         s.catalog_common_id_bottom = self._cat_common_id_bottom.isChecked()
         s.catalog_reverse_ng_top = self._cat_rev_top.isChecked()
         s.catalog_ng_section = self._cat_ng_section.isChecked()
+        s.catalog_ng_section_order = ("", "word", "image")[
+            max(0, min(2, self._cat_ng_order.currentIndex()))]
         s.catalog_scroll_top_on_reload = self._cat_scroll_top.isChecked()
         s.history_self_mode        = self._hist_self_mode.currentIndex()
         s.history_sort_mode        = self._hist_sort_mode.currentIndex()
