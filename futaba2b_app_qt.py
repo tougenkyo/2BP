@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.472"
+APP_VER = "0.9.473"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -775,15 +775,31 @@ class WrapTabBar(QTabBar):
         self._tab_rects_cache_val = rects
         return rects
 
+    def _clear_drag_snapshot(self):
+        """ドラッグ用の控えを捨てる。
+
+        控えはタブを押した時点のウィジェット順で、ドラッグ中しか意味を持たない。
+        持ち越すと、閉じて開き直した後の描画がその古い順で行われる。"""
+        self._drag_widget_order = []
+        self._drag_text_order   = []
+        self._drag_tip_order    = []
+
     def _widget_for_paint(self, i: int, parent_tw=None):
         """描画中のタブ位置 i に対応するウィジェットを返す。
         ドラッグ中は _move_tab が表示順のみ入れ替え、stacked の実ウィジェット順は
         リリース時（_sync_stacked_to_tabbar）まで変わらない。そのため
         parent_tw.widget(i) を使うとピンや×が移動前の位置に残ってしまう。
-        ドラッグ中は並べ替え済みの _drag_widget_order を優先する。"""
-        _wo = self._drag_widget_order
-        if _wo and len(_wo) == self.count() and 0 <= i < len(_wo):
-            return _wo[i]
+        ドラッグ中は並べ替え済みの _drag_widget_order を優先する。
+
+        見るのは「ドラッグ中だけ」。控えはタブを押した時点で取るので、
+        動かさずに離せばそのまま残る。それを枚数が合うだけで信じていたため、
+        「最後尾をピン留め→前のタブを閉じる→Ctrl+Shift+Tで戻す」のように
+        枚数が元へ戻ると、ピンや×が閉じる前の位置に描かれていた
+        （中身は正しくピン留めされたままの、描画だけの食い違い）。"""
+        if self._drag_active:
+            _wo = self._drag_widget_order
+            if _wo and len(_wo) == self.count() and 0 <= i < len(_wo):
+                return _wo[i]
         if parent_tw is None:
             parent_tw = self.parentWidget()
         if parent_tw is None:
@@ -861,6 +877,7 @@ class WrapTabBar(QTabBar):
     def tabRemoved(self, idx: int):
         """タブ削除時に _tab_colors / _tab_icons / _tab_width_cache のインデックスをシフト"""
         super().tabRemoved(idx)
+        self._clear_drag_snapshot()   # タブが増減した控えはもう当てにならない
         for d in (self._tab_colors, self._tab_bg_colors, self._tab_icons, self._tab_width_cache):
             new_d = {}
             for k, v in d.items():
@@ -877,6 +894,7 @@ class WrapTabBar(QTabBar):
 
     def tabInserted(self, idx: int):
         super().tabInserted(idx)
+        self._clear_drag_snapshot()   # タブが増減した控えはもう当てにならない
         # 挿入位置以降のキャッシュをシフト
         for d in (self._tab_colors, self._tab_bg_colors, self._tab_icons, self._tab_width_cache):
             new_d = {}
@@ -1154,6 +1172,7 @@ class WrapTabBar(QTabBar):
         from PySide6.QtCore import Qt as _Qt
         if e.button() != _Qt.MouseButton.LeftButton:
             self._drag_idx = -1; self._drag_active = False
+            self._clear_drag_snapshot()
             return
         pos = e.position().toPoint()
         if self._drag_active:
@@ -1171,7 +1190,9 @@ class WrapTabBar(QTabBar):
                         break
                     bp = bp.parent()
             return
+        # 動かさずに離した（ただのクリック）→ 控えは用済み。持ち越さない
         self._drag_idx = -1; self._drag_active = False
+        self._clear_drag_snapshot()
         for i, rect in self._tab_rects().items():
             if self._close_rect(rect).contains(pos):
                 self.tabCloseRequested.emit(i)
@@ -1186,6 +1207,7 @@ class WrapTabBar(QTabBar):
         """
         n = self.count()
         if n == 0 or len(self._drag_widget_order) != n:
+            self._clear_drag_snapshot()   # 合わない控えは捨てる（持ち越さない）
             return
 
         target_widgets = self._drag_widget_order
@@ -1225,9 +1247,7 @@ class WrapTabBar(QTabBar):
             ci = tw.indexOf(cur_w)
             if ci >= 0:
                 tw.setCurrentIndex(ci)
-        self._drag_widget_order = []
-        self._drag_text_order   = []
-        self._drag_tip_order    = []
+        self._clear_drag_snapshot()
 
     def reorder_tabs(self, widgets: list) -> bool:
         """タブの並びを widgets の順に確定する（前回の並びの復元用）。
