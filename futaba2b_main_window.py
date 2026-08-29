@@ -271,6 +271,10 @@ class MainWindow(QMainWindow):
         self._current_board: BoardInfo | None = None
         self._auto_save_done:  set[str] = set()  # 自動保存済みURL（二重保存防止）
         self._restoring_tabs:  bool = False      # 起動時のタブ復元中か
+        # まだ開けていない復元待ちのタブ [(BoardInfo, tab辞書), ...]。
+        # 復元の途中で終了しても次の起動でやり直せるよう、終了時に保存へ足し戻す
+        self._restore_pending: list = []
+        self._restore_active_url: str = ""       # 復元前のアクティブ板
         self._last_auto_close_at: float = 0.0    # 直近の自動クローズ時刻（間隔制御）
         self._auto_close_done: set[str] = set()  # 自動クローズ済みURL（再表示後はクローズしない）
         # タブアイコン設定シグナル（BGスレッド→メインスレッド）
@@ -563,6 +567,13 @@ class MainWindow(QMainWindow):
         wc_lay.addWidget(self._retry_btn, 0, Qt.AlignmentFlag.AlignCenter)
         self._welcome_idx = self._outer_tabs.addTab(welcome_w, "  2BP  ")
         self._outer_tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
+        # 2BPタブ（ウェルカム・案内）には × を描かない。どちらも閉じられず、
+        # 板を開けば自動で消えるので、押せる印を出す方が紛らわしい
+        try:
+            self._outer_tabs.tabBar()._no_close_widgets.update(
+                {welcome_w, self._ph_widget})
+        except AttributeError:
+            pass
         self._r_lay.addWidget(self._outer_tabs, 1)
 
         # 履歴パネル
@@ -2072,10 +2083,10 @@ class MainWindow(QMainWindow):
 
     def _close_outer_tab(self, idx: int):
         w = self._outer_tabs.widget(idx)
-        # プレースホルダタブを閉じたら _ph_idx をリセット
+        # 2BPタブ（板が1枚も無い時の案内）は閉じさせない。閉じられると
+        # 「板ツリーから板を～」の案内ごと消えて、次に何をすればいいのか
+        # 分からなくなる。板を開けば _update_placeholder_visibility が外す。
         if w is self._ph_widget:
-            self._outer_tabs.removeTab(idx)
-            self._ph_idx = -1
             return
         if not isinstance(w, BoardPane):
             return
@@ -2856,11 +2867,10 @@ class MainWindow(QMainWindow):
         if inner:
             inner._on_close_tab(inner.currentIndex())
         else:
-            idx = self._outer_tabs.currentIndex()
-            if idx > 0:
-                w = self._outer_tabs.widget(idx)
-                self._outer_tabs.removeTab(idx)
-                self._dispose_pane(w)
+            # 外側（板）タブも ×・中クリックと同じ _close_outer_tab へ通す。
+            # 直接 removeTab していた頃は、Ctrl+W だけ 2BPタブを閉じられて
+            # 「板ツリーから板を～」の案内ごと消えていた。
+            self._close_outer_tab(self._outer_tabs.currentIndex())
 
     def _on_outer_tab_changed(self, _idx: int):
         # 外側タブ履歴（閉じたとき前のタブに戻る用）
@@ -5748,7 +5758,56 @@ class MainWindow(QMainWindow):
                 "active_inner": _active_j,
                 "inner_tabs":  tabs_info,
             })
+        # 復元の途中で終了した場合は、まだ開けていないタブを足し戻す
+        self._merge_pending_tabs(state)
         self._settings.tab_state = state
+
+    @staticmethod
+    def _tab_state_key(t: dict):
+        """保存するタブ情報の同一判定用。足し戻しで同じタブを重複させない"""
+        _ty = t.get("type", "")
+        if _ty == "image":
+            return ("image", str(t.get("url", "") or ""))
+        try:
+            return (_ty, int(t.get("no", 0) or 0))
+        except (TypeError, ValueError):
+            return (_ty, 0)
+
+    def _merge_pending_tabs(self, state: dict):
+        """復元しきれずに終了した時、まだ開いていないタブを保存状態へ戻す。
+
+        終了時は「今開いているタブ」を保存するので、起動直後の復元中に
+        終了すると、そこまでに開けたぶんしか次回に残らなかった（残りの板は
+        タブが1枚も無い状態で復元され、以後ずっと戻ってこない）。
+        開く前のタブを足し戻して、次の起動でまた最初から復元できるようにする。"""
+        pending = getattr(self, "_restore_pending", None)
+        if not pending:
+            return
+        _by_url = {e.get("board_url", ""): e for e in state["boards"]}
+        for board, tab in pending:
+            burl = getattr(board, "url", "")
+            if not burl:
+                continue
+            ent = _by_url.get(burl)
+            if ent is None:
+                # 板タブを作る前に終了した板。板ごと足し戻す
+                ent = {"board_name": getattr(board, "name", ""),
+                       "board_url":  burl,
+                       "active": False, "active_inner": 0, "inner_tabs": []}
+                state["boards"].append(ent)
+                _by_url[burl] = ent
+            _key = self._tab_state_key(tab)
+            if any(self._tab_state_key(x) == _key for x in ent["inner_tabs"]):
+                continue          # もう開けていたぶんは足さない
+            ent["inner_tabs"].append(dict(tab))
+        # どの板もアクティブでない（＝板タブが1枚も無いうちに終了した）なら、
+        # 復元前のアクティブ板を引き継ぐ
+        if state["boards"] and not any(e.get("active") for e in state["boards"]):
+            _au = getattr(self, "_restore_active_url", "")
+            for e in state["boards"]:
+                if e.get("board_url") == _au:
+                    e["active"] = True
+                    break
 
     def _startup_cache_cleanup(self):
         """起動3秒後にバックグラウンドでキャッシュクリーンアップを実行。
@@ -6018,6 +6077,12 @@ class MainWindow(QMainWindow):
             return
 
         active_url = next((b["board_url"] for b in boards if b.get("active")), "")
+        self._restore_active_url = active_url
+        # 1枚目を開く前に終了されても丸ごと残せるよう、先に全部を控えておく
+        self._restore_pending = [
+            (BoardInfo(name=b.get("board_name", ""), url=b.get("board_url", "")), t)
+            for b in boards for t in b.get("inner_tabs", [])
+            if b.get("board_url")]
 
         # ① 板タブを保存順で先に全部作成（addTabの順序＝表示順を保証）
         for entry in boards:
@@ -6131,6 +6196,7 @@ class MainWindow(QMainWindow):
 
         def _finalize():
             self._restoring_tabs = False   # 以後は自動クローズを許可する
+            self._restore_pending = []     # 全部開けた＝足し戻すものは無い
             # アクティブ外側（板）タブを選択
             if active_url:
                 for i in range(self._outer_tabs.count()):
@@ -6147,21 +6213,29 @@ class MainWindow(QMainWindow):
                 return
 
             board, tab, foreground, entry = tasks[idx]
+            # ここから先はまだ開いていない。途中で終了しても次の起動で
+            # やり直せるよう、残りを控えておく（_merge_pending_tabs が使う）
+            self._restore_pending = [(t[0], t[1]) for t in tasks[idx:]]
 
-            if tab["type"] == "catalog":
-                self._show_board_catalog(board)
-            elif tab["type"] == "thread" and tab.get("no"):
-                if foreground:
-                    self._open_thread(board, tab["no"])
-                else:
-                    # バックグラウンドで開く（レンダリングコスト削減・タブ位置は追加順を維持）
-                    base = board.url.rsplit("/futaba.htm", 1)[0].rstrip("/") + "/"
-                    thread_url = f"{base}res/{tab['no']}.htm"
-                    self._open_thread_url_bg(thread_url)
-            elif tab["type"] == "search":
-                self._restore_search_tab(board, tab)
-            elif tab["type"] == "image":
-                self._restore_image_tab(board, tab, foreground)
+            # 1枚しくじっても残りの復元を止めない。止まると以降のタブが
+            # 開かれないまま保存され、次の起動でも戻ってこなくなる
+            try:
+                if tab["type"] == "catalog":
+                    self._show_board_catalog(board)
+                elif tab["type"] == "thread" and tab.get("no"):
+                    if foreground:
+                        self._open_thread(board, tab["no"])
+                    else:
+                        # バックグラウンドで開く（レンダリングコスト削減・タブ位置は追加順を維持）
+                        base = board.url.rsplit("/futaba.htm", 1)[0].rstrip("/") + "/"
+                        thread_url = f"{base}res/{tab['no']}.htm"
+                        self._open_thread_url_bg(thread_url)
+                elif tab["type"] == "search":
+                    self._restore_search_tab(board, tab)
+                elif tab["type"] == "image":
+                    self._restore_image_tab(board, tab, foreground)
+            except Exception:
+                pass
 
             # アクティブ板のタブを開き終えたら一旦アクティブ板を前面に出してUIを使える状態に
             if idx == n_active - 1:

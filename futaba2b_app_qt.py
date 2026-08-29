@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.474"
+APP_VER = "0.9.475"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -634,6 +634,7 @@ class WrapTabBar(QTabBar):
         self._tab_icons:    dict = {}   # idx → QPixmap（タブアイコン）
         self._tab_width_cache: dict = {}  # idx → ((text, has_icon), width)
         self._pinned_widgets: set = set()  # BoardPane._pinnedへの参照（描画用）
+        self._no_close_widgets: set = set()  # ×を出さないタブ（閉じられないもの）
         self._pin_pixmap: "QPixmap | None" = None   # テーマのピンアイコン（キャッシュ）
         self._pin_pixmap_loaded = False
         # D&D タブ移動用
@@ -1023,12 +1024,13 @@ class WrapTabBar(QTabBar):
             p.drawText(tr, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                        self.tabText(i))
             cr = self._close_rect(rect)
-            # カタログタブは閉じられない → × を描画しない
+            # カタログタブ・2BPタブは閉じられない → × を描画しない
             try:
-                _is_catalog = isinstance(w_i, CatalogView)
+                _no_close = (isinstance(w_i, CatalogView)
+                             or (w_i is not None and w_i in self._no_close_widgets))
             except Exception:
-                _is_catalog = False
-            if not _is_catalog:
+                _no_close = False
+            if not _no_close:
                 p.setPen(QColor(self._C_CLZ))
                 p.drawText(cr, Qt.AlignmentFlag.AlignCenter, "×")
         p.end()
@@ -3551,6 +3553,10 @@ class BoardPane(QWidget):
         self._tab_stack = QStackedWidget()
         self._tab_stack.addWidget(self._tabs)          # index 0
         self._tab_stack.addWidget(self._no_tab_widget) # index 1
+        # 作りたてはタブが0枚。空のタブウィジェットを出すと真っ黒な板になり
+        # 手がかりが何も無いので、最初から「カタログを開く」を見せておく。
+        # （復元の途中や、板だけ開いてタブが1枚も戻らなかった時に出る）
+        self._tab_stack.setCurrentIndex(1)
         lay.addWidget(self._tab_stack)
 
         # 自動更新タイマー
