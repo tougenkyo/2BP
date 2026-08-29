@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.473"
+APP_VER = "0.9.474"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1859,6 +1859,19 @@ def _populate_subfolder_menu(menu, folder: str, on_pick) -> None:
         else:
             act = menu.addAction(name)
             act.triggered.connect(lambda _=False, pp=p: on_pick(pp))
+
+
+def _my_nos_for(settings, thread) -> set:
+    """このスレで自分が書き込んだレス番号。青帯の設定がOFFなら空を返す。
+
+    表示側とARマネージャで別々に持っていた頃は、AR側だけ設定を見ておらず、
+    自動更新が走ったスレでは設定をOFFにしていても自分のレスに青帯が付いた。
+    青帯を元に引用元へ橙帯を付けるJSがあるので、引用したレスも道連れで
+    色が付いていた。判定は1か所に置く。"""
+    if not getattr(settings, "self_res_highlight", True):
+        return set()
+    url = getattr(thread, "url", "") if thread else ""
+    return set(getattr(settings, "my_post_nos", {}).get(url, []))
 
 
 def _is_pseudo_red_thread(thread, settings) -> bool:
@@ -9004,10 +9017,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
 
     def _get_my_nos(self, thread) -> set:
         """このスレッドで自分が投稿したレス番号のセットを返す"""
-        if not getattr(self._settings, "self_res_highlight", True):
-            return set()
-        url = thread.url if thread else ""
-        return set(self._settings.my_post_nos.get(url, []))
+        return _my_nos_for(self._settings, thread)
 
     def _check_self_res_notifications(self, thread, new_res: list):
         """新着レスの中に自分のレスへのそうだね増加・返信があれば右上にポップアップ通知する"""
@@ -13540,9 +13550,12 @@ class AutoRefreshManager(QObject):
             pass
 
     def _get_my_nos_for_view(self, view, thread) -> set:
-        """ARマネージャ用: スレッドの自分のレス番号セットを返す"""
-        url = thread.url if thread else ""
-        return set(self._settings.my_post_nos.get(url, []))
+        """ARマネージャ用: スレッドの自分のレス番号セットを返す。
+
+        青帯の設定を見ていなかったため、自動更新が走ったスレだけ、設定を
+        OFFにしていても自分のレスに青帯が付いていた（そのレスを引用した
+        レスに橙帯が付くのも、青帯を元に付けているための道連れ）。"""
+        return _my_nos_for(self._settings, thread)
 
     def _speak_bouyomi(self, res_list: list):
         """新着レスを棒読みちゃんに送信する（BGスレッドで実行）"""
