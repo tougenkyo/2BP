@@ -1297,7 +1297,9 @@ class PostDialog(QDialog):
         _sz = getattr(settings, "post_dialog_size", [])
         if isinstance(_sz, list) and len(_sz) == 2:
             try:
-                self.resize(int(_sz[0]), int(_sz[1]))
+                # 潰れた大きさが記録されていてもそのまま開かない。
+                # タイトルバーだけのウインドウで出てきて操作できなくなる
+                self.resize(max(320, int(_sz[0])), max(200, int(_sz[1])))
             except Exception:
                 pass
         _pos = getattr(settings, "post_dialog_pos", [])
@@ -2769,12 +2771,66 @@ document.addEventListener('keydown',function(e){{
             self._result_signal.emit(ok, msg, new_no)
         threading.Thread(target=_do, daemon=True).start()
 
+    # これ以下の高さは「タイトルバーだけ（＝畳んだ状態）」とみなす
+    _ROLLED_H = 8
+
+    def _is_collapsed_h(self) -> bool:
+        return self.height() <= self._ROLLED_H
+
+    def _restore_roll_size(self):
+        """畳む前の大きさに戻す。高さの上下限も外す"""
+        self.setMaximumHeight(16777215); self.setMinimumHeight(0)
+        sz = getattr(self, "_rolled_size", None)
+        if sz is not None and sz.height() > self._ROLLED_H:
+            self.resize(sz)
+        else:
+            self.resize(580, 460)
+
+    def _schedule_unroll_fix(self, tries: int = 5):
+        """タイトルバーだけのまま残っていたら少し後に戻し直す。
+
+        タイトルバーをドラッグしている最中はウィンドウの移動ループが
+        大きさを握っていて、こちらの resize が握り潰される。ドラッグが
+        終わってから戻し直さないと、タイトルバーだけの状態で残ってしまう。"""
+        if getattr(self, "_unroll_fix_pending", False) or tries <= 0:
+            return
+        self._unroll_fix_pending = True
+
+        def _fix():
+            self._unroll_fix_pending = False
+            if getattr(self, "_rolled_up", False) or not self._is_collapsed_h():
+                return
+            self._restore_roll_size()
+            if self._is_collapsed_h():
+                self._schedule_unroll_fix(tries - 1)
+        QTimer.singleShot(120, _fix)
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        # ドラッグ中に元へ戻すと resize が効かない。動かし終わりに拾い直す
+        if not getattr(self, "_rolled_up", False) and self._is_collapsed_h():
+            self._schedule_unroll_fix()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 畳んでいないのに潰されたら拾い直す。ウィンドウの移動ループは
+        # こちらの resize を後から巻き戻すので、戻した直後の高さを見るだけ
+        # では取りこぼす（巻き戻しはこの後の resize イベントで届く）
+        if not getattr(self, "_rolled_up", False) and self._is_collapsed_h():
+            self._schedule_unroll_fix()
+
     def roll_up(self, title_hint: str = ""):
         """タブ切替時：コンテンツを隠してタイトルバーだけにする"""
         if getattr(self, "_rolled_up", False):
             return
         self._rolled_up   = True
-        self._rolled_size = self.size()
+        # 潰れた高さを「畳む前の大きさ」として覚えない。覚えてしまうと、
+        # 次に戻す時もその高さに戻すので、以後ずっとタイトルバーだけになる
+        _sz = self.size()
+        if _sz.height() > self._ROLLED_H:
+            self._rolled_size = _sz
+        elif getattr(self, "_rolled_size", None) is None:
+            self._rolled_size = QSize(580, 460)
         # このダイアログが返信しているスレのタイトルを表示
         thread_title = getattr(self, "_thread_title", "").strip()
         if thread_title:
@@ -2798,6 +2854,11 @@ document.addEventListener('keydown',function(e){{
     def roll_restore(self):
         """タブを戻したとき：コンテンツを復元する"""
         if not getattr(self, "_rolled_up", False):
+            # 畳んでいない筈なのに潰れたまま（ドラッグ中に戻した後など）なら
+            # 大きさだけ戻す
+            if self._is_collapsed_h():
+                self._restore_roll_size()
+                self._schedule_unroll_fix()
             return
         self._rolled_up = False
         base = f"{'返信' if self._resto else 'スレッド作成'} ─ {self._board_disp}"
@@ -2812,12 +2873,10 @@ document.addEventListener('keydown',function(e){{
                 if w is _rules_w:
                     continue
                 w.show()
-        self.setMaximumHeight(16777215); self.setMinimumHeight(0)
-        sz = getattr(self, "_rolled_size", None)
-        if sz:
-            self.resize(sz)
-        else:
-            self.resize(580, 460)
+        self._restore_roll_size()
+        # ドラッグ中だと resize が握り潰されるので、効いたか後で見に行く
+        if self._is_collapsed_h():
+            self._schedule_unroll_fix()
         self._roll_active = False
 
     def _on_result(self, ok: bool, msg: str, new_thread_no: int = 0):
@@ -2987,15 +3046,17 @@ document.addEventListener('keydown',function(e){{
         self._sample_win.show()
 
     def _save_geometry(self):
-        """サイズ・位置を設定に保存（roll_up中は縮小前サイズを使う）"""
-        if getattr(self, "_rolled_up", False):
+        """サイズ・位置を設定に保存（roll_up中は縮小前サイズを使う）。
+
+        潰れた高さは覚えない。覚えると次に開くレスウインドウまで
+        タイトルバーだけで出てくる。"""
+        self._settings.post_dialog_pos = [self.x(), self.y()]
+        if getattr(self, "_rolled_up", False) or self._is_collapsed_h():
             sz = getattr(self, "_rolled_size", None)
-            if sz:
+            if sz is not None and sz.height() > self._ROLLED_H:
                 self._settings.post_dialog_size = [sz.width(), sz.height()]
-                self._settings.post_dialog_pos  = [self.x(), self.y()]
         else:
             self._settings.post_dialog_size = [self.width(), self.height()]
-            self._settings.post_dialog_pos  = [self.x(), self.y()]
 
     def closeEvent(self, event):
         # 手書きの保留中デバウンス保存を確定させる（settings.tegaki_state は
