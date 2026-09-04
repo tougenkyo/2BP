@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.476"
+APP_VER = "0.9.477"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -627,6 +627,12 @@ class WrapTabBar(QTabBar):
         # これを覚えずに毎回タブ番号順から組み直していたため、画面の並びと関係の
         # 無い位置へ段が飛び、段どうしが入れ替わったように見えていた。
         self._row_perm: list = []
+        # タブを閉じた直後は段を動かさない。閉じると「直前に見ていたタブ」へ
+        # 戻るが、それが別の段にあると段ごと最下段へ送られ、1枚閉じただけで
+        # 上下の段が総入れ替えになったように見える。自分でタブを選ぶか、
+        # タブが増えるまでは今の並びのまま置いておく。
+        self._row_hold: bool = False
+        self._row_seen_count: int = 0   # 前回組んだ時のタブ枚数（減ったら閉じたと見る）
         self._tab_colors:   dict = {}   # idx → QColor（文字色: エラー赤・新着青）
         self._tab_bg_colors: dict = {}  # idx → QColor（背景色: 未読水色）
         self._tab_id_set:   set  = set()  # ID表示スレのタブindex（基底色=ピンク）
@@ -707,6 +713,14 @@ class WrapTabBar(QTabBar):
 
     def _layout(self, avail: int = 0):
         """幅に合わせてタブを行に振り分ける。"""
+        # 枚数が減った＝タブを閉じた。Qt はタブを外した後 tabRemoved より先に
+        # 組み直しを呼ぶ事があり、そこで段が入れ替わってしまうので、
+        # tabRemoved を待たずにここでも「段を動かさない」印を立てる。
+        # （__init__ の途中から呼ばれる事があるので getattr で受ける）
+        _n_tabs = self.count()
+        if _n_tabs < getattr(self, "_row_seen_count", 0):
+            self._row_hold = True
+        self._row_seen_count = _n_tabs
         if avail <= 0:
             avail = self.width()
         pw = self.parentWidget().width() if self.parentWidget() else 0
@@ -738,13 +752,18 @@ class WrapTabBar(QTabBar):
         　入れ替わって C は動かない）。今出ている並びから送れば、
         　B→3段目・A→2段目・C→1段目 と1段ずつ動く。
 
-        同じ選択で何度呼んでも結果は変わらない（最下段にあれば動かさない）。"""
+        同じ選択で何度呼んでも結果は変わらない（最下段にあれば動かさない）。
+
+        送るのは自分でタブを選んだ時だけ。タブを閉じた事で選択が移った時は
+        _row_hold が立っていて動かさない。閉じると直前に見ていたタブへ戻るが、
+        それが別の段にあると段ごと下へ送られ、1枚閉じただけで上下が
+        総入れ替えになったように見えていた。"""
         n = len(rows)
         perm = self._row_perm
         if sorted(perm) != list(range(n)):
             perm = list(range(n))        # 段数が変わった → いったん番号順に戻す
         cur = self.currentIndex()
-        if cur >= 0:
+        if cur >= 0 and not self._row_hold:
             _nr = -1
             for ri, row in enumerate(rows):
                 if cur in row:
@@ -759,7 +778,7 @@ class WrapTabBar(QTabBar):
         # キャッシュ: サイズ・タブ数・テキスト・アイコン・ピンが
         # 変わらない限り再計算しない。ピンを鍵に入れておかないと、
         # 留めた直後に前の配置のまま描かれる（手で捨てないと直らない）。
-        key = (self.width(), self.count(), self.currentIndex(),
+        key = (self.width(), self.count(), self.currentIndex(), self._row_hold,
                tuple(self.tabText(i) for i in range(self.count())),
                tuple(bool(self._tab_icons.get(i)) for i in range(self.count())),
                tuple(self._is_pinned_tab(i) for i in range(self.count())))
@@ -879,6 +898,7 @@ class WrapTabBar(QTabBar):
         """タブ削除時に _tab_colors / _tab_icons / _tab_width_cache のインデックスをシフト"""
         super().tabRemoved(idx)
         self._clear_drag_snapshot()   # タブが増減した控えはもう当てにならない
+        self._row_hold = True         # 閉じた拍子に段を入れ替えない
         for d in (self._tab_colors, self._tab_bg_colors, self._tab_icons, self._tab_width_cache):
             new_d = {}
             for k, v in d.items():
@@ -896,6 +916,7 @@ class WrapTabBar(QTabBar):
     def tabInserted(self, idx: int):
         super().tabInserted(idx)
         self._clear_drag_snapshot()   # タブが増減した控えはもう当てにならない
+        self._row_hold = False        # 増えた分で組み直す
         # 挿入位置以降のキャッシュをシフト
         for d in (self._tab_colors, self._tab_bg_colors, self._tab_icons, self._tab_width_cache):
             new_d = {}
@@ -1055,6 +1076,9 @@ class WrapTabBar(QTabBar):
         #   位置からは別タブに解決されてしまうのを防ぐ）
         self._press_idx = i
         if i >= 0 and not self._close_rect(self._tab_rects().get(i, QRect())).contains(pos):
+            # 自分で選んだ → 段を送ってよい。位置を決めた後に外す
+            # （先に外すと押した瞬間に段が動き、狙ったタブから外れる）
+            self._row_hold = False
             self.setCurrentIndex(i)              # × 以外の左クリック→選択
             # D&D 開始準備
             self._drag_idx = i
