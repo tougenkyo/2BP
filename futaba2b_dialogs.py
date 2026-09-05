@@ -5604,7 +5604,7 @@ class AppSettingsDialog(QDialog):
         g_log = QGroupBox("ログ"); f_ap.addWidget(g_log); lgf = QVBoxLayout(g_log)
         self._show_console = QCheckBox("ログを出力する（黒いコンソールウィンドウを表示する）")
         lgf.addWidget(self._show_console)
-        _log_hint = QLabel("チェックを外すと、起動時に黒いコンソールウィンドウを非表示にします。\n"
+        _log_hint = QLabel("チェックを外すと、黒いコンソールウィンドウを出さずに起動します。\n"
                            "設定の反映には再起動が必要です。")
         _log_hint.setStyleSheet("color: gray; font-size: 11px;")
         _log_hint.setWordWrap(True)

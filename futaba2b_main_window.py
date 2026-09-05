@@ -6513,6 +6513,12 @@ def main():
     # ── ログ出力（黒いコンソール）の表示/非表示 ──────────────────────────
     # 設定 show_console が False（既定）なら、起動時に Windows のコンソール
     # ウィンドウを隠す。設定は futaba2b_settings.json から先読みする。
+    #
+    # ここで隠せるのは従来のコンソール ホストの窓だけ。Windows ターミナル配下
+    # では GetConsoleWindow() が見えない代理の窓を返すので効かない。そのため
+    # 普段は futaba2b_qt.py が pythonw.exe で起動し直して、コンソールを最初から
+    # 持たないようにしている。ここは起動し直せなかった時
+    # （pythonw が無い・run_2bp_loop.bat から等）の保険。
     try:
         import json as _jc
         from pathlib import Path as _Pc

@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.477"
+APP_VER = "0.9.478"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で

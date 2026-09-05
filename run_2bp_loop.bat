@@ -2,6 +2,10 @@
 cd /d "%~dp0"
 title 2BP - Auto Restart
 
+rem This window must stay: it waits for the exit code and restarts 2BP.
+rem Keep 2BP attached to this console instead of relaunching it detached.
+set BP2_NO_RESPAWN=1
+
 :LOOP
 echo.
 echo ========================================
