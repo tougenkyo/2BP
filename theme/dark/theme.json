@@ -27,6 +27,7 @@
 
     "statusbar_bg":       "#2d2d2d",
     "statusbar_fg":       "#cccccc",
+    "search_status_fg": "#cccccc",
     "statusbar_border":   "#555555",
 
     "tab_bg":             "#2d2d2d",

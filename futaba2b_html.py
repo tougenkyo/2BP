@@ -3402,6 +3402,10 @@ body {
 .sr-hit.sr-deled .sr-com { text-decoration: line-through; }
 .sr-thread.sr-nged .sr-th-head::after  { content: " ＮＧにした"; color: var(--no-color, #800000); }
 .sr-thread.sr-deled .sr-th-head::after { content: " 削除依頼を出した"; color: var(--no-color, #800000); }
+/* 両方に当たっているスレ。片方だけ出すと、もう片方をやったか分からない */
+.sr-thread.sr-nged.sr-deled .sr-th-head::after {
+    content: " ＮＧにした・削除依頼を出した"; color: var(--no-color, #800000);
+}
 .sr-meta { font-size: 8pt; color: var(--date-color, #800000); }
 .sr-meta .sr-no { color: var(--no-color, #800000); margin-left: 6px; }
 .sr-meta .sr-op { color: var(--name-color, #117743); font-weight: bold; margin-left: 6px; }
@@ -3572,21 +3576,32 @@ def _sr_mark_keyword(com_html: str, keyword: str) -> str:
     return "".join(out)
 
 
-def _sr_del_btn(url_esc: str, no: int, kind: str) -> str:
+def _sr_del_btn(url_esc: str, no: int, kind: str, done: bool = False) -> str:
     """検索結果に置く del ボタン。押すとその場で削除依頼を送る。
 
     kind="thread" はスレごと、"res" はそのレスだけ。ふたばの del.php は
-    どちらも「レス番号」を送るだけで、スレ番号を送ればスレ扱いになる。"""
-    return (f'<span class="sr-del" data-del-url="{url_esc}" data-del-no="{no}"'
+    どちらも「レス番号」を送るだけで、スレ番号を送ればスレ扱いになる。
+
+    done=True は「もう依頼を出した」もの。押した直後と同じ「済」の見た目に
+    して押せなくする。検索し直すと押した事が消えてしまい、出したかどうかが
+    分からなくなっていた。"""
+    _cls = "sr-del sr-del-ok sr-del-busy" if done else "sr-del"
+    _tip = ("この{}の削除依頼はもう出しました".format(
+                "スレ" if kind == "thread" else "レス")
+            if done else
+            "{}の削除依頼を出す".format(
+                "このスレ" if kind == "thread" else "このレス"))
+    return (f'<span class="{_cls}" data-del-url="{url_esc}" data-del-no="{no}"'
             f' data-del-kind="{kind}"'
-            f' title="{"このスレ" if kind == "thread" else "このレス"}の削除依頼を出す"'
+            f' title="{_tip}"'
             f' onclick="srDelClick(event,this)">del</span>')
 
 
-def _sr_hit_html(h, keyword: str, thread_url_esc: str) -> str:
+def _sr_hit_html(h, keyword: str, thread_url_esc: str,
+                 deled: bool = False) -> str:
     meta = [f'<span class="sr-date">{_html.escape(_sr_time(h.datetime_str))}</span>',
             f'<span class="sr-no">No.{h.no}</span>',
-            _sr_del_btn(thread_url_esc, h.no, "res")]
+            _sr_del_btn(thread_url_esc, h.no, "res", done=deled)]
     if h.is_op:
         meta.append('<span class="sr-op">スレ本文</span>')
     thumb = ""
@@ -3594,7 +3609,8 @@ def _sr_hit_html(h, keyword: str, thread_url_esc: str) -> str:
         thumb = (f'<img class="sr-thumb" loading="lazy" '
                  f'src="{_html.escape(h.thumb_url, quote=True)}">')
     # クリックしたレスまでスクロールして見せたいので、レスNoも一緒に渡す
-    return (f'<div class="sr-hit" data-url="{thread_url_esc}" data-no="{h.no}" '
+    _cls = "sr-hit sr-deled" if deled else "sr-hit"
+    return (f'<div class="{_cls}" data-url="{thread_url_esc}" data-no="{h.no}" '
             f"onclick=\"srOpen('{thread_url_esc}',0,{h.no})\">"
             f'<div class="sr-meta">{"".join(meta)}</div>'
             f'{thumb}<div class="sr-com">'
@@ -3646,15 +3662,41 @@ def _sr_id_badge(op_info: dict, th_no: int) -> str:
     return ""
 
 
+def _sr_board_nos(urls, base: str) -> set:
+    """URLの並びから、この板のスレ番号だけを取り出す。
+
+    番号だけで照合すると別の板の同じ番号まで巻き添えになるので、
+    その板のURLで始まるものに限る。"""
+    out: set = set()
+    if not urls:
+        return out
+    _bl = (base or "").lower()
+    for _u in urls:
+        _u = (_u or "").strip()
+        if not _u or not _bl or not _u.lower().startswith(_bl):
+            continue
+        _m = re.search(r'res/(\d+)\.htm', _u)
+        if _m:
+            out.add(int(_m.group(1)))
+    return out
+
+
 def search_to_html(result, user_css: str = "", board_label: str = "",
-                   ng_urls=None) -> str:
+                   ng_urls=None, del_urls=None, del_res_nos=None,
+                   show_ng: bool = False, show_del: bool = True) -> str:
     """板内検索の結果ページ。
 
     ふたばの検索は板の全部を走査せず途中で止める。件数だけ出すと
     「少ない＝無い」と誤解するので、どこまで見たのかを必ず添える。
 
-    ng_urls … NGにしたスレのURL。当たったスレは丸ごと出さない
-    （結果からNGにしたのに、検索し直すとまた出てくるのを止めるため）。"""
+    ng_urls     … NGにしたスレのURL
+    del_urls    … 削除依頼(del)が通ったスレのURL
+    del_res_nos … スレURL → 削除依頼を出したレスNoの並び
+    show_ng     … NGにしたスレも出すか（出す時は印を付ける）
+    show_del    … 削除依頼を出したスレも出すか（出す時は印を付ける）
+
+    出す方に倒しても印は必ず付ける。検索し直すと押した事が消えて、
+    NGにしたか・削除依頼を出したかが分からなくなっていた。"""
     kw     = getattr(result, "keyword", "") or ""
     kw_esc = _html.escape(kw)
     base   = (getattr(result, "board_url", "") or "").rstrip("/") + "/"
@@ -3662,20 +3704,34 @@ def search_to_html(result, user_css: str = "", board_label: str = "",
     err    = getattr(result, "error", "") or ""
     op_info = getattr(result, "op_info", None) or {}
 
-    # NGにしたスレの番号。URLの形の違いで取りこぼさないよう、この板のURLで
-    # 始まるものだけをスレ番号にして持つ。
-    _ng_nos: set = set()
-    if ng_urls:
-        _bl = base.lower()
-        for _u in ng_urls:
-            _u = (_u or "").strip()
-            if not _u or not _u.lower().startswith(_bl):
-                continue
-            _m = re.search(r'res/(\d+)\.htm', _u)
-            if _m:
-                _ng_nos.add(int(_m.group(1)))
-    _ng_th   = {h.thread_no for h in hits if h.thread_no in _ng_nos}
-    _ng_hits = sum(1 for h in hits if h.thread_no in _ng_nos)
+    # スレNo → 削除依頼を出したレスNo（そのレスの行にだけ印を付ける）
+    _del_res: dict = {}
+    for _u, _nos in (del_res_nos or {}).items():
+        _us = str(_u or "")
+        _m = re.search(r'res/(\d+)\.htm', _us)
+        if _m and _us.lower().startswith(base.lower()):
+            try:
+                _del_res[int(_m.group(1))] = {int(n) for n in (_nos or [])}
+            except (TypeError, ValueError):
+                pass
+
+    # NGにしたスレ／削除依頼を出したスレの番号。
+    # スレごとの依頼は「隠すリスト」に入るが、設定でそれを切っている人もいる。
+    # その場合もレス側の記録にスレ自身の番号が残るので、そちらも見る。
+    _ng_nos  = _sr_board_nos(ng_urls,  base)
+    _del_nos = _sr_board_nos(del_urls, base)
+    _del_nos |= {_t for _t, _ns in _del_res.items() if _t in _ns}
+    # 出さない組。NGが先。両方に当たるスレを二重に数えない
+    _hide_ng  = set() if show_ng  else _ng_nos
+    _hide_del = (set() if show_del else _del_nos) - _hide_ng
+    _hidden   = _hide_ng | _hide_del
+
+    def _cnt(nos):
+        _th = {h.thread_no for h in hits if h.thread_no in nos}
+        return len(_th), sum(1 for h in hits if h.thread_no in nos)
+
+    _ng_th,  _ng_hits  = _cnt(_hide_ng)
+    _del_th, _del_hits = _cnt(_hide_del)
 
     head = [f'<div class="sr-title">「<span class="kw">{kw_esc}</span>」の検索結果']
     if board_label:
@@ -3702,8 +3758,11 @@ def search_to_html(result, user_css: str = "", board_label: str = "",
         head.append(f'<div class="sr-range">{result.count}件 / '
                     f'{result.thread_count}スレ{_scan}</div>')
         if _ng_th:
-            head.append(f'<div class="sr-range">NGにしたスレ {len(_ng_th)}スレ'
+            head.append(f'<div class="sr-range">NGにしたスレ {_ng_th}スレ'
                         f'（{_ng_hits}件）は出していません</div>')
+        if _del_th:
+            head.append(f'<div class="sr-range">削除依頼を出したスレ {_del_th}スレ'
+                        f'（{_del_hits}件）は出していません</div>')
         if is_cache:
             if getattr(result, "capped", False):
                 notes.append(
@@ -3738,15 +3797,18 @@ def search_to_html(result, user_css: str = "", board_label: str = "",
             body.append('<div class="sr-empty">該当するレスはありませんでした。</div>')
         return _sr_page("".join(body), user_css)
 
-    # スレごとにまとめる（最初にヒットした順＝古い順）。NGにしたスレは外す。
+    # スレごとにまとめる（最初にヒットした順＝古い順）。出さない組は外す。
     groups: dict = {}
     for h in hits:
-        if h.thread_no in _ng_nos:
+        if h.thread_no in _hidden:
             continue
         groups.setdefault(h.thread_no, []).append(h)
     if not groups:
+        _why = "NGにしたスレ" if _ng_th and not _del_th else (
+               "削除依頼を出したスレ" if _del_th and not _ng_th else
+               "NGにしたスレか、削除依頼を出したスレ")
         body.append('<div class="sr-empty">'
-                    '該当したスレは、すべてNGにしたスレでした。</div>')
+                    f'該当したスレは、すべて{_why}でした。</div>')
         return _sr_page("".join(body), user_css)
     for th_no, ghits in groups.items():
         _u = _html.escape(f"{base}res/{th_no}.htm", quote=True)
@@ -3756,15 +3818,21 @@ def search_to_html(result, user_css: str = "", board_label: str = "",
                      if (h.subject or "").strip() and h.subject != "無念"), "")
         _sub_html = (f' <span class="sr-th-sub">{_html.escape(_sub)}</span>'
                      if _sub else "")
+        # 出す方に倒したNG・削除依頼済みは、印を付けたうえで出す
+        _th_ng  = th_no in _ng_nos
+        _th_del = th_no in _del_nos
+        _th_cls = ("sr-thread" + (" sr-nged" if _th_ng else "")
+                                + (" sr-deled" if _th_del else ""))
+        _rnos = _del_res.get(th_no, set())
         body.append(
-            f'<div class="sr-thread">'
+            f'<div class="{_th_cls}">'
             f'<div class="sr-th-head" data-url="{_u}" '
             f"onclick=\"srOpen('{_u}',0)\">スレ No.{th_no} "
             + _sr_id_badge(op_info, th_no)
-            + _sr_del_btn(_u, th_no, "thread")
+            + _sr_del_btn(_u, th_no, "thread", done=_th_del)
             + f'{_sub_html}'
             f' <span class="sr-th-cnt">（{len(ghits)}件）</span></div>')
         for h in ghits:
-            body.append(_sr_hit_html(h, kw, _u))
+            body.append(_sr_hit_html(h, kw, _u, deled=(h.no in _rnos)))
         body.append('</div>')
     return _sr_page("".join(body), user_css)

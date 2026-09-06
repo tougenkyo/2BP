@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.480"
+APP_VER = "0.9.481"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -12241,9 +12241,25 @@ class BoardSearchView(QWidget):
             "　　　　　新しいスレから最後まで探す。落ちたスレも残っていれば拾える")
         self._src.currentIndexChanged.connect(lambda _: self.run_search())
         tb.addWidget(self._src)
+        # 「NGにした」「削除依頼を出した」スレを結果に出すかどうか。
+        # 出す方に倒しても印は付くので、やったかどうかは分かる。
+        tb.addWidget(QLabel(" 表示："))
+        self._chk_del = QCheckBox("del")
+        self._chk_del.setToolTip(
+            "チェックを外すと、削除依頼(del)を出したスレを結果に出しません。\n"
+            "チェックしている時は、出したことが分かるよう打ち消し線を引きます。")
+        self._chk_del.setChecked(bool(getattr(settings, "search_show_del", True)))
+        self._chk_del.toggled.connect(self._on_show_toggled)
+        tb.addWidget(self._chk_del)
+        self._chk_ng = QCheckBox("NG")
+        self._chk_ng.setToolTip(
+            "チェックを外すと、NGにしたスレを結果に出しません。\n"
+            "チェックしている時は、NGにしたことが分かるよう印を付けます。")
+        self._chk_ng.setChecked(bool(getattr(settings, "search_show_ng", False)))
+        self._chk_ng.toggled.connect(self._on_show_toggled)
+        tb.addWidget(self._chk_ng)
         self._lbl = QLabel("")
-        self._lbl.setStyleSheet(f"font-size:8pt;color:{_TM.ui('text_muted','#888')};"
-                                "padding:0 8px;")
+        self._apply_lbl_style()
         tb.addWidget(self._lbl)
         lay.addWidget(tb)
 
@@ -12283,6 +12299,28 @@ class BoardSearchView(QWidget):
         _self_ref = _wr.ref(self)
         self.destroyed.connect(
             lambda: _cleanup_tmp(getattr(_self_ref(), '_tmp_html_path', '')))
+
+    def _apply_lbl_style(self):
+        """検索先の右に出す文字（件数・削除依頼の結果など）の見た目。
+
+        以前は薄い灰色(text_muted)で描いていたが、暗いテーマでは背景に
+        近すぎて「スレの削除依頼を登録しました」等が読めなかった。
+        ステータスバーと同じ色にする。theme.json の ui.search_status_fg で
+        個別に変えられる（無ければ ui.statusbar_fg）。"""
+        _c = _TM.ui("search_status_fg", "") or _TM.ui("statusbar_fg", "#cccccc")
+        try:
+            self._lbl.setStyleSheet(f"font-size:8pt;color:{_c};padding:0 8px;")
+        except RuntimeError:
+            pass
+
+    def _on_show_toggled(self, _checked=False):
+        """「表示: del / NG」のチェックが変わった時。引き直さずに描き直す
+        （結果は手元にあるので、ふたばに聞き直す必要がない）。"""
+        self._settings.search_show_del = bool(self._chk_del.isChecked())
+        self._settings.search_show_ng  = bool(self._chk_ng.isChecked())
+        self._settings.save()
+        if self._result is not None:
+            self._render()
 
     # ── 公開API ──────────────────────────────────────────────────────────
 
@@ -12383,14 +12421,20 @@ class BoardSearchView(QWidget):
     def _render(self):
         if self._result is None:
             return
+        self._apply_lbl_style()      # テーマを変えた後の描き直しで拾い直す
         html = search_to_html(
             self._result,
             user_css=_load_user_css(self._settings),
             board_label=(board_display_name(self._board.name, self._board.url)
                          if self._board else ""),
-            # NGにしたスレは出さない。結果からNGにしたのに検索し直すと
-            # また出てくる、という報告への対応。
-            ng_urls=list(getattr(self._settings, "ng_thread_urls", []) or []))
+            # NGにしたスレ・削除依頼を出したスレ。出す/出さないはツールバーの
+            # チェックで決める。出す時も印は付ける（検索し直すと押した事が
+            # 消えて、やったかどうか分からなくなっていた）。
+            ng_urls=list(getattr(self._settings, "ng_thread_urls", []) or []),
+            del_urls=list(getattr(self._settings, "del_hidden_thread_urls", []) or []),
+            del_res_nos=getattr(self._settings, "del_res_nos", {}) or {},
+            show_ng=bool(getattr(self._settings, "search_show_ng", False)),
+            show_del=bool(getattr(self._settings, "search_show_del", True)))
         base = QUrl(self._board.base_url) if self._board else QUrl("about:blank")
         self._load_html_via_tempfile(html, base)
 

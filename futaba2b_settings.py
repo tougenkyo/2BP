@@ -840,6 +840,13 @@ class AppSettings:
         # 非表示とは別管理。No.の右に「del済」赤表示する目印に使う。
         self.del_res_nos: dict[str, list[int]] = {}
 
+        # 板内検索の結果に「削除依頼を出したスレ」「NGにしたスレ」を出すか。
+        # 検索タブのツールバーのチェックで切り替える（出す時も印は付ける）。
+        # del は既定で出す（出したかどうかが分かるように印だけ付ける）、
+        # NG は既定で出さない（NGにしたのにまた出てくるのを止めるため）。
+        self.search_show_del: bool = True
+        self.search_show_ng:  bool = False
+
         # ── 自分のレス追跡 ──────────────────────────────────────────────────
         self.my_post_nos: dict[str, list[int]] = {}   # スレURL → レス番号リスト
         # ハイライト
@@ -1028,6 +1035,8 @@ class AppSettings:
                 k: list(map(int, v))
                 for k, v in raw.get("del_res_nos", {}).items()
             }
+            self.search_show_del = bool(raw.get("search_show_del", True))
+            self.search_show_ng  = bool(raw.get("search_show_ng", False))
             # 自分のレス追跡
             self.my_post_nos = {
                 k: list(map(int, v))
@@ -1279,6 +1288,8 @@ class AppSettings:
                         "del_hide_after_report": self.del_hide_after_report,
                         "ng_hidden_res_nos": _ng_hidden,
                         "del_res_nos": _del_res,
+                        "search_show_del": self.search_show_del,
+                        "search_show_ng":  self.search_show_ng,
                         "my_post_nos": {k: list(v) for k, v in self.my_post_nos.items() if v},
                         "self_res_highlight":       self.self_res_highlight,
                         "self_res_sodane_notify":   self.self_res_sodane_notify,
