@@ -567,7 +567,7 @@ class AppSettings:
         # 0 は古いスレを開き直すたびに最上部へ来るため、1/2 を選べるようにした。
         self.history_sort_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
-        self.recent_closed_max: int = 30     # 最近閉じたスレの保持件数
+        self.recent_closed_max: int = 30     # 最近閉じたタブの保持件数
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
         # スレッド履歴パネルの保持件数（全板の合計）。並び替え「履歴」の
         # カタログ表示もこの履歴を使う。
@@ -589,7 +589,10 @@ class AppSettings:
         self.cache_thread_size_enabled: bool = False  # スレHTML: サイズ上限で削除
         self.cache_thread_size_mb:      int  = 200    # スレHTML: 上限MB
         # 永続化リスト（再起動後も保持）
-        self.recent_closed_list: list = []   # [{board_url,board_name,thread_no,thread_url,label}, ...]
+        # [{board_url,board_name,thread_no,thread_url,label,auto_closed,kind,extra}, ...]
+        # kind は "thread"（スレタブ）/"search"（板内検索タブ）。extra は種類ごとの
+        # 付随情報（検索タブなら検索語と検索先）。古い設定にはどちらも無い。
+        self.recent_closed_list: list = []
         self.recent_images_list: list = []   # [{url,name,board_name,board_url}, ...]
         self.download_workers: int = 4       # 並列ダウンロード数
         # 並行パースのセマフォ閾値 (KB)

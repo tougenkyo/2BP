@@ -5409,8 +5409,8 @@ class AppSettingsDialog(QDialog):
         # 保持件数
         g_keep = QGroupBox("保持件数"); f0.addWidget(g_keep); kpf = QFormLayout(g_keep)
         self._recent_closed_max = _spin(1, 100, " 件", width=80,
-            tip="「最近閉じたスレ」メニューの保持件数")
-        kpf.addRow("最近閉じたスレ:", self._recent_closed_max)
+            tip="「最近閉じたタブ」メニューの保持件数")
+        kpf.addRow("最近閉じたタブ:", self._recent_closed_max)
         self._recent_images_max = _spin(1, 100, " 件", width=80,
             tip="「最近開いた画像」メニューの保持件数")
         kpf.addRow("最近開いた画像:", self._recent_images_max)
