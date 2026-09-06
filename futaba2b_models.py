@@ -189,6 +189,11 @@ class SearchResult:
     source:     str  = "futaba"   # "futaba"=板の検索モード / "cache"=手元のキャッシュ
     scanned:    int  = 0     # cache のとき、走査したスレ数
     capped:     bool = False  # cache のとき、上限で打ち切ったか
+    # スレNo → {"email","id"}: 板単位 mode=json から拾ったスレを立てた人の情報。
+    # 検索結果に「IDスレかどうか」を出すために使う。検索そのものはレス単位で
+    # 返り、返信レスだけが当たったスレではメール欄が分からないため、板の方から
+    # 引いてくる。取れなかった時・落ちたスレは入らない（＝分からない）。
+    op_info:    dict = field(default_factory=dict)
 
     @property
     def count(self) -> int:

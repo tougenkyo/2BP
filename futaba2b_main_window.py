@@ -1958,23 +1958,28 @@ class MainWindow(QMainWindow):
         self._open_board_search(None, kw)
 
     def _open_board_search(self, board: "BoardInfo | None" = None, keyword: str = ""):
-        """板内検索タブ（ふたばの検索モード）を開く。板ごとに1枚を使い回す。"""
+        """板内検索タブ（ふたばの検索モード）を開く。
+
+        タブの「＋新しいタブ」で何枚でも増やせる。増えている時は、今見ている
+        検索タブを使う。どれか1枚を決め打ちで使うと、残しておいた別のタブの
+        結果を勝手に置き換えてしまう。"""
         inner = self._active_inner()
         board = board or (inner._board if inner else self._current_board)
         if not board:
             self._st_log.setText("先に板を開いてください")
             return
         pane = self._get_or_create_board_tab(board)
-        view = None
-        for i in range(pane.count()):
-            w = pane.widget(i)
-            if isinstance(w, BoardSearchView):
-                view = w
-                pane.setCurrentIndex(i)
-                break
+        _cur = pane.currentWidget()
+        view = _cur if isinstance(_cur, BoardSearchView) else None
+        if view is None:
+            for i in range(pane.count()):
+                w = pane.widget(i)
+                if isinstance(w, BoardSearchView):
+                    view = w
+                    break
         if view is None:
             view = self._new_board_search_view(pane, board)
-            pane.setCurrentIndex(pane.indexOf(view))
+        pane.setCurrentIndex(pane.indexOf(view))
         view.set_board(board)
         if keyword:
             view.search(board, keyword)
@@ -1998,9 +2003,10 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-    def _new_board_search_view(self, pane, board):
+    def _new_board_search_view(self, pane, board, at: int = -1):
         """板内検索タブを1枚作って板ペインに足す（配線はここに集約）。
-        新規に開く時と、前回のタブを戻す時の両方から呼ぶ。"""
+        新規に開く時と、前回のタブを戻す時の両方から呼ぶ。
+        at に位置を渡すとそこへ差し込む（「＋新しいタブ」を隣に出すため）。"""
         view = BoardSearchView(self._fetcher, self._settings, pane)
         view.set_board(board)
         view.set_del_queue(self._del_queue)
@@ -2012,8 +2018,34 @@ class MainWindow(QMainWindow):
         view.status_info.connect(self._on_thread_status)
         view.title_changed.connect(
             lambda t, _p=pane, _v=view: self._set_search_tab_text(_p, _v, t))
-        pane.addTab(view, "板内検索")
+        view.new_tab_requested.connect(
+            lambda _v, kw, _p=pane, _b=board: self._on_search_new_tab(_p, _b, _v, kw))
+        if 0 <= at <= pane.count():
+            pane.insertTab(at, view, "板内検索")
+        else:
+            pane.addTab(view, "板内検索")
         return view
+
+    def _on_search_new_tab(self, pane, board, src_view, keyword: str):
+        """板内検索タブの「＋新しいタブ」。今の結果を残したまま、もう1枚開く。
+
+        検索語は引き継いで全選択しておく。同じ語をもう一度引きたい事も、
+        少しだけ変えて引き直したい事もあるので、引くかどうかは打つ人に任せる。"""
+        _i = pane.indexOf(src_view)
+        view = self._new_board_search_view(pane, board,
+                                           at=(_i + 1 if _i >= 0 else -1))
+        # 検索先（ふたば／手元のキャッシュ）も引き継ぐ。語だけ引き継いで
+        # 検索先が戻ると、同じつもりで引いて違う結果が出る
+        try:
+            _st = dict(src_view.save_state())
+        except Exception:
+            _st = {}
+        if keyword:
+            _st["keyword"] = keyword
+        view.restore_state(_st)
+        pane.setCurrentIndex(pane.indexOf(view))
+        self._set_search_tab_text(pane, view, view.tab_label())
+        view.focus_input()
 
     @staticmethod
     def _set_search_tab_text(pane, view, text: str):
@@ -5768,6 +5800,10 @@ class MainWindow(QMainWindow):
         _ty = t.get("type", "")
         if _ty == "image":
             return ("image", str(t.get("url", "") or ""))
+        if _ty == "search":
+            # 検索タブは何枚でも開ける。no は全部 0 なので、語で見分けないと
+            # 足し戻しの時に1枚へまとめられてしまう。
+            return ("search", str(t.get("keyword", "") or ""))
         try:
             return (_ty, int(t.get("no", 0) or 0))
         except (TypeError, ValueError):
@@ -5991,13 +6027,23 @@ class MainWindow(QMainWindow):
 
     def _restore_search_tab(self, board, tab: dict):
         """前回開いていた板内検索タブを戻す。検索語と検索先をそのままに引き直す
-        （結果そのものは持ち越さない。ふたば側もキャッシュ側も変わるため）。"""
+        （結果そのものは持ち越さない。ふたば側もキャッシュ側も変わるため）。
+
+        検索タブは何枚でも開けるので、同じ語のタブが既にある時だけ飛ばす。"""
         pane = self._get_or_create_board_tab(board, activate=False)
         if pane is None:
             return
+        _kw = str(tab.get("keyword", "") or "")
         for i in range(pane.count()):
-            if isinstance(pane.widget(i), BoardSearchView):
-                return                      # 検索タブは板ごとに1枚
+            w = pane.widget(i)
+            if not isinstance(w, BoardSearchView):
+                continue
+            try:
+                _k = str(w.save_state().get("keyword", "") or "")
+            except Exception:
+                continue
+            if _k == _kw:
+                return                      # 同じ語のタブはもうある
         view = self._new_board_search_view(pane, board)
         view.restore_state(tab)
         self._set_search_tab_text(pane, view, view.tab_label())
@@ -6132,7 +6178,14 @@ class MainWindow(QMainWindow):
                             and getattr(wv, "_thread_no", None) == _no):
                         return wv
                     if _type == "search" and isinstance(wv, BoardSearchView):
-                        return wv
+                        # 検索タブは何枚でも開けるので、語で見分ける
+                        try:
+                            _k = str(wv.save_state().get("keyword", "") or "")
+                        except Exception:
+                            _k = ""
+                        if _k == str(_t.get("keyword", "") or ""):
+                            return wv
+                        continue
                     if (_type == "image" and isinstance(wv, ImageTabView)
                             and wv._img_list and 0 <= wv._idx < len(wv._img_list)
                             and wv._img_list[wv._idx].get("url") == _t.get("url")):

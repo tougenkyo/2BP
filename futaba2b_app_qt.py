@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.478"
+APP_VER = "0.9.479"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -12188,6 +12188,7 @@ class BoardSearchView(QWidget):
     thread_open_bg    = Signal(str)        # スレURL（バックグラウンド）
     thread_open_at    = Signal(str, int)   # スレURL + 見せたいレスNo
     thread_open_at_bg = Signal(str, int)   # 同上（バックグラウンド）
+    new_tab_requested = Signal(object, str)  # 自分, 検索語（もう1枚開く）
     status_info    = Signal(object)
     title_changed  = Signal(str)   # タブ見出しの更新
     _result_ready  = Signal(object)   # BG→UI (SearchResult)
@@ -12220,6 +12221,16 @@ class BoardSearchView(QWidget):
         self._btn = QPushButton("検索"); self._btn.setFixedHeight(22)
         self._btn.clicked.connect(self.run_search)
         tb.addWidget(self._btn)
+        # 検索結果を残したまま別の語を探せるように、もう1枚開く口を置く。
+        # 1枚を使い回すと、次を検索した時点で前の結果が消えてしまい、
+        # 戻るには同じ語を打ち直すしかなかった。
+        self._btn_new = QPushButton("＋新しいタブ"); self._btn_new.setFixedHeight(22)
+        self._btn_new.setToolTip(
+            "今の検索結果を残したまま、板内検索のタブをもう1枚開きます。\n"
+            "複数のスレを追いたい時に、同じ語を打ち直さずに済みます。")
+        self._btn_new.clicked.connect(
+            lambda: self.new_tab_requested.emit(self, self._edit.text().strip()))
+        tb.addWidget(self._btn_new)
         tb.addWidget(QLabel(" 検索先："))
         self._src = _NoWheelComboBox()
         self._src.addItems(["ふたば", "手元のキャッシュ"])
@@ -12331,6 +12342,16 @@ class BoardSearchView(QWidget):
                 r = _SR(keyword=kw, board_url=_board.base_url,
                         source=("cache" if _use_cache else "futaba"),
                         error=f"検索に失敗しました: {e}")
+            # スレの見出しに「IDスレ」の印を出すため、板の mode=json を1回引く。
+            # 検索はレス単位で返るので、返信レスだけ当たったスレはメール欄が
+            # 分からない。取れなくても検索結果は出す（印が出ないだけ）。
+            if r.hits and not r.error:
+                try:
+                    _ji = _fetcher.fetch_catalog_json(_board)
+                    if _ji:
+                        r.op_info = _ji.get("map", {}) or {}
+                except Exception:
+                    pass
             _self = _wr.ref(self)()
             if _self is not None:
                 _self._result_ready.emit(r)
@@ -12366,7 +12387,10 @@ class BoardSearchView(QWidget):
             self._result,
             user_css=_load_user_css(self._settings),
             board_label=(board_display_name(self._board.name, self._board.url)
-                         if self._board else ""))
+                         if self._board else ""),
+            # NGにしたスレは出さない。結果からNGにしたのに検索し直すと
+            # また出てくる、という報告への対応。
+            ng_urls=list(getattr(self._settings, "ng_thread_urls", []) or []))
         base = QUrl(self._board.base_url) if self._board else QUrl("about:blank")
         self._load_html_via_tempfile(html, base)
 

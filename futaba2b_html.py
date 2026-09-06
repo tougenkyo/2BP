@@ -3364,6 +3364,15 @@ body {
 .sr-th-head:hover { color: var(--no-hover, #DD0000); }
 .sr-th-sub { color: var(--subject-color, #cc1105); }
 .sr-th-cnt { font-weight: normal; font-size: 8pt; color: var(--footer-color, #888888); }
+/* IDスレの目印。カタログのサムネ右上バッジと同じ色分けにする
+   （緑=メール欄に id表示 / 赤=指定が無いのにIDが出ている） */
+.sr-id {
+    display: inline-block; margin-left: 6px; padding: 0 4px;
+    font-size: 7.5pt; font-weight: bold; color: #fff; border-radius: 3px;
+    vertical-align: middle;
+}
+.sr-id-g { background: #2E7D32; }
+.sr-id-r { background: #cc1105; }
 .sr-hit {
     padding: 4px 8px 6px 14px; margin-top: 2px; cursor: pointer;
     border-bottom: 1px dotted var(--footer-border, #dddddd);
@@ -3619,16 +3628,54 @@ def _sr_page(body: str, user_css: str = "") -> str:
             f'</head><body>{body}</body></html>')
 
 
-def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
+def _sr_id_badge(op_info: dict, th_no: int) -> str:
+    """スレの見出しに出す「IDスレ」の目印。
+
+    カタログのサムネ右上バッジと同じ判定・同じ色にする。
+      赤ID … メール欄の指定が無いのにIDが出ている
+      緑ID … メール欄が id表示（はじめからIDスレ）
+    板の mode=json から引けなかったスレ（もう落ちた等）は何も出さない。
+    「IDが無いスレ」と「分からないスレ」を同じ見た目にしないため、
+    紛らわしい印は付けない。"""
+    d = (op_info or {}).get(th_no) or {}
+    if (d.get("id") or "").strip():
+        return ('<span class="sr-id sr-id-r" '
+                'title="メール欄の指定が無いのにIDが出ているスレ">ID</span>')
+    if (d.get("email") or "").strip().lower() == "id表示":
+        return ('<span class="sr-id sr-id-g" title="ID表示スレ">ID</span>')
+    return ""
+
+
+def search_to_html(result, user_css: str = "", board_label: str = "",
+                   ng_urls=None) -> str:
     """板内検索の結果ページ。
 
     ふたばの検索は板の全部を走査せず途中で止める。件数だけ出すと
-    「少ない＝無い」と誤解するので、どこまで見たのかを必ず添える。"""
+    「少ない＝無い」と誤解するので、どこまで見たのかを必ず添える。
+
+    ng_urls … NGにしたスレのURL。当たったスレは丸ごと出さない
+    （結果からNGにしたのに、検索し直すとまた出てくるのを止めるため）。"""
     kw     = getattr(result, "keyword", "") or ""
     kw_esc = _html.escape(kw)
     base   = (getattr(result, "board_url", "") or "").rstrip("/") + "/"
     hits   = list(getattr(result, "hits", []) or [])
     err    = getattr(result, "error", "") or ""
+    op_info = getattr(result, "op_info", None) or {}
+
+    # NGにしたスレの番号。URLの形の違いで取りこぼさないよう、この板のURLで
+    # 始まるものだけをスレ番号にして持つ。
+    _ng_nos: set = set()
+    if ng_urls:
+        _bl = base.lower()
+        for _u in ng_urls:
+            _u = (_u or "").strip()
+            if not _u or not _u.lower().startswith(_bl):
+                continue
+            _m = re.search(r'res/(\d+)\.htm', _u)
+            if _m:
+                _ng_nos.add(int(_m.group(1)))
+    _ng_th   = {h.thread_no for h in hits if h.thread_no in _ng_nos}
+    _ng_hits = sum(1 for h in hits if h.thread_no in _ng_nos)
 
     head = [f'<div class="sr-title">「<span class="kw">{kw_esc}</span>」の検索結果']
     if board_label:
@@ -3654,6 +3701,9 @@ def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
                       f'（No.{result.first_no} 〜 No.{result.last_no}）')
         head.append(f'<div class="sr-range">{result.count}件 / '
                     f'{result.thread_count}スレ{_scan}</div>')
+        if _ng_th:
+            head.append(f'<div class="sr-range">NGにしたスレ {len(_ng_th)}スレ'
+                        f'（{_ng_hits}件）は出していません</div>')
         if is_cache:
             if getattr(result, "capped", False):
                 notes.append(
@@ -3688,10 +3738,16 @@ def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
             body.append('<div class="sr-empty">該当するレスはありませんでした。</div>')
         return _sr_page("".join(body), user_css)
 
-    # スレごとにまとめる（最初にヒットした順＝古い順）
+    # スレごとにまとめる（最初にヒットした順＝古い順）。NGにしたスレは外す。
     groups: dict = {}
     for h in hits:
+        if h.thread_no in _ng_nos:
+            continue
         groups.setdefault(h.thread_no, []).append(h)
+    if not groups:
+        body.append('<div class="sr-empty">'
+                    '該当したスレは、すべてNGにしたスレでした。</div>')
+        return _sr_page("".join(body), user_css)
     for th_no, ghits in groups.items():
         _u = _html.escape(f"{base}res/{th_no}.htm", quote=True)
         # スレの見出し。板の検索モードは件名(sub)、キャッシュ検索は
@@ -3704,6 +3760,7 @@ def search_to_html(result, user_css: str = "", board_label: str = "") -> str:
             f'<div class="sr-thread">'
             f'<div class="sr-th-head" data-url="{_u}" '
             f"onclick=\"srOpen('{_u}',0)\">スレ No.{th_no} "
+            + _sr_id_badge(op_info, th_no)
             + _sr_del_btn(_u, th_no, "thread")
             + f'{_sub_html}'
             f' <span class="sr-th-cnt">（{len(ghits)}件）</span></div>')
