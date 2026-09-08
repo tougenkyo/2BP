@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.482"
+APP_VER = "0.9.483"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3135,6 +3135,79 @@ def sync_page_bg_from_body(view, settings=None):
             _cb)
     except Exception:
         pass
+
+
+class _ImeUnderlineFilter(QObject):
+    """変換中（未確定）の文字を、塗りつぶしではなく下線で示す。
+
+    Qt は未確定の文字のうち「今変換している所」を、選択と同じ塗りつぶしで
+    描く。入力欄の色づかいによっては文字が読めなくなるので、他のブラウザと
+    同じように下線だけにする。文字の色は入力欄の色をそのまま使う。
+      今変換している所 … 実線の下線
+      それ以外         … 破線の下線
+
+    アプリの入力欄（QLineEdit / QTextEdit / QPlainTextEdit）にだけ効かせる。
+    ページの中の入力欄は QtWebEngine が別の仕組みで描いているので触らない。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._busy = False        # 差し替えた分がまた自分に戻るのを止める
+
+    def eventFilter(self, obj, ev):
+        try:
+            if self._busy or ev.type() != QEvent.Type.InputMethod:
+                return False
+            from PySide6.QtWidgets import QPlainTextEdit as _QPTE
+            if not isinstance(obj, (QLineEdit, QTextEdit, _QPTE)):
+                return False
+            from PySide6.QtGui import QInputMethodEvent as _IME
+            _TF = _IME.AttributeType.TextFormat
+            attrs = list(ev.attributes())
+            if not any(a.type == _TF for a in attrs):
+                return False        # 書式の指定が無い＝直すものが無い
+            out = [a if a.type != _TF else self._underline(obj, a) for a in attrs]
+            new = _IME(ev.preeditString(), out)
+            new.setCommitString(ev.commitString(),
+                                ev.replacementStart(), ev.replacementLength())
+            self._busy = True
+            try:
+                QApplication.sendEvent(obj, new)
+            finally:
+                self._busy = False
+            return True
+        except (RuntimeError, Exception):
+            return False            # 何かあっても入力は止めない
+
+    @staticmethod
+    def _underline(obj, a):
+        from PySide6.QtGui import (QInputMethodEvent as _IME,
+                                   QTextCharFormat as _TCF, QPalette as _PAL)
+        # 元の書式に地の色が入っている＝今変換している所（塗りつぶされる所）
+        _target = False
+        try:
+            _bg = a.value.toCharFormat().background()
+            _target = _bg.style() != Qt.BrushStyle.NoBrush
+        except (RuntimeError, Exception):
+            pass
+        fg = obj.palette().color(_PAL.ColorRole.Text)
+        fmt = _TCF()
+        fmt.setForeground(fg)       # 塗らない＝入力欄の文字色のまま
+        fmt.setUnderlineColor(fg)
+        fmt.setUnderlineStyle(_TCF.UnderlineStyle.SingleUnderline if _target
+                              else _TCF.UnderlineStyle.DashUnderline)
+        return _IME.Attribute(a.type, a.start, a.length, fmt)
+
+
+_IME_UNDERLINE_FILTER = None
+
+
+def install_ime_underline(app) -> None:
+    """変換中の文字を下線で示すようにする（アプリ全体にひとつ）"""
+    global _IME_UNDERLINE_FILTER
+    if _IME_UNDERLINE_FILTER is not None or app is None:
+        return
+    _IME_UNDERLINE_FILTER = _ImeUnderlineFilter(app)
+    app.installEventFilter(_IME_UNDERLINE_FILTER)
 
 
 def _flicker_fix_on(w) -> bool:

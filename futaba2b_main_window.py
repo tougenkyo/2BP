@@ -6676,6 +6676,10 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")          # OS間のUI差異を解消（3299行目）
     app.setApplicationName("2BP"); app.setOrganizationName("futaba2b")
+    # 変換中(未確定)の文字を、塗りつぶしではなく下線で示す
+    # （塗りつぶしだと入力欄の色づかいによっては文字が読めなくなる）
+    from futaba2b_app_qt import install_ime_underline
+    install_ime_underline(app)
 
     # ── defaultProfile をメモリキャッシュ化 ──────────────────────────────
     # 各ビューは off-the-record プロファイルだが、warmup用ダミービュー等
