@@ -604,6 +604,12 @@ class AppSettings:
         self.tab_max_width: int = 0
         # 多段タブで、選んだタブのある行を最下段へ移動するか（OFF=並びを固定）
         self.tab_active_row_bottom: bool = True
+        # タブ切り替えのちらつき対策を使うか。
+        # 切り替えた瞬間の白/黒を、前の絵を一時的に被せて隠す＋裏へ回った直後は
+        # ページを起こしたままにしておく、という2つの仕掛け。環境によっては
+        # 表示が乱れる（真っ黒・モザイク状）ことがあるので切れるようにする。
+        # OFF にすると Qt に任せる＝この対策が入る前と同じ動きになる。
+        self.tab_switch_flicker_fix: bool = True
         # IDが出ちゃったスレ(メール欄にID表示要求が無いのにIDが出ている)のタブをピンクにする
         self.tab_pink_op_no_id: bool = False
         # 隔離されたスレ(json∖cat)のタブをオレンジ、ID+隔離同時は #FF0099 にする
@@ -1125,6 +1131,8 @@ class AppSettings:
             self.parse_sem_kb = int(raw.get("parse_sem_kb", 50))
             self.tab_max_width = int(raw.get("tab_max_width", 0))
             self.tab_active_row_bottom = bool(raw.get("tab_active_row_bottom", True))
+            self.tab_switch_flicker_fix = bool(
+                raw.get("tab_switch_flicker_fix", True))
             self.tab_pink_op_no_id = bool(raw.get("tab_pink_op_no_id", False))
             self.tab_orange_quarantine = bool(raw.get("tab_orange_quarantine", True))
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
@@ -1363,6 +1371,7 @@ class AppSettings:
                         "parse_sem_kb": self.parse_sem_kb,
                         "tab_max_width": self.tab_max_width,
                         "tab_active_row_bottom": self.tab_active_row_bottom,
+                        "tab_switch_flicker_fix": self.tab_switch_flicker_fix,
                         "tab_pink_op_no_id": self.tab_pink_op_no_id,
                         "tab_orange_quarantine": self.tab_orange_quarantine,
                         "image_mode_cols": self.image_mode_cols,

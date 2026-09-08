@@ -5381,6 +5381,13 @@ class AppSettingsDialog(QDialog):
             "移動します。旧2Bと同じ挙動です。\n"
             "OFFにするとタブの並びが固定され、選んでも行が入れ替わりません。")
         taf.addRow(self._tab_active_row_bottom)
+        self._tab_flicker_fix = QCheckBox("タブ切り替えのちらつきを抑える")
+        self._tab_flicker_fix.setToolTip(
+            "タブを切り替えた瞬間に地の色が見える（白/黒くちらつく）のを、\n"
+            "前の絵を一瞬だけ被せて隠します。\n"
+            "スレやカタログが真っ黒になる・モザイクのように乱れる時は\n"
+            "OFFにしてください（この対策が入る前と同じ動きになります）。")
+        taf.addRow(self._tab_flicker_fix)
         self._tab_pink_op_no_id = QCheckBox("IDが出ちゃったスレのタブをピンク色にする")
         self._tab_pink_op_no_id.setToolTip(
             "メール欄にID表示の指定が無いのにIDが出ているスレのタブ文字をピンクにします")
@@ -6358,6 +6365,8 @@ class AppSettingsDialog(QDialog):
         self._tab_max_width.setValue(getattr(s, "tab_max_width", 0))
         self._tab_active_row_bottom.setChecked(
             getattr(s, "tab_active_row_bottom", True))
+        self._tab_flicker_fix.setChecked(
+            getattr(s, "tab_switch_flicker_fix", True))
         self._tab_pink_op_no_id.setChecked(getattr(s, "tab_pink_op_no_id", False))
         self._tab_orange_quarantine.setChecked(getattr(s, "tab_orange_quarantine", True))
         self._del_hide_after.setChecked(getattr(s, "del_hide_after_report", True))
@@ -6557,6 +6566,7 @@ class AppSettingsDialog(QDialog):
         _tw = self._tab_max_width.value()
         s.tab_max_width           = 0 if _tw <= 0 else max(_TAB_MIN_WIDTH(), _tw)
         s.tab_active_row_bottom   = self._tab_active_row_bottom.isChecked()
+        s.tab_switch_flicker_fix  = self._tab_flicker_fix.isChecked()
         s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
         s.del_hide_after_report   = self._del_hide_after.isChecked()

@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.481"
+APP_VER = "0.9.482"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3137,6 +3137,27 @@ def sync_page_bg_from_body(view, settings=None):
         pass
 
 
+def _flicker_fix_on(w) -> bool:
+    """タブ切り替えのちらつき対策（前の絵を被せる／ページを起こしておく）を
+    使うか。表示が乱れる環境のために設定で切れるようにしてある。"""
+    return bool(getattr(getattr(w, "_settings", None),
+                        "tab_switch_flicker_fix", True))
+
+
+def hide_snap(w):
+    """被せをすぐ外す。
+
+    外し忘れると前の絵が貼りついたままになり、中身が真っ黒／古い絵のまま
+    動かなくなる。外す道はここ1本にまとめる。"""
+    lb = getattr(w, "_snap_label", None)
+    if lb is None:
+        return
+    try:
+        lb.hide()
+    except (RuntimeError, Exception):
+        pass
+
+
 def snap_view(w, min_interval: float = 0.15):
     """タブを離れた直後に、最後に描かれていた中身を1枚控える。
 
@@ -3148,7 +3169,7 @@ def snap_view(w, min_interval: float = 0.15):
     から撮る。隠れた後でも最後に描いた絵は残っているので中身は撮れる。
     連続で送っている最中に毎回撮ると重いので、少しの間は撮り直さない。"""
     v = getattr(w, "_view", None)
-    if v is None:
+    if v is None or not _flicker_fix_on(w):
         return
     now = time.monotonic()
     if now - getattr(w, "_snap_at", 0.0) < min_interval:
@@ -3159,6 +3180,10 @@ def snap_view(w, min_interval: float = 0.15):
         pm = v.grab()
         if pm.isNull():
             return                   # まだ何も描かれていない
+        # 一様な絵（地の色だけ）は控えない。隠れた拍子に真っ黒しか撮れない
+        # ことがあり、それを控えると戻ってきた時に真っ黒を被せてしまう。
+        if _is_uniform(_tiny(pm)):
+            return
         w._snap_pixmap = pm
         w._snap_at = now
     except (RuntimeError, Exception):
@@ -3242,10 +3267,15 @@ def show_snap(w, max_ms: int = 1500):
     時間で切ると、しばらく離れていたタブほど描き直しに時間がかかるので
     間に合わない（10枚くらい行き来すると出る、の正体）。実際に描かれたのを
     見届けてから外す。何かで描かれないままでも被せっぱなしにしないよう、
-    上限の時間も置く。"""
+    上限の時間も置く。
+
+    まず今かかっている被せを外す。被せたまま抜ける道が1本でもあると、
+    それを外す者がいなくなり、前の絵が貼りついたまま動かなくなる
+    （中身が真っ黒／古いまま、という報告の道筋）。"""
+    hide_snap(w)
     pm = getattr(w, "_snap_pixmap", None)
     v = getattr(w, "_view", None)
-    if v is None:
+    if v is None or not _flicker_fix_on(w):
         return
     try:
         if pm is None or pm.isNull():
@@ -3279,8 +3309,15 @@ def _watch_snap(w, t0: float, max_ms: int):
         try:
             v = getattr(_w, "_view", None)
             lb = getattr(_w, "_snap_label", None)
-            if v is None or lb is None or not lb.isVisible():
-                return                    # また裏へ回った等
+            if v is None or lb is None or lb.isHidden():
+                return                    # もう外れている
+            if lb.size() != v.size():
+                lb.hide()                 # 大きさが変わった＝もう合わない
+                return
+            if not lb.isVisible():
+                # また裏へ回った。このままだと誰も外さないので外しておく
+                lb.hide()
+                return
             el = (time.monotonic() - _t0) * 1000.0
             # 「控えと同じ絵になった」か「何か描かれた」で描き直し完了とみなす。
             # 前者を見るのは、中身の少ないスレだと描けていても一様に見えるため。
@@ -3308,8 +3345,11 @@ def keep_page_awake(view, page, seconds: int = 20):
 
     すぐ戻ってくる使い方が多いので、しばらくは表示中のままにして絵を
     持たせておく。放置されたタブは時間が来たら手放して資源を返す
-    （全部を起こしっぱなしにすると、裏のタブも描き続けて重くなる）。"""
-    if page is None:
+    （全部を起こしっぱなしにすると、裏のタブも描き続けて重くなる）。
+
+    表示が乱れる環境のために、設定で切れるようにしてある。切った時は
+    Qt に任せる（＝この対策が入る前と同じ動きになる）。"""
+    if page is None or not _flicker_fix_on(view):
         return
 
     # 「見えなくなった」を Chromium へ伝えるのは、こちらの hideEvent が
