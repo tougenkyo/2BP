@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.485"
+APP_VER = "0.9.486"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3229,14 +3229,34 @@ def hide_snap(w):
     """被せをすぐ外す。
 
     外し忘れると前の絵が貼りついたままになり、中身が真っ黒／古い絵のまま
-    動かなくなる。外す道はここ1本にまとめる。"""
+    動かなくなる。外す道はここ1本にまとめる。
+
+    控え(_snap_pixmap)自体は残す。戻ってきた時にまた使うもので、捨てるのは
+    しばらく戻ってこなかった時（drop_snap）。"""
     lb = getattr(w, "_snap_label", None)
     if lb is None:
         return
     try:
         lb.hide()
+        lb.clear()              # ラベルが握っているぶんは手放す
     except (RuntimeError, Exception):
         pass
+
+
+def drop_snap(w):
+    """控えていた絵を手放す。しばらく戻ってこなかったタブに対して呼ぶ。
+
+    控えは「タブを離れてから戻るまで」の橋渡しでしかないのに、離れている間
+    ずっと抱えたままだった。画面いっぱいの絵は 1500x850 で1枚約5MB あり、
+    タブを50枚開いていれば250MBになる（何十枚も開いたまま長く使うと重い、
+    の一因）。すぐ戻ってくる時のちらつきを消せれば目的は足りるので、
+    放置されたタブのぶんは捨てる。ページを寝かせるのと同じ頃合いで手放す。
+
+    撮った時刻(_snap_at)は残す。連続でタブを送っている最中に撮り直しすぎない
+    ための間引きなので、戻すと送るたびに撮る事になって元も子もない。"""
+    if getattr(w, "_snap_pixmap", None) is not None:
+        w._snap_pixmap = None
+    w._snap_tiny = None
 
 
 def snap_view(w, min_interval: float = 0.15):
@@ -3393,11 +3413,11 @@ def _watch_snap(w, t0: float, max_ms: int):
             if v is None or lb is None or lb.isHidden():
                 return                    # もう外れている
             if lb.size() != v.size():
-                lb.hide()                 # 大きさが変わった＝もう合わない
+                hide_snap(_w)             # 大きさが変わった＝もう合わない
                 return
             if not lb.isVisible():
                 # また裏へ回った。このままだと誰も外さないので外しておく
-                lb.hide()
+                hide_snap(_w)
                 return
             el = (time.monotonic() - _t0) * 1000.0
             # 「控えと同じ絵になった」か「何か描かれた」で描き直し完了とみなす。
@@ -3406,7 +3426,7 @@ def _watch_snap(w, t0: float, max_ms: int):
             _drawn = (_img_close(getattr(_w, "_snap_tiny", None), _tiny(_now))
                       or not _is_uniform(_tiny(_now)))
             if _drawn or el >= _max:
-                lb.hide()
+                hide_snap(_w)
                 if SNAP_DEBUG or el > 250:
                     print(f"[Flicker] 描き直しまで {el:.0f}ms "
                           f"（{'描けた' if _drawn else '時間切れ'}）")
@@ -3458,6 +3478,9 @@ def keep_page_awake(view, page, seconds: int = 20):
                 _p = getattr(_v, "_page", None)
                 if _p is not None:
                     _p.setVisible(False)      # 放置された → 手放す
+                # 戻ってくる時に被せる絵も、ここまで来たらもう要らない。
+                # タブの数だけ画面いっぱいの絵を抱えるのは重い
+                drop_snap(_v)
             except (RuntimeError, Exception):
                 pass
         t.timeout.connect(_sleep)
