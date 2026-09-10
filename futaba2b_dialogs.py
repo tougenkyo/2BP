@@ -1790,6 +1790,9 @@ class PostDialog(QDialog):
   <button id="btn_pen"    onclick="setTool('pen')"   class="active">✏️ペン</button>
   <button id="btn_eraser" onclick="setTool('eraser')">🧹消しゴム</button>
   <input type="color" id="color" value="{_st['pen_color']}" title="色（ペン/消しゴムで別々に記憶）">
+  <span class="lbl">背景:</span>
+  <input type="color" id="bgcolor" value="{_st['bg_color']}"
+         title="紙の色。クリアや大きさ変更の後もこの色になり、次に開いた時も残ります">
   <span class="lbl">太さ:</span>
   <input type="range" id="size" min="1" max="30" value="{_st['pen_size']}" oninput="syncSize()">
   <span id="size-label" style="font-size:11px;min-width:18px;text-align:right;">{_st['pen_size']}</span>
@@ -1828,9 +1831,9 @@ const canvas  = document.getElementById('canvas');
 const scaler  = document.getElementById('canvas-scaler');
 const wrap    = document.getElementById('canvas-wrap');
 const ctx     = canvas.getContext('2d');
-const BG      = '{_BG}';
 const DEFAULTS = {_def_json};
 const INIT     = {_st_json};
+let   BG      = INIT.bg_color || '{_BG}';   // 紙の色。背景ピッカーで変わる
 let tool='pen', drawing=false;
 let history=[], future=[];
 let scale=1.0;
@@ -1861,6 +1864,7 @@ function saveState(){{
   bridge.saveState(JSON.stringify({{
     pen_color:    S.pen.color,    pen_size:    S.pen.size,
     eraser_color: S.eraser.color, eraser_size: S.eraser.size,
+    bg_color:     BG,
     smooth: +document.getElementById('smooth').value,
     cursor:  document.getElementById('cursor-sel').value,
     w: canvas.width, h: canvas.height
@@ -1872,6 +1876,54 @@ function fillBg(){{
   ctx.fillRect(0,0,canvas.width,canvas.height);
 }}
 fillBg();
+
+// ── 紙の色 ──────────────────────────────────────────────────────────────
+// 以前は定数で固定していたため、暗い紙に明るいペンで描きたい時は、開くたび・
+// クリアするたびに手で塗り直すしかなかった。消しゴムの色を変えても、紙そのもの
+// （起動時・クリア・大きさ変更で塗られる色）は変わらないため代わりにならない。
+function hexRgb(h){{
+  h=String(h||'').replace('#','');
+  if(h.length===3) h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  const n=parseInt(h,16);
+  return isNaN(n) ? null : [(n>>16)&255,(n>>8)&255,n&255];
+}}
+// 今ある絵はそのままに、地の色だけ入れ替える。線の画素には触らないので
+// 描いたものは残る（線のふちのぼかしは元の色のまま残る）。
+function repaintBg(prev,next){{
+  const a=hexRgb(prev), b=hexRgb(next);
+  if(!a||!b) return;
+  let im;
+  try{{ im=ctx.getImageData(0,0,canvas.width,canvas.height); }}catch(e){{ return; }}
+  const d=im.data;
+  for(let i=0;i<d.length;i+=4){{
+    if(d[i]===a[0]&&d[i+1]===a[1]&&d[i+2]===a[2]){{
+      d[i]=b[0]; d[i+1]=b[1]; d[i+2]=b[2];
+    }}
+  }}
+  ctx.putImageData(im,0,0);
+}}
+function setBg(next){{
+  next=String(next||'').trim();
+  if(!next) return;
+  const prev=BG;
+  if(next.toLowerCase()===String(prev).toLowerCase()) return;
+  // 変えた瞬間に何も起きないと効いたのか分からないので、その場で塗り替える。
+  // ↩元に戻す で戻せるよう、先に控えておく。
+  saveSnap();
+  repaintBg(prev,next);
+  // 消しゴムが紙と同じ色だったなら一緒に付いていく。
+  // ずれると消したつもりが前の紙の色で塗られて残る。
+  if(String(S.eraser.color).toLowerCase()===String(prev).toLowerCase()){{
+    S.eraser.color=next;
+    if(tool==='eraser') document.getElementById('color').value=next;
+  }}
+  BG=next;
+  document.getElementById('bgcolor').value=next;
+  saveState();
+}}
+document.getElementById('bgcolor').addEventListener('input',function(){{
+  setBg(this.value);
+}});
 
 function syncSize(){{
   document.getElementById('size-label').textContent=
@@ -1891,6 +1943,8 @@ document.getElementById('smooth').addEventListener('input',function(){{
 
 // ── 全設定を初期値へ戻す（絵は消さない） ──
 function resetAll(){{
+  // 紙の色を先に戻す（消しゴムが紙に付いていく判定は、戻す前の色で見るため）
+  setBg(DEFAULTS.bg_color);
   S.pen    = {{ color: DEFAULTS.pen_color,    size: DEFAULTS.pen_size    }};
   S.eraser = {{ color: DEFAULTS.eraser_color, size: DEFAULTS.eraser_size }};
   document.getElementById('smooth').value = DEFAULTS.smooth;

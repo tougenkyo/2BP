@@ -405,12 +405,15 @@ _DEFAULT_BOOKMARKS = [
 # 「初期化」ボタン(⑤)とロード時のフォールバックで共有する唯一の真実。
 # 消しゴムは「消す」のではなく背景色を上塗りするペンとして扱うため、
 # eraser_color は既定でキャンバス背景色と同じにする。
+# bg_color は紙の色。以前は定数で固定していたため、暗い紙に明るいペンで
+# 描きたい時に開くたび・クリアするたびに手で塗り直す必要があった。
 TEGAKI_BG = "#EFDFD6"
 TEGAKI_DEFAULTS: dict = {
     "pen_color":    "#7B0004",
     "pen_size":     2,
     "eraser_color": TEGAKI_BG,
     "eraser_size":  15,
+    "bg_color":     TEGAKI_BG,
     "smooth":       0,
     "cursor":       "cross_thick",
     "w":            344,
