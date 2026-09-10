@@ -1112,6 +1112,9 @@ document.addEventListener('contextmenu', function(e) {
     if (!imgUrl) return;
     var menu = ctxMakeMenu('__img_ctx', e.clientX, e.clientY, 19998);
     ctxAddItem(menu, '外部ブラウザで開く', function(){ _b('openUrlExternal',[imgUrl]); });
+    ctxAddItem(menu, 'この画像を取り直す', function(){
+        _b('refetchImage', [imgUrl, img.src || '']);
+    });
     ctxAddItem(menu, 'この画像をNG登録する', function(){ _b('ngImage',[imgUrl]); });
     ctxAddItem(menu, '画像URLをコピーする',  function(){
         try{navigator.clipboard.writeText(imgUrl);}catch(er){}
@@ -1161,6 +1164,24 @@ function thumbFB(im) {
     }
     if (s <= 1) { im.dataset.fbstep = '2'; im.src = f; return; }
     im.dataset.fbstep = '9';
+}
+/* 「この画像を取り直す」の結果。取り直せたら、その絵を読み直す。
+   ブラウザは同じURLだと手元の控えを出してしまうので、URLの末尾に
+   その時の時刻を足して、必ずネットワークから読ませる。 */
+function refetchImgDone(url, shown, ok) {
+    if (!ok) return;
+    var t = '_bp2r=' + Date.now();
+    var ims = document.querySelectorAll('img');
+    for (var i = 0; i < ims.length; i++) {
+        var im = ims[i];
+        var f = im.getAttribute('data-full') || '';
+        var s = (im.getAttribute('src') || '').split('?')[0];
+        if (f !== url && s !== (shown || '').split('?')[0]) continue;
+        var base = (im.getAttribute('src') || '').split('?')[0];
+        if (!base) continue;
+        im.dataset.fbstep = '';        /* 差し替えの段取りもやり直す */
+        im.src = base + '?' + t;
+    }
 }
 /* 削除依頼の結果を受けてカタログの見た目を確定する。
    受理された(ok)ならカタログから除く。断られたら元に戻す（消さない）。 */

@@ -2729,6 +2729,46 @@ class FutabaFetcher:
             print(f"[Sodane] エラー: {e}")
         return -1
 
+    @staticmethod
+    def content_length_ok(headers, got: int) -> bool:
+        """届いたバイト数が Content-Length と合っているか。
+
+        通信が切れた時はたいてい例外になるが、サーバーが静かに早く閉じると
+        そのまま終わってしまう。それを掴まないと、途中までしか無い画像を
+        キャッシュへ残し、以後そのファイルがあるだけで正しいものとして
+        使われてしまう（開き直しても欠けたまま）。
+
+        ヘッダが無い・圧縮されている時は確かめようがないので True を返す
+        （圧縮されているとヘッダの数は圧縮後、手元の数は展開後で合わない）。"""
+        try:
+            if (headers.get("content-encoding") or "").strip():
+                return True
+            total = int(headers.get("content-length", 0) or 0)
+        except (TypeError, ValueError, AttributeError):
+            return True
+        return total <= 0 or got >= total
+
+    def drop_image_cache(self, url: str) -> None:
+        """その画像の控え（メモリ・ディスク）を捨てる。取り直しの前段。"""
+        if not url:
+            return
+        old = self._img_cache.pop(url, None)
+        if old is not None:
+            self._img_cache_bytes -= len(old)
+        self._prefetch_seen.discard(url)
+        try:
+            self._img_disk_path(url).unlink(missing_ok=True)
+        except OSError as e:
+            print(f"[ImgCache] 削除できません [{url}]: {e}")
+
+    def refetch_image(self, url: str) -> Optional[bytes]:
+        """控えを捨てて、その画像をもう一度取ってくる。
+
+        途中までしか届かなかった画像を手で取り直すための入口。
+        取れた時だけ控え直すので、失敗しても欠けたものが残ることはない。"""
+        self.drop_image_cache(url)
+        return self.fetch_image_bytes(url, retry_404=True)
+
     def fetch_image_bytes(self, url: str, retry_404: bool = False) -> Optional[bytes]:
         """
         画像データを返す。
@@ -2775,6 +2815,12 @@ class FutabaFetcher:
                     continue
                 r.raise_for_status()
                 data = r.content
+                if not self.content_length_ok(r.headers, len(data)):
+                    # 途中までしか届いていない。控えずに失敗扱いにする
+                    # （控えるとその欠けた絵がずっと使われてしまう）
+                    raise IOError(
+                        f"途中までしか届きませんでした "
+                        f"({len(data)}/{r.headers.get('content-length')} バイト)")
                 self._save_img_cache(url, data)
                 return data
             except Exception as e:
@@ -2885,10 +2931,13 @@ class FutabaFetcher:
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_name(p.name + f".{threading.get_ident()}.part")
             cancelled = False
+            got = 0
+            _hdrs = None
             with self.session.get(url, headers=hdr, stream=True,
                                   timeout=self.timeout) as r:
                 if not r.ok:
                     return
+                _hdrs = r.headers
                 with open(tmp, "wb") as f:
                     for chunk in r.iter_content(65536):
                         if cancel is not None and cancel.is_set():
@@ -2896,6 +2945,11 @@ class FutabaFetcher:
                             break
                         if chunk:
                             f.write(chunk)
+                            got += len(chunk)
+            # 途中までしか届かなかったものは残さない。ここで本パスへ置くと、
+            # 以後そのファイルがあるだけで正しい絵として使われてしまう。
+            if not cancelled and not self.content_length_ok(_hdrs, got):
+                cancelled = True
             if cancelled:
                 try: tmp.unlink(missing_ok=True)
                 except OSError: pass

@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.483"
+APP_VER = "0.9.484"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -416,6 +416,7 @@ class _ImageWebView(QWebEngineView):
     """ImageTabView 用 QWebEngineView：右クリックメニューをカスタマイズする。"""
     copy_image_requested = Signal(str)   # 画像URLを親に通知
     save_image_requested = Signal(str)   # 画像URLを親に通知（保存ダイアログ）
+    refetch_image_requested = Signal(str)  # 取り直し（控えを捨てて落とし直す）
 
     def _current_remote_url(self) -> str:
         """表示中画像の元(リモート)URL。ローカルキャッシュ表示時はページ/メディアが
@@ -469,6 +470,13 @@ class _ImageWebView(QWebEngineView):
             img_url = remote_url or (req.mediaUrl().toString() if req else "")
             act_ext = menu.addAction("外部で開く")
             act_ext.triggered.connect(lambda: __import__('webbrowser').open(img_url))
+            # 通信が途中で切れて欠けた絵が手元に残った時の逃げ道。
+            # 控えを捨てて落とし直す（キャッシュを丸ごと消さずに済む）
+            refetch_act = menu.addAction("この画像を取り直す")
+            refetch_act.setEnabled(bool(img_url and str(img_url).startswith("http")))
+            refetch_act.triggered.connect(
+                lambda _checked=False, _u=img_url:
+                    self.refetch_image_requested.emit(str(_u or "")))
             menu.addSeparator()
             # Qt標準の "Save image" はダウンロード要求になり保存ダイアログが出ない
             # ことがあるため、自前で保存先を選ばせる項目に置き換える。
@@ -5240,6 +5248,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
     thread_recovered      = Signal()            # エラー→正常更新で復旧（タブのエラー赤解除用）
     _ng_image_apply       = Signal(str, str)    # (img_url, hide_mode) NG画像即時反映
     _ng_image_md5_ready   = Signal(str, str, str)  # (img_url, md5, dhash) 取得完了→ダイアログ表示
+    _img_refetched        = Signal(str, str, bool)  # (本画像URL, 今のsrc, 取れたか) BG→UI
     img_list_updated      = Signal(list)        # 更新後の img_list → 画像タブに反映
     _bulk_save_msg        = Signal(str)         # 一括保存の進捗/完了トースト（BG→UI）
 
@@ -5466,6 +5475,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._bridge.extract_clear_requested.connect(self._clear_extract_field)
         self._bridge.copy_text_requested.connect(self._on_copy_text)
         self._bridge.ng_image_requested.connect(self._on_ng_image)
+        self._bridge.image_refetch_requested.connect(self._on_refetch_image)
         self._bridge.url_open_external_requested.connect(_open_url)
         self._bridge.scroll_bottom_reached.connect(self._on_scroll_bottom)
         self._bridge.scroll_top_reached.connect(self._on_scroll_top)
@@ -5480,6 +5490,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._bridge.gal_save_close_changed.connect(self._on_gal_save_close_changed)
         self._ng_image_apply.connect(self._apply_ng_image_dom)
         self._ng_image_md5_ready.connect(self._on_ng_image_md5_ready)
+        self._img_refetched.connect(self._on_img_refetched)
         self._bulk_save_msg.connect(self._on_bulk_save_msg)
 
         _extract_key = (getattr(self._settings, 'shortcuts', {}) or {}).get("extract_focus", "") or "Ctrl+Shift+F"
@@ -5680,6 +5691,55 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 return
             self._ng_image_md5_ready.emit(img_url, md5, dhash)
         _th.Thread(target=_fetch_md5, daemon=True).start()
+
+    def _on_refetch_image(self, url: str, shown: str = ""):
+        """画像右クリック「この画像を取り直す」。
+
+        通信が途中で切れると、欠けた絵が手元のキャッシュに残ることがある。
+        あるだけで正しいものとして使われるので、開き直しても欠けたままになる。
+        控えを捨てて取り直し、取れたらその場で読み直す。
+
+        サムネが欠けていることも、本画像が欠けていることもあるので、
+        今出ている src と本画像URLの両方を対象にする。"""
+        if not url and not shown:
+            return
+        _targets = [u for u in (url, shown) if u and u.startswith("http")]
+        if not _targets:
+            return
+        try:
+            self.status_info.emit({'view': self, 'log': "画像を取り直しています…"})
+        except (RuntimeError, Exception):
+            pass
+        _fetcher = self._fetcher
+        import threading as _th
+
+        def _do():
+            ok = False
+            for _u in _targets:
+                try:
+                    if _fetcher.refetch_image(_u):
+                        ok = True
+                except Exception as e:
+                    print(f"[画像取り直し] 失敗 [{_u}]: {e}")
+            _self = _wr.ref(self)()
+            if _self is not None:
+                _self._img_refetched.emit(url, shown, ok)
+        _th.Thread(target=_do, daemon=True).start()
+
+    def _on_img_refetched(self, url: str, shown: str, ok: bool):
+        """取り直しの結果。取れたらページ側にも読み直させる"""
+        try:
+            self.status_info.emit({
+                'view': self,
+                'log': ("画像を取り直しました" if ok
+                        else "画像を取り直せませんでした（もう消えているかも）")})
+        except (RuntimeError, Exception):
+            pass
+        import json as _json          # URLをJSの文字列として安全に埋める
+        _safe_run_js(self._view,
+                     "if(window.refetchImgDone)refetchImgDone(%s,%s,%s);"
+                     % (_json.dumps(url or ""), _json.dumps(shown or ""),
+                        "true" if ok else "false"))
 
     def _on_ng_image_md5_ready(self, img_url: str, md5: str, dhash: str = ""):
         """メインスレッド: MD5取得完了後にNG画像追加ダイアログを表示"""
@@ -7669,6 +7729,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
             });
         }
         addItem2('外部ブラウザで開く', function(){ if(typeof _b==='function') _b('openUrlExternal',[imgUrl]); });
+        addItem2('この画像を取り直す', function(){
+            if(typeof _b==='function') _b('refetchImage',[imgUrl, img.src || '']);
+        });
         addItem2('この画像をNG登録する', function(){ if(typeof _b==='function') _b('ngImage',[imgUrl]); });
         addItem2('画像URLをコピーする', function(){
             try{ navigator.clipboard.writeText(imgUrl); }catch(er){}
@@ -14670,6 +14733,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._media_dl_done.connect(self._on_media_dl_done)
         self._view.copy_image_requested.connect(self._copy_image_to_clipboard)
         self._view.save_image_requested.connect(self._save_image_as)
+        self._view.refetch_image_requested.connect(self._refetch_current_image)
         self._sig_clip_image.connect(self._apply_clip_image)   # BG→メインでクリップボード反映
         lay.addWidget(self._view, 1)
 
@@ -15727,6 +15791,33 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._dl_bar.move(max(0, (self.width() - w) // 2),
                           max(0, (self.height() - h) // 2))
 
+    def _refetch_current_image(self, url: str):
+        """右クリック「この画像を取り直す」。
+
+        通信が途中で切れると、欠けた絵が手元のキャッシュに残ることがある。
+        あるだけで正しいものとして使われるので、開き直しても欠けたままになる。
+        その1枚ぶんだけ控えを捨てて、いつもの道で落とし直す
+        （キャッシュを丸ごと消さずに済む）。"""
+        url = str(url or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            return
+        _base = url.lower().split("?", 1)[0]
+        _kind = 'webm' if _base.endswith(".webm") else 'img'
+        p = self._media_cache_path(url, _kind)
+        try:
+            if p is not None:
+                p.unlink(missing_ok=True)
+        except OSError as e:
+            self._sig_save_status.emit(f"⚠ 取り直せませんでした: {e}")
+            return
+        self._media_failed.discard(url)     # 失敗の印も外して、もう一度試す
+        try:
+            self._fetcher.drop_image_cache(url)
+        except Exception:
+            pass
+        self._sig_save_status.emit("画像を取り直しています…")
+        self._show_current()   # 控えが無い扱いになり、いつもの道で落とし直す
+
     def _on_media_dl_done(self, seq: int, url: str, kind: str, ok: bool, _pz: str):
         """優先DL完了 → 最新表示なら再描画（成功=file://表示、失敗=リモート表示）。"""
         if seq != self._media_seq:
@@ -15785,6 +15876,14 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                                          or (total and downloaded >= total)):
                             last_emit = downloaded
                             self._media_dl_progress.emit(seq, downloaded, total)
+                _hdrs = r.headers
+            # 途中までしか届かなかったものはキャッシュへ置かない。置くと、
+            # 以後そのファイルがあるだけで正しい絵として使われ、開き直しても
+            # 欠けたままになる（右クリックの「取り直す」でしか直せなくなる）
+            if not self._fetcher.content_length_ok(_hdrs, downloaded):
+                print(f"[Media] 途中までしか届きませんでした "
+                      f"({downloaded}/{total}) {url}")
+                raise IOError("途中までしか届きませんでした")
             _os.replace(tmp, str(path))
             return True
         except Exception:

@@ -41,6 +41,7 @@ class ThreadBridge(QObject):
     extract_clear_requested = Signal()           # 抽出ポップアップの×で抽出フィールドをクリア
     copy_text_requested   = Signal(str)          # テキスト選択コピー
     ng_image_requested    = Signal(str)          # img_url
+    image_refetch_requested = Signal(str, str)   # 取り直し (本画像URL, 今出ているsrc)
     url_open_external_requested = Signal(str)    # 外部ブラウザで直接開く
     save_selected_images_requested = Signal(str, list)  # 画像モード一括保存 (folder, urls)
     browse_save_selected_requested = Signal(str, list)  # 一括保存「…」フォルダ選択 (start_folder, urls)
@@ -189,6 +190,15 @@ class ThreadBridge(QObject):
     def ngImage(self, url: str):
         """画像右クリック → NG画像として登録 (img_url)"""
         self.ng_image_requested.emit(url)
+
+    @Slot(str, str)
+    def refetchImage(self, url: str, shown: str = ""):
+        """画像右クリック → この画像を取り直す。
+
+        通信が途中で切れて欠けた絵が手元に残ってしまった時のための入口。
+        本画像URLと、今そこに出ている src の両方を渡す（サムネが欠けている
+        ことも、開いた先の本画像が欠けていることもあるため）。"""
+        self.image_refetch_requested.emit(url, shown)
 
     @Slot(str)
     def openUrlExternal(self, url: str):
