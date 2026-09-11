@@ -223,6 +223,21 @@ class ThreadHistoryPane(QWidget):
     _MIN_H = 60    # 履歴テーブル高さの下限(px)
     _MAX_H = 800   # 同上限(px)
 
+    # 列の並び: (見出し, 履歴エントリのキー, 既定の幅)。並びを変える時はここだけ直す
+    _COLS = (
+        ("板",                   "board",  70),
+        ("スレッド",             "title",  200),
+        ("最後に閉じた時間",     "closed", 120),
+        ("最後に更新した時間",   "time",   120),
+        ("最後に書き込んだ日付", "posted", 120),
+    )
+    # 列幅を「並び順のリスト」で保存していた頃の並び（長さで見分ける）。
+    # 今は列の中身ごとに保存するので、並びを変えても幅が別の列へずれない
+    _OLD_WIDTH_ORDERS = {
+        4: ("board", "title", "time", "posted"),             # v0.9.486 まで
+        5: ("board", "title", "time", "posted", "closed"),   # v0.9.487
+    }
+
     def __init__(self, settings: AppSettings, parent=None):
         super().__init__(parent)
         self._settings = settings
@@ -283,15 +298,12 @@ class ThreadHistoryPane(QWidget):
         hdr.installEventFilter(self)
 
         # テーブル
-        self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["板", "スレッド", "最後に更新した時間", "最後に書き込んだ日付",
-                                               "最後に閉じた時間"])
+        self._table = QTableWidget(0, len(self._COLS))
+        self._table.setHorizontalHeaderLabels([c[0] for c in self._COLS])
         _th = self._table.horizontalHeader()
         _th.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         _th.setSortIndicatorShown(True)
         _th.sectionClicked.connect(self._sort_table)
-        _th.sectionResized.connect(
-            lambda *_: _save_col_widths(self._table, self._settings, "table_col_widths_history"))
         self._sort_col = -1
         self._sort_asc = True
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -302,15 +314,54 @@ class ThreadHistoryPane(QWidget):
         self._table.setFixedHeight(max(self._MIN_H, min(self._MAX_H, _h)))
         self._table.verticalHeader().setDefaultSectionSize(17)
         self._table.cellDoubleClicked.connect(self._on_double)
-        # デフォルト列幅
-        self._table.setColumnWidth(0, 70)
-        self._table.setColumnWidth(1, 200)
-        self._table.setColumnWidth(2, 120)
-        self._table.setColumnWidth(3, 120)
-        self._table.setColumnWidth(4, 120)
-        _restore_col_widths(self._table, self._settings, "table_col_widths_history")
+        # 列幅: 既定の幅を置いてから、保存しておいた幅で上書きする。
+        # 幅が変わった時に覚える処理は、その後でつなぐ。先につなぐと既定の幅を
+        # 置いた時点で保存値が上書きされ、前回の幅が一度も戻らなかった
+        for c, (_lbl, _key, _w) in enumerate(self._COLS):
+            self._table.setColumnWidth(c, _w)
+        self._restore_widths()
+        self._width_save_timer = QTimer(self)
+        self._width_save_timer.setSingleShot(True)
+        self._width_save_timer.setInterval(500)
+        self._width_save_timer.timeout.connect(lambda: self._settings.save())
+        _th.sectionResized.connect(self._on_col_resized)
         lay.addWidget(self._table)
         self.refresh()
+
+    def _col_of(self, key: str) -> int:
+        """その中身（履歴エントリのキー）が何列目にあるか"""
+        for c, (_lbl, k, _w) in enumerate(self._COLS):
+            if k == key:
+                return c
+        return -1
+
+    def _restore_widths(self):
+        """保存しておいた列幅を戻す。列の中身ごとに戻すので、並びを変えても
+        幅が別の列へずれない。並び順のリストで保存していた頃の値も読む。"""
+        raw = getattr(self._settings, "table_col_widths_history", "") or ""
+        try:
+            saved = _json.loads(raw) if raw else None
+        except (ValueError, TypeError):
+            return
+        if isinstance(saved, list):
+            order = self._OLD_WIDTH_ORDERS.get(len(saved))
+            saved = dict(zip(order, saved)) if order else None
+        if not isinstance(saved, dict):
+            return
+        for c, (_lbl, key, _w) in enumerate(self._COLS):
+            w = saved.get(key)
+            if isinstance(w, int) and w > 0:
+                self._table.setColumnWidth(c, w)
+
+    def _on_col_resized(self, *_):
+        """列幅が変わったら覚える（列の中身ごと）。
+        設定ファイルへの書き出しは少し待ってまとめる。境目をドラッグしている間は
+        1pxごとに呼ばれ、そのたびに設定を丸ごと書くと重い。
+        覚えるのはその場なので、待っている間に終了しても終了時の保存に入る。"""
+        self._settings.table_col_widths_history = _json.dumps(
+            {key: self._table.columnWidth(c)
+             for c, (_lbl, key, _w) in enumerate(self._COLS)})
+        self._width_save_timer.start()
 
     @staticmethod
     def _board_label(h: dict) -> str:
@@ -322,19 +373,19 @@ class ThreadHistoryPane(QWidget):
         self._table.setRowCount(0)
         for h in self._settings.thread_history:
             row = self._table.rowCount(); self._table.insertRow(row)
-            self._table.setItem(row, 0, QTableWidgetItem(self._board_label(h)))
-            self._table.setItem(row, 1, QTableWidgetItem(h.get("title", "")))
-            self._table.setItem(row, 2, QTableWidgetItem(h.get("time", "")))
-            self._table.setItem(row, 3, QTableWidgetItem(h.get("posted", "")))
-            self._table.setItem(row, 4, QTableWidgetItem(h.get("closed", "")))
+            for c, (_lbl, key, _w) in enumerate(self._COLS):
+                text = (self._board_label(h) if key == "board"
+                        else str(h.get(key, "") or ""))
+                self._table.setItem(row, c, QTableWidgetItem(text))
         self._apply_filter()   # 再構築後もフィルタを維持
 
     def _apply_filter(self, *_):
         """フィルタボックスの内容でスレッド名（タイトル列）を即時絞り込み。
         行の非表示のみでインデックスは変えない（ダブルクリックの行→履歴対応を維持）。"""
         q = (self._filter_edit.text() if hasattr(self, "_filter_edit") else "").strip().lower()
+        _tc = self._col_of("title")
         for row in range(self._table.rowCount()):
-            it = self._table.item(row, 1)
+            it = self._table.item(row, _tc)
             title = (it.text() if it else "").lower()
             self._table.setRowHidden(row, bool(q) and q not in title)
 
@@ -349,13 +400,12 @@ class ThreadHistoryPane(QWidget):
         else:
             self._sort_col = col
             self._sort_asc = True
-        key_map = {0: "board", 1: "title", 2: "time", 3: "posted", 4: "closed"}
-        key_name = key_map.get(col, "time")
+        key_name = self._COLS[col][1] if 0 <= col < len(self._COLS) else "time"
 
         def _key(h):
             # 板列は表示どおり（二次元裏はサブドメイン付き）で並べる。
             # 生の板名で並べると may / img が混ざって見える。
-            if col == 0:
+            if key_name == "board":
                 return self._board_label(h).lower()
             return str(h.get(key_name, "")).lower()
 
