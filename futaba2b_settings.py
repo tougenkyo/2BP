@@ -570,7 +570,7 @@ class AppSettings:
         # 0 は古いスレを開き直すたびに最上部へ来るため、1/2 を選べるようにした。
         self.history_sort_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
-        self.recent_closed_max: int = 30     # 最近閉じたタブの保持件数
+        self.recent_closed_max: int = 30     # 最近閉じたタブの保持件数（自分で閉じた分・自動で閉じた分それぞれ）
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
         # スレッド履歴パネルの保持件数（全板の合計）。並び替え「履歴」の
         # カタログ表示もこの履歴を使う。
@@ -1571,11 +1571,14 @@ class AppSettings:
         # 既存エントリの「最後に書き込んだ日時」を引き継ぐ（再オープンで消さない）
         _prev_posted = ""
         _prev_added  = ""
+        _prev_closed = ""
         for h in self.thread_history:
             if h.get("board") == board_name and h.get("no") == no:
                 _prev_posted = h.get("posted", "")
                 # 「最初に履歴へ入れた日時」は開き直しても更新しない
                 _prev_added  = h.get("added", "") or h.get("time", "")
+                # 「最後に閉じた日時」も開き直しで消さない（次に閉じた時に更新）
+                _prev_closed = h.get("closed", "")
                 break
         _now = time.strftime("%Y/%m/%d %H:%M:%S")
         entry = {
@@ -1584,6 +1587,7 @@ class AppSettings:
             "added": _prev_added or _now,
             "url":  board_url,
             "posted": _prev_posted,
+            "closed": _prev_closed,
         }
         self.thread_history = [
             h for h in self.thread_history
@@ -1610,6 +1614,17 @@ class AppSettings:
         for h in self.thread_history:
             if h.get("board") == board_name and h.get("no") == no:
                 h["posted"] = ts
+                return True
+        return False
+
+    def mark_history_closed(self, board_name: str, no: int) -> bool:
+        """スレッド履歴の該当エントリに「最後に閉じた日時」を記録する。
+        スレのタブを閉じた時に呼ぶ（自分で閉じた・自動で閉じた、どちらも）。
+        該当エントリが無ければ False。"""
+        ts = time.strftime("%Y/%m/%d %H:%M:%S")
+        for h in self.thread_history:
+            if h.get("board") == board_name and h.get("no") == no:
+                h["closed"] = ts
                 return True
         return False
 

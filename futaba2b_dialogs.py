@@ -283,8 +283,9 @@ class ThreadHistoryPane(QWidget):
         hdr.installEventFilter(self)
 
         # テーブル
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["板", "スレッド", "最後に更新した時間", "最後に書き込んだ日付"])
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(["板", "スレッド", "最後に更新した時間", "最後に書き込んだ日付",
+                                               "最後に閉じた時間"])
         _th = self._table.horizontalHeader()
         _th.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         _th.setSortIndicatorShown(True)
@@ -306,6 +307,7 @@ class ThreadHistoryPane(QWidget):
         self._table.setColumnWidth(1, 200)
         self._table.setColumnWidth(2, 120)
         self._table.setColumnWidth(3, 120)
+        self._table.setColumnWidth(4, 120)
         _restore_col_widths(self._table, self._settings, "table_col_widths_history")
         lay.addWidget(self._table)
         self.refresh()
@@ -324,6 +326,7 @@ class ThreadHistoryPane(QWidget):
             self._table.setItem(row, 1, QTableWidgetItem(h.get("title", "")))
             self._table.setItem(row, 2, QTableWidgetItem(h.get("time", "")))
             self._table.setItem(row, 3, QTableWidgetItem(h.get("posted", "")))
+            self._table.setItem(row, 4, QTableWidgetItem(h.get("closed", "")))
         self._apply_filter()   # 再構築後もフィルタを維持
 
     def _apply_filter(self, *_):
@@ -346,7 +349,7 @@ class ThreadHistoryPane(QWidget):
         else:
             self._sort_col = col
             self._sort_asc = True
-        key_map = {0: "board", 1: "title", 2: "time", 3: "posted"}
+        key_map = {0: "board", 1: "title", 2: "time", 3: "posted", 4: "closed"}
         key_name = key_map.get(col, "time")
 
         def _key(h):
@@ -5470,7 +5473,9 @@ class AppSettingsDialog(QDialog):
         # 保持件数
         g_keep = QGroupBox("保持件数"); f0.addWidget(g_keep); kpf = QFormLayout(g_keep)
         self._recent_closed_max = _spin(1, 100, " 件", width=80,
-            tip="「最近閉じたタブ」メニューの保持件数")
+            tip="「最近閉じたタブ」メニューの保持件数。\n"
+                "自分で閉じたタブと、スレ落ちなどで自動で閉じたスレを、\n"
+                "それぞれこの件数まで残します")
         kpf.addRow("最近閉じたタブ:", self._recent_closed_max)
         self._recent_images_max = _spin(1, 100, " 件", width=80,
             tip="「最近開いた画像」メニューの保持件数")

@@ -2137,6 +2137,10 @@ class MainWindow(QMainWindow):
             target = h if h < idx else h - 1
             break
 
+        # 板タブごと閉じた時も、中のスレのタブは閉じた事になる。「最近閉じたタブ」
+        # には積まない（板が無いと開き直せないので従来どおり）が、スレッド履歴の
+        # 「最後に閉じた時間」は付ける
+        self._mark_pane_threads_closed(w)
         self._outer_tabs.removeTab(idx)
         self._dispose_pane(w)
 
@@ -2513,6 +2517,8 @@ class MainWindow(QMainWindow):
                 (board.url, board.name, thread_no, thread_url, label, _auto,
                  "thread", {}))
             self._trim_closed_tabs()
+            # スレッド履歴の「最後に閉じた時間」（自分で閉じた・自動で閉じた、どちらも）
+            self._mark_history_closed(board, thread_no)
 
     def _push_closed_search(self, view):
         """閉じた板内検索タブを履歴に積む。
@@ -2536,6 +2542,54 @@ class MainWindow(QMainWindow):
              "search", {"keyword": kw, "src": int(st.get("src", 0) or 0)}))
         self._trim_closed_tabs()
 
+    def _mark_history_closed(self, board, thread_no: int):
+        """スレッド履歴に「最後に閉じた時間」を付ける。
+
+        閉じ方は問わない（タブの×・中クリック・［タブ］ペイン・スレ落ち等の
+        自動クローズ・板タブごと）。終了時に開いていたタブは閉じた事にしない
+        （次に起動した時に戻すため）。
+        保存は次の保存にまとめる。閉じるたびに設定ファイルを丸ごと書くと、
+        落ちたスレが続いた時に重い。"""
+        if board is None or not thread_no:
+            return
+        try:
+            _hit = self._settings.mark_history_closed(board.name, thread_no)
+        except Exception:
+            return
+        if _hit:
+            self._refresh_history_soon()
+
+    def _mark_pane_threads_closed(self, pane):
+        """板タブの中にあるスレのタブすべてに「最後に閉じた時間」を付ける"""
+        try:
+            tabs = pane._tabs
+            for i in range(tabs.count()):
+                v = tabs.widget(i)
+                if isinstance(v, ThreadView):
+                    self._mark_history_closed(getattr(v, "_board", None),
+                                              getattr(v, "_thread_no", 0) or 0)
+        except (AttributeError, RuntimeError):
+            pass
+
+    def _refresh_history_soon(self):
+        """スレッド履歴パネルの描き直しを、今の処理が終わった後の1回にまとめる。
+        「他のタブを閉じる」などで何十枚も続けて閉じた時に、1枚ごとに
+        全行を作り直さないようにする。"""
+        if getattr(self, "_hist_refresh_pending", False):
+            return
+        self._hist_refresh_pending = True
+
+        def _do():
+            self._hist_refresh_pending = False
+            _p = getattr(self, "_hist_pane", None)
+            if _p is None:
+                return
+            try:
+                _p.refresh()
+            except RuntimeError:
+                pass
+        QTimer.singleShot(0, _do)
+
     @staticmethod
     def _entry_kind(entry) -> str:
         """閉じたタブ情報の種類。古い形式（6要素まで）はスレタブ。"""
@@ -2551,22 +2605,28 @@ class MainWindow(QMainWindow):
     def _trim_closed_tabs(self):
         """「最近閉じたタブ」を保持件数まで詰める。
 
-        単純に先頭から捨てると、スレ落ち・逆NGのバックグラウンド自動クローズが
-        次々に積まれた時に「自分で閉じたタブ」が押し出され、Ctrl+Shift+T が
-        「再オープンできるタブがありません」になってしまう。
-        溢れた分は自動クローズ由来から先に捨て、手で閉じた履歴を守る。"""
+        自分で閉じたタブと、スレ落ち・逆NGなどで自動で閉じたスレは別々に数え、
+        それぞれ保持件数まで残す。溢れた分は同じ種類の古い方から捨てる。
+        落ちたスレが続いても自分で閉じたタブは押し出されず（Ctrl+Shift+T が
+        効かなくならない）、手で閉じ続けても自動で閉じたスレは押し出されない。
+
+        以前は一つの枠を分け合い、溢れたら自動で閉じた分から捨てていた。
+        それだと自分で閉じたタブで枠が埋まった後は、自動で閉じたスレを
+        入れた瞬間にそれ自身を捨ててしまい、一件も残らなかった
+        （手で閉じるたびに自動の分が押し出されるので、長く使うと必ずそうなる）。"""
         _max = getattr(self._settings, "recent_closed_max", 30)
         try:
             _max = max(1, int(_max))
         except (TypeError, ValueError):
             _max = 30
-        while len(self._closed_tabs) > _max:
-            drop = 0   # 自動クローズが無ければ従来どおり最古を捨てる
-            for i, e in enumerate(self._closed_tabs):
-                if self._entry_auto_closed(e):
-                    drop = i
-                    break
-            self._closed_tabs.pop(drop)
+        for _auto in (False, True):
+            _mine = [i for i, e in enumerate(self._closed_tabs)
+                     if self._entry_auto_closed(e) == _auto]
+            if len(_mine) <= _max:
+                continue
+            _drop = set(_mine[:len(_mine) - _max])     # 先頭側＝古い方から
+            self._closed_tabs[:] = [e for i, e in enumerate(self._closed_tabs)
+                                    if i not in _drop]
 
     def _reopen_closed_tab(self):
         """Ctrl+Shift+T: 最後に「自分で閉じた」タブを再オープン。
@@ -2589,7 +2649,7 @@ class MainWindow(QMainWindow):
                 # 自動クローズ分しか残っていない → メニューから開ける旨を案内する
                 self._st_log.setText(
                     "再オープンできるタブがありません"
-                    "（自動で閉じたスレは[ファイル]-[最近閉じたタブ]から開けます）")
+                    "（自動で閉じたスレは[ファイル]-[最近閉じたタブ]-[自動で閉じたスレ]から開けます）")
             else:
                 self._st_log.setText("再オープンできるタブがありません")
             return
@@ -2607,28 +2667,51 @@ class MainWindow(QMainWindow):
         return board_display_name(board_name, board_url)
 
     def _build_recent_closed_menu(self):
-        """「最近閉じたタブ」サブメニューを動的構築（スレタブと板内検索タブ）"""
-        self._menu_recent_closed.clear()
+        """「最近閉じたタブ」サブメニューを動的構築（スレタブと板内検索タブ）。
+
+        スレ落ち等で自動で閉じたスレは、サブメニュー「自動で閉じたスレ」にまとめる。
+        自分で閉じたタブとは別に件数を持つので、同じ段に並べると倍の長さになり、
+        落ちたスレが続いた時に自分で閉じたタブが埋もれて探しにくい。"""
+        menu = self._menu_recent_closed
+        menu.clear()
         if not self._closed_tabs:
-            a = self._menu_recent_closed.addAction("（なし）")
+            a = menu.addAction("（なし）")
             a.setEnabled(False)
             return
+        manual = [e for e in self._closed_tabs if not self._entry_auto_closed(e)]
+        auto   = [e for e in self._closed_tabs if self._entry_auto_closed(e)]
         # 新しい順（末尾が最新）で表示
-        for entry in reversed(list(self._closed_tabs)):
-            board_url, board_name, thread_no, thread_url, label = entry[:5]
-            bdn = self._board_display_name(board_name, board_url)
-            text = f"{bdn} / {label}" if label else f"{bdn} / No.{thread_no}"
-            if self._entry_auto_closed(entry):
-                text += "（自動で閉じた）"
-            act = self._menu_recent_closed.addAction(text)
-            # インデックスではなくエントリ自体を渡す。メニュー表示中に自動
-            # クローズ等でスタックが変化すると、控えた添字が別のスレを指す。
-            act.triggered.connect(
-                lambda checked=False, _e=entry: self._reopen_closed_entry(_e))
-        self._menu_recent_closed.addSeparator()
-        self._menu_recent_closed.addAction("すべてクリア").triggered.connect(
+        for entry in reversed(manual):
+            self._add_closed_entry_action(menu, entry)
+        if auto:
+            # サブメニューは使い回す。開くたびに作ると、外した方が親メニューの
+            # 子として残り続ける（clear() は項目を外すだけで、サブメニューは消さない）
+            sub = getattr(self, "_menu_recent_closed_auto", None)
+            if sub is None:
+                sub = QMenu(menu)
+                self._menu_recent_closed_auto = sub
+            sub.clear()
+            sub.setTitle(f"自動で閉じたスレ（{len(auto)}）")
+            for entry in reversed(auto):
+                self._add_closed_entry_action(sub, entry)
+            if manual:
+                menu.addSeparator()
+            menu.addMenu(sub)
+        menu.addSeparator()
+        menu.addAction("すべてクリア").triggered.connect(
             lambda: (self._closed_tabs.clear(),
                      self._st_log.setText("閉じたタブの履歴をクリアしました")))
+
+    def _add_closed_entry_action(self, menu, entry):
+        """閉じたタブ1件ぶんの項目をメニューに足す"""
+        board_url, board_name, thread_no, thread_url, label = entry[:5]
+        bdn = self._board_display_name(board_name, board_url)
+        text = f"{bdn} / {label}" if label else f"{bdn} / No.{thread_no}"
+        act = menu.addAction(text)
+        # インデックスではなくエントリ自体を渡す。メニュー表示中に自動
+        # クローズ等でスタックが変化すると、控えた添字が別のスレを指す。
+        act.triggered.connect(
+            lambda checked=False, _e=entry: self._reopen_closed_entry(_e))
 
     def _reopen_closed_at(self, idx: int):
         """指定インデックスの閉じたタブを再オープン"""
@@ -3074,8 +3157,15 @@ class MainWindow(QMainWindow):
                 w = pane._tabs.widget(ii)
                 if isinstance(w, ThreadView) and w._thread and w._thread.url == url:
                     if pane._tabs.count() > 1:
-                        pane._tabs.removeTab(ii)
-                        _dispose_tab_view_later(w)
+                        # タブの×と同じく、閉じる前に知らせる。知らせないと
+                        # 「最近閉じたタブ」に積まれず、返信ウインドウも残り、
+                        # 自動更新からも外れない
+                        pane.tab_closing.emit(w)
+                        # 書きかけの返信を確かめている間に並びが変わる事がある
+                        _ii = pane.indexOf(w)
+                        if _ii >= 0:
+                            pane._tabs.removeTab(_ii)
+                            _dispose_tab_view_later(w)
                     self._refresh_tab_pane(); return
 
     def _on_tab_pane_select(self, url: str):
