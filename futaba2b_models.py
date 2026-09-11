@@ -20,6 +20,34 @@ def board_display_name(board_name: str, board_url: str) -> str:
     return board_name
 
 
+# スレッド履歴に載せるスレ名の最大文字数
+HISTORY_TITLE_MAX = 255
+
+
+def thread_history_title(thread) -> str:
+    """スレッド履歴に載せるスレ名。スレ本文（OP）の最初の1行を、長い時は255字まで。
+
+    ふたばのページ題名（<title>）はスレ本文の頭を10字前後で切ったもので、
+    改行も詰めてしまう（「アウラスレ」＋改行＋「華キン玉の…」→「アウラスレ華キン玉の」）。
+    タブ名やログのファイル名は今までどおり <title> 由来の thread.title を使い、
+    履歴だけ長く持つ。本文が取れない時（通信エラーでレスが無い等）は thread.title。"""
+    if thread is None:
+        return ""
+    fallback = getattr(thread, "title", "") or ""
+    res_list = getattr(thread, "res_list", None) or []
+    op = next((r for r in res_list if getattr(r, "is_op", False)), None)
+    if op is None and res_list:
+        op = res_list[0]
+    text = (getattr(op, "comment_text", "") or "") if op is not None else ""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    # 行全体が [xxx] の行（IP表示などの注記）は飛ばす（thread.title を作る所と同じ扱い）
+    while lines and re.match(r'^\[[^\]]*\]$', lines[0]):
+        lines.pop(0)
+    if not lines:
+        return fallback
+    return lines[0][:HISTORY_TITLE_MAX]
+
+
 @dataclass
 class BoardCategory:
     name: str

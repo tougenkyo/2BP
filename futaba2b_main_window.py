@@ -1056,6 +1056,13 @@ class MainWindow(QMainWindow):
         """検索結果から: スレを開いて、そのレスまでスクロールして見せる"""
         self._open_thread_url(url, target_res=int(target_res or 0))
 
+    @staticmethod
+    def _history_title(thread) -> str:
+        """スレッド履歴に載せるスレ名（スレ本文の最初の1行・最大255字）。
+        タブ名などは今までどおり thread.title を使う。"""
+        from futaba2b_models import thread_history_title
+        return thread_history_title(thread)
+
     def _open_thread(self, board: BoardInfo, no: int,
                      open_mode_override: str | None = None,
                      target_res: int = 0):
@@ -1183,7 +1190,7 @@ class MainWindow(QMainWindow):
                 t = view._thread.title.rsplit(" - ", 1)[0]
                 new_title = t[:20] + ("…" if len(t) > 20 else "")
                 _pin_safe_set(inner, view, new_title)
-                self._settings.add_history(board.name, no, view._thread.title, board.url)
+                self._settings.add_history(board.name, no, self._history_title(view._thread), board.url)
                 self._settings.save(); self._hist_pane.refresh()
                 self._st_log.setText(
                     f"スレッド読込完了: {len(view._thread.res_list)} レス  No.{no}")
@@ -1748,7 +1755,7 @@ class MainWindow(QMainWindow):
                 t = view._thread.title.rsplit(" - ", 1)[0]
                 new_title = t[:20] + ("…" if len(t) > 20 else "")
                 _pin_safe_set(inner, view, new_title)
-                self._settings.add_history(board.name, no, view._thread.title, board.url)
+                self._settings.add_history(board.name, no, self._history_title(view._thread), board.url)
                 self._settings.save(); self._hist_pane.refresh()
             if view._thread:
                 op_thumb = (view._thread.res_list[0].thumb_url
@@ -1876,7 +1883,7 @@ class MainWindow(QMainWindow):
                 t = view._thread.title.rsplit(" - ", 1)[0]
                 new_title = t[:20] + ("…" if len(t) > 20 else "")
                 _pin_safe_set(pane, view, new_title)
-                self._settings.add_history(board.name, no, view._thread.title, board.url)
+                self._settings.add_history(board.name, no, self._history_title(view._thread), board.url)
                 self._settings.save(); self._hist_pane.refresh()
             if view._thread:
                 op_thumb = (view._thread.res_list[0].thumb_url

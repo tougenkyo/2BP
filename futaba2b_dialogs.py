@@ -370,13 +370,19 @@ class ThreadHistoryPane(QWidget):
         return board_display_name(str(h.get("board", "")), str(h.get("url", "")))
 
     def refresh(self):
+        import html as _html
         self._table.setRowCount(0)
         for h in self._settings.thread_history:
             row = self._table.rowCount(); self._table.insertRow(row)
             for c, (_lbl, key, _w) in enumerate(self._COLS):
                 text = (self._board_label(h) if key == "board"
                         else str(h.get(key, "") or ""))
-                self._table.setItem(row, c, QTableWidgetItem(text))
+                item = QTableWidgetItem(text)
+                if key == "title" and text:
+                    # スレ名は本文の1行を255字まで持つので列に収まらない。
+                    # 指したら全文を出す（リッチテキストにすると折り返して出る）
+                    item.setToolTip(f"<qt>{_html.escape(text)}</qt>")
+                self._table.setItem(row, c, item)
         self._apply_filter()   # 再構築後もフィルタを維持
 
     def _apply_filter(self, *_):
