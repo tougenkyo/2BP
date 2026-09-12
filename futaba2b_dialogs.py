@@ -1337,6 +1337,7 @@ class PostDialog(QDialog):
     _result_signal = Signal(bool, str, int)  # 投稿結果 thread-safe (ok, msg, new_thread_no)
     _upload_done     = Signal(object)        # うｐろだ結果 thread-safe (結果dictのlist)
     _upload_progress = Signal(int, int)      # うｐろだ進捗 (完了数, 総数)
+    _url_attach_done = Signal(str, str, str) # URLから添付した結果 (url, 一時ファイル, エラー)
     pin_after_post    = Signal(int)     # 投稿成功後にピン留め要求（スレ番号）
     scroll_after_post = Signal()        # 投稿成功後に最下部スクロール要求
     activate_tab      = Signal(int)     # タイトルバークリック → 対応タブをアクティブ化
@@ -1384,8 +1385,11 @@ class PostDialog(QDialog):
         self._clip_image = None      # クリップボード貼付時の元QImage（品質再適用用）
         self._post_inflight = False  # POST送信スレッドが動作中か（二重投稿防止）
         self._upload_inflight = False  # うｐろだ送信中か（二重アップロード防止）
+        self._img_url      = ""      # URLから添付した時の元URL（添付File欄に出す文字列）
+        self._url_inflight = False   # URLから取得中か（二重取得・取得中の投稿を防ぐ）
         self._upload_done.connect(self._on_upload_done)
         self._upload_progress.connect(self._on_upload_progress)
+        self._url_attach_done.connect(self._on_url_attach_done)
         self._on_success = on_success
         self._result_signal.connect(self._on_result)
         self.setAcceptDrops(True)  # D&Dを有効化
@@ -1515,10 +1519,12 @@ class PostDialog(QDialog):
         self._img_label = QLabel("添付File")
         img_lay.addWidget(self._img_label)
         self._img_edit = QLineEdit()
-        self._img_edit.setPlaceholderText("画像ファイルのパス (任意・直接入力可)")
+        self._img_edit.setPlaceholderText("画像ファイルのパス / 画像のURL (任意・直接入力可)")
         self._img_edit.setToolTip(
-            "ファイルのパスを直接入力できます。\n"
-            "Enter またはフォーカスを外すと、存在するファイルをプレビューに表示します。")
+            "ファイルのパス、または画像のURLを直接入力できます。\n"
+            "Enter またはフォーカスを外すと、存在するファイルをプレビューに表示します。\n"
+            "http(s) のURLなら、その画像を取ってきて添付します"
+            "（画像のドラッグ＆ドロップでも同じです）。")
         # レスに画像を添付できない板（img板など）は、描いてから弾かれると
         # 分かりにくいので最初から知らせておく。うｐろだ経由なら貼れる。
         if self._resto and not getattr(board, "can_upload_res", True):
@@ -2578,6 +2584,7 @@ document.addEventListener('keydown',function(e){{
         self._img_path   = ""
         self._img_is_tmp = False
         self._img_is_tegaki = False
+        self._img_url    = ""
         self._clip_image = None
         self._has_embedded_thumb = False
         self._chk_strip_thumb.setVisible(False)      # ③ 添付なし → 非表示
@@ -2661,6 +2668,7 @@ document.addEventListener('keydown',function(e){{
         self._img_path   = path
         self._img_is_tmp = False
         self._img_is_tegaki = False
+        self._img_url    = ""
         self._clip_image = None
         self._update_clip_ui()               # ① ファイル添付は形式/品質を隠す
         self._refresh_thumb_checkbox(path)   # ③ jpg+埋め込みサムネならチェック表示
@@ -2686,8 +2694,9 @@ document.addEventListener('keydown',function(e){{
             "border-radius:4px;font-size:9pt;padding:8px;")
 
     def _on_img_edit_finished(self):
-        """添付File欄に直接入力されたパスを反映する。
+        """添付File欄に直接入力されたパス／URLを反映する。
         実在するファイルなら _set_file_path で添付＋プレビュー表示。
+        http(s) のURLなら取ってきて添付する（_attach_from_url）。
         空なら添付解除。存在しない／クリップボード表示文字列は無視。"""
         import os as _os
         text = self._img_edit.text().strip()
@@ -2702,12 +2711,122 @@ document.addEventListener('keydown',function(e){{
         # エクスプローラ等からのコピーで前後に付く引用符を除去
         if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
             text = text[1:-1].strip()
-        # すでに同じパスが反映済みなら何もしない（editingFinished二重発火対策）
-        if text == self._img_path:
+        # すでに同じパス／同じURLが反映済みなら何もしない（editingFinished二重発火対策）
+        if text == self._img_path or text == self._img_url:
+            return
+        if self._is_http_url(text):
+            self._attach_from_url(text)
             return
         if _os.path.isfile(text):
             self._set_file_path(text)
         # 存在しないパスはプレビューを変えず放置（投稿時に別途チェックされる）
+
+    # ── URLから添付 ─────────────────────────────────────────────────────────
+    # 添付できる種類（ふたばに送れるもの）。D&Dの判定と同じ
+    _URL_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'webm', 'mp4'}
+    # URLに拡張子が無い（?id=… 等）時に、中身の先頭を見て種類を決める
+    _URL_MAGIC = (
+        (b"\xff\xd8\xff",          "jpg"),
+        (b"\x89PNG\r\n\x1a\n",     "png"),
+        (b"GIF87a",                "gif"),
+        (b"GIF89a",                "gif"),
+        (b"\x1a\x45\xdf\xa3",      "webm"),
+    )
+    _URL_MAX_BYTES = 64 * 1024 * 1024   # 念のための上限（板の上限は別に表示する）
+
+    @staticmethod
+    def _is_http_url(text: str) -> bool:
+        t = (text or "").strip().lower()
+        return t.startswith("http://") or t.startswith("https://")
+
+    @classmethod
+    def _ext_of_url(cls, url: str) -> str:
+        """URLの末尾から種類を決める（? 以降は見ない）"""
+        import urllib.parse as _up
+        name = _up.urlparse(url).path.rsplit("/", 1)[-1]
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        return ext if ext in cls._URL_EXTS else ""
+
+    @classmethod
+    def _ext_of_bytes(cls, data: bytes) -> str:
+        """中身の先頭を見て種類を決める"""
+        for sig, ext in cls._URL_MAGIC:
+            if data.startswith(sig):
+                return ext
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            return "webp"
+        if data[4:8] == b"ftyp":
+            return "mp4"
+        return ""
+
+    def _attach_from_url(self, url: str):
+        """URLの画像を取ってきて添付する。取りに行くのは裏で、終わったら知らせる。
+
+        取ってくるだけ（GET）なので、失敗しても投稿には影響しない。
+        取っている間は投稿ボタンを止める（添付が無いまま送られないように）。"""
+        url = (url or "").strip()
+        if self._url_inflight or not self._is_http_url(url):
+            return
+        self._url_inflight = True
+        self._img_url = url
+        _btn = getattr(self, "_btn_post", None)
+        if _btn is not None:
+            _btn.setEnabled(False)
+        self._preview_lbl.clear_preview()
+        self._preview_lbl.setText("🌐 URLから取得中…")
+        self._preview_lbl.setStyleSheet(
+            f"background:{_TM.ui('panel_bg2','#2a2a2a')};color:{_TM.ui('text_muted','#888')};"
+            f"border:1px solid {_TM.ui('panel_border','#444')};"
+            "border-radius:4px;font-size:9pt;padding:8px;")
+
+        def _work():
+            import tempfile as _tf
+            path = err = ""
+            try:
+                data = self._fetcher.fetch_image_bytes(url)
+                if not data:
+                    err = "取ってこられませんでした（見つからない・取得できない）"
+                elif len(data) > self._URL_MAX_BYTES:
+                    err = f"大きすぎます（{len(data) // (1024 * 1024)}MB）"
+                else:
+                    ext = self._ext_of_url(url) or self._ext_of_bytes(data)
+                    if not ext:
+                        err = "画像や動画ではないようです"
+                    else:
+                        tf = _tf.NamedTemporaryFile(prefix="bp2url_",
+                                                    suffix=f".{ext}", delete=False)
+                        tf.write(data); tf.close()
+                        path = tf.name
+            except Exception as e:
+                err = str(e)
+            self._url_attach_done.emit(url, path, err)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_url_attach_done(self, url: str, path: str, err: str):
+        """URLから取ってきた結果（メインスレッド）"""
+        self._url_inflight = False
+        try:
+            _btn = getattr(self, "_btn_post", None)
+            if _btn is not None:
+                _btn.setEnabled(True)
+        except RuntimeError:
+            return
+        if err or not path:
+            self._img_url = ""
+            self._preview_lbl.clear_preview()
+            self._preview_lbl.setText("URLから添付できませんでした")
+            self._preview_lbl.setStyleSheet(
+                "background:#2a1a1a;color:#f88;border:1px solid #855;"
+                "border-radius:4px;font-size:9pt;padding:8px;")
+            QMessageBox.warning(self, "URLから添付",
+                                f"URLの画像を添付できませんでした:\n{url}\n\n{err}")
+            return
+        # プレビューもサイズ表示も、ファイルを選んだ時と同じ道を通す
+        self._set_file_path(path)
+        self._img_is_tmp = True       # 取ってきた一時ファイル → 閉じる時に消す
+        self._img_url    = url
+        self._img_edit.setText(url)   # 欄には元のURLを出しておく
 
     # ── ドラッグ&ドロップ ───────────────────────────────────────────────────
     _DD_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'webm', 'mp4'}
@@ -2741,7 +2860,14 @@ document.addEventListener('keydown',function(e){{
                     self._set_file_path(path)
                     event.acceptProposedAction()
                     return
-            # ローカルファイルでない場合（スレ内画像のURL等）はスキップ
+            else:
+                # ローカルのファイルではない＝スレ内やブラウザからの画像URL。
+                # 取ってきて添付する（添付File欄にURLを入れた時と同じ道）
+                _u = u.toString()
+                if self._is_http_url(_u):
+                    self._attach_from_url(_u)
+                    event.acceptProposedAction()
+                    return
         event.ignore()
 
     def _post(self):
@@ -2750,6 +2876,10 @@ document.addEventListener('keydown',function(e){{
         # _CommentEdit.keyPressEvent から直接ここへ来るためボタンの無効化を
         # 経由しない。連打すると POST が2回飛んでいた。
         if not self._btn_post.isEnabled():
+            return
+        # URLから取得中は送らない（添付が付く前に飛ばさないため）。
+        # 投稿ボタンは止めてあるが、Shift+Enter はここへ直接来る
+        if getattr(self, "_url_inflight", False):
             return
         text = self._comment.toPlainText().strip()
         # 記憶チェックの状態を保存（チェックONの時のみ値も保存）
