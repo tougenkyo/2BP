@@ -3162,10 +3162,11 @@ document.addEventListener('keydown',function(e){{
             self._show_post_error(msg)
 
     @staticmethod
-    def _parse_post_error_popup_css(settings) -> dict:
+    def _parse_post_error_popup_css(settings, board=None) -> dict:
         """ユーザーCSSから .post-error-popup ブロックを読み取り色辞書を返す。
         キー: background, border-color, color（blink-background, blink-border-color も任意）
-        見つからないキーはデフォルト値を返す。"""
+        見つからないキーはデフォルト値を返す。
+        CSSは書き込む板の設定［スタイル］のファイルを読む（スレ・カタログと同じ）。"""
         defaults = {
             "background":       "#EFDFD6",
             "border-color":     "#7B0004",
@@ -3174,17 +3175,10 @@ document.addEventListener('keydown',function(e){{
             "blink-border-color": "#7B0004",
         }
         try:
-            css_file = getattr(settings, "user_css_file", "")
-            if not css_file:
+            from futaba2b_app_qt import _load_board_user_css
+            css = _load_board_user_css(board, settings)
+            if not css:
                 return defaults
-            from pathlib import Path as _Path
-            p = _Path(css_file)
-            if not p.is_absolute():
-                import sys as _sys
-                p = _Path(_sys.argv[0]).parent / p
-            if not p.exists():
-                return defaults
-            css = p.read_text(encoding="utf-8")
             # .post-error-popup { ... } ブロックを抽出
             m = re.search(r'\.post-error-popup\s*\{([^}]*)\}', css, re.DOTALL)
             if not m:
@@ -3202,7 +3196,7 @@ document.addEventListener('keydown',function(e){{
     def _show_post_error(self, msg: str):
         """投稿エラーを赤く2回点滅するポップアップで表示する。
         色はユーザーCSSの .post-error-popup セレクタから読み取る。"""
-        c = self._parse_post_error_popup_css(self._settings)
+        c = self._parse_post_error_popup_css(self._settings, getattr(self, "_board", None))
 
         def _make_style(bg: str, border: str, fg: str) -> str:
             return (
@@ -7729,7 +7723,8 @@ class BoardSettingsDialog(QDialog):
             if p: self._css_path.setText(p)
         css_browse.clicked.connect(_browse_css)
         css_row.addWidget(css_browse); cfl.addLayout(css_row)
-        cfl.addWidget(QLabel("※ スレ・カタログを再読み込みすると反映されます"))
+        cfl.addWidget(QLabel("※ この板のスレ・カタログ・板内検索・画像表示で使います。\n"
+                             "　再読み込みすると反映されます"))
 
         f3.addStretch(); nb.addTab(_scroll(w3), "スタイル")
 

@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.490"
+APP_VER = "0.9.491"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1374,6 +1374,34 @@ def _default_zoom() -> float:
         return 1.0  # 常に 100% (OS スケールは QtWebEngine が処理)
     except Exception:
         return 1.25
+
+
+def _css_settings_for(board, settings):
+    """その板の画面で使うユーザーCSSの設定元を返す。
+
+    CSSファイルは板の設定［スタイル］で板ごとに決める。以前はカタログだけが
+    そこを読み、スレ・板内検索・画像表示などは全体設定の値を読んでいた
+    （全体設定には画面の項目が無く、実質 theme/user.css から変わらない）。
+    そのため板の設定でファイルを変えても、カタログにしか効かなかった。
+    板が分かる所はすべて板の設定を読む。板が分からない時（開いた元の
+    タブが無い画像など）は全体設定。"""
+    try:
+        base = (board.base_url
+                if board is not None and getattr(board, "url", "") else "")
+    except Exception:
+        base = ""
+    if base:
+        try:
+            from futaba2b_settings import get_board_settings
+            return get_board_settings(base)
+        except Exception:
+            pass
+    return settings
+
+
+def _load_board_user_css(board, settings) -> str:
+    """その板で使うユーザーCSSの中身（板が分からなければ全体設定のもの）"""
+    return _load_user_css(_css_settings_for(board, settings))
 
 
 _USER_CSS_CACHE: dict = {}   # resolved_path -> (mtime, content)
@@ -6549,7 +6577,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         import time as _t
         _t0 = _t.time()
         self._maybe_prefetch_images(thread)
-        _ucss = _load_user_css(self._settings)
+        _ucss = self._user_css(thread)
         _ul   = getattr(self._settings, "uploader_links", [])
         # NG判定は常時行う（NG解除時もNGレスに緑帯を出すため）。隠す/帯のみは
         # ng_reveal で切り替える。
@@ -7127,7 +7155,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         url = thread.url or ""
         err = thread.error or "取得に失敗しました"
         code = self._err_code(err)
-        _ucss_e = _load_user_css(self._settings)
+        _ucss_e = self._user_css(thread)
         _usr_e = f"<style>{_ucss_e}</style>" if _ucss_e else ""
         html = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -8174,7 +8202,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return
         import datetime as _dt
         thread = self._thread
-        _ucss = _load_user_css(self._settings)
+        _ucss = self._user_css(thread)
         _ul   = getattr(self._settings, "uploader_links", [])
         _ng   = self._settings.ng_filter
         _ng_reveal = not self._ng_enabled
@@ -8757,7 +8785,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         _qt_add = _QT_MODE_CSS
         _sbc = getattr(self._settings, 'scroll_bottom_count', 5)
         _scroll_js = _make_scroll_bottom_js(_sbc, getattr(self._settings,'scroll_top_count',0))
-        _ucss_q = _load_user_css(self._settings)
+        _ucss_q = self._user_css()
         _usr_q = f"<style id='__usercss'>{_ucss_q}</style>" if _ucss_q else ""
         html = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -9093,7 +9121,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
                     + _respool_inner + '</div>')
         _sbc_img = getattr(self._settings, 'scroll_bottom_count', 5)
         _scroll_js_img = _make_scroll_bottom_js(_sbc_img, getattr(self._settings,'scroll_top_count',0))
-        _ucss_i = _load_user_css(self._settings)
+        _ucss_i = self._user_css()
         _usr_i = f'<style id="__usercss">{_ucss_i}</style>' if _ucss_i else ''
         html=('<!DOCTYPE html><html><head><meta charset="utf-8">'
               f'<style>{THREAD_CSS}{_img_add}</style>'
@@ -9439,6 +9467,17 @@ class ThreadView(_MouseGestureMixin, QWidget):
         dlg.mousePressEvent = lambda _e: dlg.close()
         QTimer.singleShot(duration, dlg.close)
 
+    def _user_css(self, thread=None) -> str:
+        """このスレの板で使うユーザーCSS（板の設定［スタイル］で決めたファイル）。
+
+        スレの表示（通常・引用・画像モード、エラー表示）とポップアップの色は
+        すべてここから読む。カタログと同じファイルになる。"""
+        board = getattr(self, "_board", None)
+        if board is None:
+            th = thread if thread is not None else getattr(self, "_thread", None)
+            board = getattr(th, "board", None)
+        return _load_board_user_css(board, self._settings)
+
     def _parse_self_res_popup_css(self, selector: str) -> dict:
         """ユーザーCSSから指定セレクタのbackground/border-color/colorを取得する"""
         if selector == ".my-sodane-popup":
@@ -9446,17 +9485,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
         else:
             defaults = {"background": "#F7D6D6", "border-color": "#cc1105", "color": "#7B0004"}
         try:
-            css_file = getattr(self._settings, "user_css_file", "")
-            if not css_file:
+            import re as _re
+            # 本文と同じ読み方で読む（同じ板の設定のファイル・同じ場所を基準にする）
+            css = self._user_css()
+            if not css:
                 return defaults
-            from pathlib import Path as _Path
-            import sys as _sys, re as _re
-            p = _Path(css_file)
-            if not p.is_absolute():
-                p = _Path(_sys.argv[0]).parent / p
-            if not p.exists():
-                return defaults
-            css = p.read_text(encoding="utf-8")
             esc_sel = selector.replace(".", r"\.")
             m = _re.search(rf'{esc_sel}\s*\{{([^}}]*)\}}', css, _re.DOTALL)
             if not m:
@@ -12219,12 +12252,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
         # 前回レス数との差分を渡してカタログに新着数を表示
         read_counts = self._settings.catalog_read_counts
         thread_read_counts = self._settings.thread_read_counts
-        # user_css は BoardSettings から（self._board が未設定なら AppSettings にフォールバック）
-        if self._board:
-            from futaba2b_settings import get_board_settings as _gbs2
-            _ucss = _load_user_css(_gbs2(self._board.base_url))
-        else:
-            _ucss = _load_user_css(self._settings)
+        # user_css は板の設定から（板が未設定なら全体設定。スレ・板内検索も同じ読み方）
+        _ucss = _load_board_user_css(self._board, self._settings)
         # NGフィルタを kwargs から受け取るかシングルトンを使用
         _ng_filter = kwargs.get("ng_filter") or self._settings.ng_filter
         _sbc = getattr(self._settings, 'scroll_bottom_count', 5)
@@ -12623,7 +12652,7 @@ class BoardSearchView(QWidget):
         self._apply_lbl_style()      # テーマを変えた後の描き直しで拾い直す
         html = search_to_html(
             self._result,
-            user_css=_load_user_css(self._settings),
+            user_css=_load_board_user_css(self._board, self._settings),
             board_label=(board_display_name(self._board.name, self._board.url)
                          if self._board else ""),
             # NGにしたスレ・削除依頼を出したスレ。出す/出さないはツールバーの
@@ -13495,7 +13524,10 @@ class AutoRefreshManager(QObject):
             _carry_over_deleted_content(getattr(view, "_thread", None), thread)
         from futaba2b_html import thread_to_html, res_fragment_html
         import json
-        _ucss = _load_user_css(self._settings)
+        # スレタブと同じく、その板の設定のユーザーCSSを使う
+        _ucss = _load_board_user_css(
+            getattr(view, "_board", None) or getattr(thread, "board", None),
+            self._settings)
         _ul   = getattr(self._settings, "uploader_links", [])
         _ng   = self._settings.ng_filter
         _del_nos = set(self._settings.del_res_nos.get(thread.url or "", [])) if thread else set()
@@ -15449,7 +15481,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             "#img.pannable.dragging{cursor:grabbing;}"
         )
         # user.css をハードコードCSSの後に連結（後勝ちで user.css 側が優先適用される）
-        _ucss_b = _load_user_css(self._settings_ref) if self._settings_ref else ""
+        _ucss_b = (_load_board_user_css(self._css_board(), self._settings_ref)
+                   if self._settings_ref else "")
         if _ucss_b:
             base_css = base_css + _ucss_b
         if is_native_video:
@@ -16704,6 +16737,12 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         else:
             self._res_overlay_widget.hide()
 
+    def _css_board(self):
+        """画像を開いた元のタブの板。ユーザーCSSをその板の設定から読むために使う
+        （元のタブが無い＝最近開いた画像などから開いた時は None → 全体設定）"""
+        src = getattr(self, "_src_thread_view", None)
+        return getattr(src, "_board", None) if src is not None else None
+
     def _show_res_overlay(self):
         """現在画像のレスをレスオーバーレイに表示"""
         if not self._res_overlay_visible:
@@ -16723,7 +16762,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             return
         try:
             res_html = render_res(res, res.is_op, [])
-            _ucss_o = _load_user_css(self._settings_ref) if self._settings_ref else ""
+            _ucss_o = (_load_board_user_css(getattr(src, "_board", None), self._settings_ref)
+                       if self._settings_ref else "")
             _usr_o = f'<style>{_ucss_o}</style>' if _ucss_o else ''
             html = (f'<!DOCTYPE html><html><head><meta charset="utf-8">'
                     f'<style>{THREAD_CSS}'

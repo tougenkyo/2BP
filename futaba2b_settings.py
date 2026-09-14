@@ -156,6 +156,7 @@ class BoardSettings:
         self.ar_default_catalog_intervals: list = [600]
         self.ar_default_catalog_checks:   list  = []
         # ── スタイル ──
+        # この板のスレ・カタログ・板内検索・画像表示で読むユーザーCSS（板の設定［スタイル］）
         self.user_css_file: str = "theme/user.css"
         self.auto_add_to_ar:         bool = True
         self.auto_add_catalog_to_ar: bool = True
@@ -448,7 +449,8 @@ class AppSettings:
         self.catalog_view_states: dict = {}
         # アップローダーリンク [{name, pattern, url, popup, new_tab}]
         self.uploader_links: list[dict] = list(_DEFAULT_UPLOADERS)
-        # ユーザースタイルシートファイルパス
+        # ユーザースタイルシートファイルパス。板が分からない画面でだけ使う
+        # （板ごとのファイルは板の設定［スタイル］＝BoardSettings.user_css_file）
         self.user_css_file: str = "theme/user.css"
         # 板別の最大スレOP No.（落ちるまで残り件数の計算用）
         # キー: board.base_url  値: その板で見た最大OP No.
