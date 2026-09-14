@@ -961,6 +961,7 @@ class MainWindow(QMainWindow):
         cat_view.thread_open_bg.connect(self._open_thread_url_bg)
         cat_view.thread_open_mode.connect(self._open_thread_url_mode)
         cat_view.thread_open_bg_mode.connect(self._open_thread_url_bg_mode)
+        cat_view.reverse_ng_open.connect(self._open_reverse_ng_thread)
         cat_view.status_info.connect(self._on_thread_status)
         cat_view.error_band_changed.connect(
             lambda text, p=inner: self._broadcast_error_band(p, text))
@@ -1673,6 +1674,36 @@ class MainWindow(QMainWindow):
             f"カタログを自動更新に追加: "
             f"{self._board_display_name(board.name, board.url)}  間隔 {_disp}")
 
+    def _open_reverse_ng_thread(self, url: str, mode: int, background: bool):
+        """逆NGがスレを開く。この時に作ったタブにだけ「逆NGが開いた」印を付ける。
+
+        落ちたスレの自動クローズは、逆NGが開いたタブなら設定に関係なく閉じ、
+        「開いた時点で落ちていたスレは閉じない」守りも飛ばす。以前はそれを
+        「逆NGで開いた」記録（URL・永続）で判定していたため、後からスレッド履歴などで
+        自分で開いたスレまで、落ちていると開いた途端に閉じていた。
+        開いたタブそのものに印を付けて区別する。もう開いているタブには付けない。"""
+        before = {id(v) for v in self._all_thread_views()}
+        if background:
+            self._open_thread_url_bg_mode(url, mode)
+        else:
+            self._open_thread_url_mode(url, mode)
+        for v in self._all_thread_views():
+            if id(v) not in before:
+                v._opened_by_reverse_ng = True
+
+    def _all_thread_views(self) -> list:
+        """開いているスレタブすべて（全部の板から）"""
+        out = []
+        for ti in range(self._outer_tabs.count()):
+            pane = self._outer_tabs.widget(ti)
+            if not isinstance(pane, BoardPane):
+                continue
+            for i in range(pane._tabs.count()):
+                w = pane._tabs.widget(i)
+                if isinstance(w, ThreadView):
+                    out.append(w)
+        return out
+
     def _open_thread_url_mode(self, url: str, mode: int):
         """スレをアクティブで開き、読込後に表示モードを切り替える"""
         _mode_map = {0: '', 1: 'image', 2: 'quote'}
@@ -1947,6 +1978,7 @@ class MainWindow(QMainWindow):
         cat.thread_open_bg.connect(self._open_thread_url_bg)
         cat.thread_open_mode.connect(self._open_thread_url_mode)
         cat.thread_open_bg_mode.connect(self._open_thread_url_bg_mode)
+        cat.reverse_ng_open.connect(self._open_reverse_ng_thread)
         cat.status_info.connect(self._on_thread_status)
         cat.error_band_changed.connect(
             lambda text, p=pane: self._broadcast_error_band(p, text))
@@ -2285,11 +2317,17 @@ class MainWindow(QMainWindow):
         # 逆NG自動オープン由来の落ちスレは、グローバル設定に関わらず閉じてメモリ解放。
         # （多数の逆NGスレが自動オープン→落ち後も残存しメモリが膨張するのを防ぐ。
         #   自動保存されるためタブを閉じても内容は失われない。手動オープン由来は対象外。）
+        # 逆NG由来かは、そのタブを逆NGが開いたか（_open_reverse_ng_thread が付ける印）で
+        # 決める。「逆NGで開いた」記録（URL・永続）で見ると、後からスレッド履歴などで
+        # 自分で開き直したスレまで、落ちていると開いた途端に閉じてしまう。
+        # 前回から戻したタブは印を持ち越さないので、そちらだけ記録で判定する。
         _rev_auto_close = (
             getattr(s, "auto_close_dead_reverse_ng", True)
             and (not is_full)
-            and bool(url)
-            and url in getattr(self._settings, "ng_reverse_opened_urls", set())
+            and (bool(getattr(view, "_opened_by_reverse_ng", False))
+                 or (bool(getattr(view, "_from_restore", False))
+                     and bool(url)
+                     and url in getattr(self._settings, "ng_reverse_opened_urls", set())))
         )
         if _close_dead or _close_full or _rev_auto_close:
             should_close = ((is_full and _close_full)
@@ -2687,10 +2725,9 @@ class MainWindow(QMainWindow):
             return
         manual = [e for e in self._closed_tabs if not self._entry_auto_closed(e)]
         auto   = [e for e in self._closed_tabs if self._entry_auto_closed(e)]
-        # 新しい順（末尾が最新）で表示
-        for entry in reversed(manual):
-            self._add_closed_entry_action(menu, entry)
         if auto:
+            # サブメニューは先頭に置く。手で閉じたタブ（最大99件）の後ろだと
+            # 画面に収まらず、下へ送らないと見えなかった（残っていないように見える）。
             # サブメニューは使い回す。開くたびに作ると、外した方が親メニューの
             # 子として残り続ける（clear() は項目を外すだけで、サブメニューは消さない）
             sub = getattr(self, "_menu_recent_closed_auto", None)
@@ -2701,9 +2738,12 @@ class MainWindow(QMainWindow):
             sub.setTitle(f"自動で閉じたスレ（{len(auto)}）")
             for entry in reversed(auto):
                 self._add_closed_entry_action(sub, entry)
+            menu.addMenu(sub)
             if manual:
                 menu.addSeparator()
-            menu.addMenu(sub)
+        # 新しい順（末尾が最新）で表示
+        for entry in reversed(manual):
+            self._add_closed_entry_action(menu, entry)
         menu.addSeparator()
         menu.addAction("すべてクリア").triggered.connect(
             lambda: (self._closed_tabs.clear(),

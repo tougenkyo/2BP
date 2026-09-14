@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.491"
+APP_VER = "0.9.492"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10434,6 +10434,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
     thread_open_bg = Signal(str)   # バックグラウンドで開く
     thread_open_mode    = Signal(str, int)  # url, open_mode
     thread_open_bg_mode = Signal(str, int)  # url, open_mode (BG)
+    reverse_ng_open     = Signal(str, int, bool)  # 逆NGが開く: url, open_mode, 裏で開くか
     status_info    = Signal(object)  # ステータスバー更新用
     catalog_new_arrivals = Signal(object)  # カタログ更新時 +1以上の新着があったスレURL集合
     auto_refresh_requested = Signal()  # 自動更新ダイアログを開く要求
@@ -12118,12 +12119,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
 
     def _exec_reverse_ng_one(self, e, action: int):
         """逆NG 1件分のアクション実行"""
+        # 逆NGは専用の口で開く。自分で開いたタブと区別するため
+        # （落ちた時の自動クローズで、逆NGが開いたタブだけを設定に関係なく片付ける）
         if action == 1:
             mode = getattr(self._settings, 'thread_open_bg_mode', 0)
-            self.thread_open_bg_mode.emit(e.thread_url, mode)
+            self.reverse_ng_open.emit(e.thread_url, mode, True)
         elif action == 2:
             mode = getattr(self._settings, 'thread_open_mode', 0)
-            self.thread_open_mode.emit(e.thread_url, mode)
+            self.reverse_ng_open.emit(e.thread_url, mode, False)
         elif action == 3:
             from PySide6.QtWidgets import QToolTip
             from PySide6.QtCore import QPoint
