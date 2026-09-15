@@ -1420,6 +1420,8 @@ class PostDialog(QDialog):
             "QPushButton:checked{background:#664400;border-color:#aa6600;}"
         )
         name_lay.addWidget(self._pin_btn)
+        # ◐: ウインドウの透け具合（後ろのスレを見ながら書けるように）
+        name_lay.addWidget(self._build_opacity_button(settings))
         self._chk_scroll_bottom = None  # 返信時は削除キー行に配置
         form.addRow("おなまえ", name_lay)
 
@@ -3261,11 +3263,115 @@ document.addEventListener('keydown',function(e){{
         self.raise_()
         self.activateWindow()
 
+    # ── 透け具合 ────────────────────────────────────────────────────────────
+    _OPACITY_MIN = 20   # これより薄いと、どこにあるか分からなくなる（設定の読み込みも同じ下限）
+
+    def _build_opacity_button(self, settings):
+        """◐ボタン。押すと透け具合のスライダーと「使っている間は透けさせない」を出す。"""
+        from PySide6.QtWidgets import QWidgetAction
+        btn = QToolButton()
+        btn.setText("◐")
+        btn.setFixedWidth(30)
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._opacity_btn = btn
+        self._opacity_btn_on = None
+        menu = QMenu(btn)
+        box = QWidget(menu)
+        bl = QVBoxLayout(box); bl.setContentsMargins(10, 6, 10, 6); bl.setSpacing(4)
+        self._opacity_lbl = QLabel()
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(self._OPACITY_MIN, 100)
+        self._opacity_slider.setSingleStep(5)
+        self._opacity_slider.setPageStep(10)
+        self._opacity_slider.setMinimumWidth(180)
+        self._opacity_slider.setValue(self._opacity_value(settings))
+        self._chk_opaque_active = QCheckBox("使っている間は透けさせない")
+        self._chk_opaque_active.setToolTip(
+            "ONにすると、このウインドウで書いている間は透けさせず、\n"
+            "スレなど他のウインドウを触っている間だけ透けます")
+        self._chk_opaque_active.setChecked(
+            bool(getattr(settings, "post_dialog_opaque_active", False)))
+        bl.addWidget(self._opacity_lbl)
+        bl.addWidget(self._opacity_slider)
+        bl.addWidget(self._chk_opaque_active)
+        act = QWidgetAction(menu)
+        act.setDefaultWidget(box)
+        menu.addAction(act)
+        btn.setMenu(menu)
+        # 設定ファイルへの書き出しは少し待ってまとめる（スライダーを動かすたびに書かない）
+        self._opacity_save_timer = QTimer(self)
+        self._opacity_save_timer.setSingleShot(True)
+        self._opacity_save_timer.setInterval(600)
+        self._opacity_save_timer.timeout.connect(lambda: self._settings.save())
+        self._opacity_slider.valueChanged.connect(self._on_opacity_changed)
+        self._chk_opaque_active.toggled.connect(self._on_opacity_changed)
+        # スライダーを出している間は、使っている最中でも今の値で見せる
+        # （「使っている間は透けさせない」だと、動かしても何も変わらず分からない）
+        self._opacity_preview = False
+        menu.aboutToShow.connect(lambda: self._set_opacity_preview(True))
+        menu.aboutToHide.connect(lambda: self._set_opacity_preview(False))
+        self._update_opacity_label()
+        self._apply_opacity()
+        return btn
+
+    @classmethod
+    def _opacity_value(cls, settings) -> int:
+        """設定の不透明度（%）。壊れた値・範囲外は丸める"""
+        try:
+            v = int(getattr(settings, "post_dialog_opacity", 100))
+        except (TypeError, ValueError):
+            v = 100
+        return min(100, max(cls._OPACITY_MIN, v))
+
+    def _update_opacity_label(self):
+        v = self._opacity_slider.value()
+        self._opacity_lbl.setText("透けない（100%）" if v >= 100 else f"不透明度 {v}%")
+        self._opacity_btn.setToolTip(
+            "返信ウインドウの透け具合" + ("" if v >= 100 else f"（今は {v}%）"))
+
+    def _on_opacity_changed(self, *_):
+        self._settings.post_dialog_opacity = self._opacity_slider.value()
+        self._settings.post_dialog_opaque_active = self._chk_opaque_active.isChecked()
+        self._update_opacity_label()
+        self._apply_opacity()
+        self._opacity_save_timer.start()
+
+    def _set_opacity_preview(self, on: bool):
+        self._opacity_preview = bool(on)
+        self._apply_opacity()
+
+    def _apply_opacity(self):
+        """設定と今の状態から、ウインドウの不透明度を決めて当てる。
+
+        「使っている間は透けさせない」がONで、このウインドウがアクティブな時は不透明。
+        ただしスライダーを出している間は、今の値で見せる。"""
+        v = self._opacity_value(self._settings)
+        if (v < 100 and not getattr(self, "_opacity_preview", False)
+                and bool(getattr(self._settings, "post_dialog_opaque_active", False))
+                and self.isActiveWindow()):
+            v = 100
+        try:
+            self.setWindowOpacity(v / 100.0)
+        except RuntimeError:
+            return
+        # 透けさせている時はボタンの色を変えて、そうなっていると分かるようにする
+        on = self._opacity_value(self._settings) < 100
+        btn = getattr(self, "_opacity_btn", None)
+        if btn is not None and on != self._opacity_btn_on:
+            self._opacity_btn_on = on
+            btn.setStyleSheet(
+                "QToolButton{border:1px solid #555;border-radius:3px;padding:1px 4px;"
+                + ("background:#224466;border-color:#4488cc;" if on else "") + "}"
+                "QToolButton::menu-indicator{image:none;width:0;}")
+
     def changeEvent(self, event):
         super().changeEvent(event)
         from PySide6.QtCore import QEvent
-        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
-            if getattr(self, "_roll_active", False):
+        if event.type() == QEvent.Type.ActivationChange:
+            # 「使っている間は透けさせない」なら、アクティブかどうかで当て直す
+            if getattr(self, "_opacity_slider", None) is not None:
+                self._apply_opacity()
+            if self.isActiveWindow() and getattr(self, "_roll_active", False):
                 self.activate_tab.emit(self._resto)
 
     def _open_sample_window(self):

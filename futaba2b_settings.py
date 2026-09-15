@@ -489,6 +489,11 @@ class AppSettings:
         self.post_save_name: bool = False  # おなまえを記憶するか
         self.post_save_mail: bool = False  # E-mailを記憶するか
         self.post_dialog_pin: bool = False # レスウィンドウを投稿後も閉じない
+        # 返信ウインドウの不透明度（%）。100=透けない。後ろのスレを見ながら書けるように。
+        # 下限20（返信ウインドウ側の _OPACITY_MIN と同じ）
+        self.post_dialog_opacity: int = 100
+        # 使っている間（返信ウインドウがアクティブな間）は透けさせない
+        self.post_dialog_opaque_active: bool = False
         # 手書きキャンバスの状態（返信ウインドウを閉じても復元する）。
         # ペン/消しゴムは色・太さを別々に保持する。キーは TEGAKI_DEFAULTS を参照。
         self.tegaki_state: dict = dict(TEGAKI_DEFAULTS)
@@ -1065,6 +1070,11 @@ class AppSettings:
             self.post_save_name = raw.get("post_save_name", False)
             self.post_save_mail = raw.get("post_save_mail", False)
             self.post_dialog_pin = raw.get("post_dialog_pin", False)
+            try:
+                self.post_dialog_opacity = min(100, max(20, int(raw.get("post_dialog_opacity", 100))))
+            except (TypeError, ValueError):
+                self.post_dialog_opacity = 100
+            self.post_dialog_opaque_active = bool(raw.get("post_dialog_opaque_active", False))
             # 手書き状態: 既定値の上に保存値を重ねる。欠損キー・型不正は既定で補う
             # （旧バージョンの設定ファイル互換・手編集による破損対策）。
             _tg = dict(TEGAKI_DEFAULTS)
@@ -1329,6 +1339,8 @@ class AppSettings:
                         "post_save_name": self.post_save_name,
                         "post_save_mail": self.post_save_mail,
                         "post_dialog_pin": self.post_dialog_pin,
+                        "post_dialog_opacity": self.post_dialog_opacity,
+                        "post_dialog_opaque_active": self.post_dialog_opaque_active,
                         "tegaki_state":    self.tegaki_state,
                         "del_hide_checked": self.del_hide_checked,
                         "scroll_after_post": self.scroll_after_post,
