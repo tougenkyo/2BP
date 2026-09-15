@@ -874,7 +874,11 @@ function _ensureDelPop() {
     if (document.getElementById('del-pop')) return;
     const pop = document.createElement('div');
     pop.id = 'del-pop';
-    pop.style.cssText = 'display:none;position:fixed;border:2px solid #800000;background:#FFFFEE;padding:8px;z-index:9999;box-shadow:2px 2px 6px rgba(0,0,0,.3);min-width:220px;font-size:9pt;';
+    // 重なり順は引用ポップアップ・IDポップアップ（9999）より上にする。
+    // 同じ値だと後から差し込んだ方が上に描かれ、del のポップアップは最初に1回だけ作るので、
+    // 引用ポップアップの中でNo.を押すと、いつも引用ポップアップの下に隠れていた。
+    // 右クリックメニュー（19998〜）・選択メニュー（19999）・お知らせ（99999）より下のまま。
+    pop.style.cssText = 'display:none;position:fixed;border:2px solid #800000;background:#FFFFEE;padding:8px;z-index:10000;box-shadow:2px 2px 6px rgba(0,0,0,.3);min-width:220px;font-size:9pt;';
     pop.innerHTML =
         '<div id="del-reqsec" style="padding:3px;border-radius:3px;">'
       +   '<div style="margin-bottom:4px;">'
