@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.494"
+APP_VER = "0.9.495"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4014,6 +4014,10 @@ class BoardPane(QWidget):
                 _w._pending_redraw = False
                 _w.refresh_status_info()
             QTimer.singleShot(240, _sync_after_redraw)
+        # 裏にいる間に控えたそうだね数を流す。新着が無いと上の描き直しは起きないので、
+        # これが無いと開いても古い数のまま残る（読み込み直す時は読み終わりで流す）
+        if isinstance(w, ThreadView):
+            QTimer.singleShot(0, w._flush_pending_sodane)
 
     def _on_tab_changed(self, idx: int):
         # ドラッグ中のcurrentChanged発火は完全スキップ（ちらつき防止）
@@ -5355,6 +5359,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._pending_frags: list = []  # 非表示中(返信モード)にARが生成した新着フラグメント。
                                         # アクティブ化時にフルリロードせずDOM追記して
                                         # 「一瞬先頭が見える」ちらつきを防ぐ
+        self._pending_sd: dict = {}     # 見えていない間に届いたそうだね数 {No: 件数}。
+                                        # 開いた時・読み込み終わりに画面へ流す
         self._bg_new_total    = 0      # 自動更新で貯まった未読数（タブの(+N)・青表示用）。
                                         # このタブを開いた時に0へ戻す
         self._pending_self_res_popups: list = []  # 非アクティブ時のそうだね/返信通知→アクティブ化時に表示
@@ -8119,6 +8125,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # （user.css で色を変えていても、次の読み込み直しで白くならない）
         sync_page_bg_from_body(self._view, self._settings)
         self._flush_pending_frags()
+        self._flush_pending_sodane()   # 読み込み中・裏にいる間に届いたそうだね数（新着の後に）
         # 板設定を変えた後に返信モードへ戻ると、生成済みHTML(_last_html)に
         # 焼かれた古いぼかし設定のまま表示されるため、読込完了時に合わせ直す
         self.apply_blur_setting()
@@ -9513,6 +9520,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """このスレタブがアクティブ化されたら、保留していたそうだね/返信通知を表示する。"""
         super().showEvent(event)
         show_snap(self)      # 描き直されるまで前の絵を被せる
+        QTimer.singleShot(0, self._flush_pending_sodane)   # 裏にいる間に届いたそうだね数
         q = self._pending_self_res_popups
         if q:
             pending = q[:]
@@ -9788,6 +9796,39 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """メインスレッドで JS を実行してそうだね表示を更新"""
         js = f"if(typeof updateSodane==='function')updateSodane({no},{cnt});"
         self._view.page().runJavaScript(js)
+
+    def apply_sodane(self, sd: dict):
+        """自動更新で届いたそうだね数を画面へ反映する。
+
+        見えていない（裏のタブ・別の板のタブ）か、ページを読み込み中なら、今は流さずに
+        控えておき、開いた時・読み終わった時にまとめて流す（_flush_pending_sodane）。
+        以前は見えている時にしか流していなかった。新着の無い回は開いた時の描き直しも
+        起きないので、裏に置いたタブはそうだね数が古いまま残り、スレが落ちると
+        自動更新も止まるため、そのまま固まっていた。"""
+        if not sd:
+            return
+        for _k, _v in sd.items():
+            try:
+                self._pending_sd[int(_k)] = int(_v)
+            except (TypeError, ValueError):
+                continue
+        self._flush_pending_sodane()
+
+    def _flush_pending_sodane(self):
+        """控えておいたそうだね数を、見えていてページが使える時に流す"""
+        if not self._pending_sd:
+            return
+        try:
+            if not self.isVisible() or not self._thread_page_live:
+                return          # 開いた時・読み終わった時にもう一度呼ばれる
+        except RuntimeError:
+            return
+        import json as _json
+        _m = {str(k): v for k, v in self._pending_sd.items()}
+        self._pending_sd = {}
+        _safe_run_js(self._view,
+                     "(function(m){if(typeof updateSodane!=='function')return;"
+                     "for(var k in m)updateSodane(k,m[k]);})(" + _json.dumps(_m) + ");")
 
     def _on_ng(self, no: int):
         if not self._thread:
@@ -13234,6 +13275,21 @@ class AutoRefreshManager(QObject):
                 if view is not None and getattr(view, '_has_error_band', False):
                     self._errband_sig.emit(view, "")
 
+                def _apply_sd(_th):
+                    """差分の sd（全レスのそうだね数）をモデルへ入れ、画面へ流す分を返す"""
+                    _m = {}
+                    for _k, _v in (diff.get("sd") or {}).items():
+                        try:
+                            _m[int(_k)] = int(_v)
+                        except (TypeError, ValueError):
+                            continue
+                    if _th is not None:
+                        for r in _th.res_list:
+                            if r.no in _m:
+                                r.sodane = _m[r.no]
+                        _th._sd_update = _m
+                    return _m
+
                 # スレ落ち検知（dielong が 1972年以前 = エポック付近）
                 if diff["is_dead"]:
                     # 【重要】同じdiffレスポンスに最後のレス群が含まれている。
@@ -13252,6 +13308,12 @@ class AutoRefreshManager(QObject):
                             # data/logキャッシュにも反映（スレ落ち後再表示の末尾欠落防止）
                             self._fetcher.append_diff_to_cache(entry.url, _add)
                             print(f'[AutoRefresh] スレ落ち直前の新着 {len(_add)}件を取り込み No.{no}')
+                    # 落ちを知らせる回の差分にも、最後のそうだね数が入っている。
+                    # 取り込まずに抜けると、落ちる直前に付いた分がモデル・画面・
+                    # 自動保存のログ（モデルの数を書き戻す）から抜ける
+                    _sd_last = _apply_sd(th_cur)
+                    if view and _sd_last:
+                        self._sd_apply.emit(view, _sd_last)
                     print(f'[AutoRefresh] スレ落ち検知（dielong） No.{no} → 削除・自動保存')
                     self._remove_later_url.emit(entry.url)
                     if view:
@@ -13261,6 +13323,9 @@ class AutoRefreshManager(QObject):
                         # メインスレッドで thread_dead を発火（BGスレッドから直接 QTimer は危険）
                         self._thread_dead_sig.emit(view, entry.url)
                     return
+
+                # そうだね数を既存レスに反映（この先の容量落ち・1000レスの確認で抜ける前に）
+                _apply_sd(th_cur)
 
                 # 板容量によるスレ落ち検知（dielongが落ちないまま板から押し出された場合）。
                 # JSON diff API は容量落ちを is_dead/404 に反映しないことがあり、その場合
@@ -13333,20 +13398,7 @@ class AutoRefreshManager(QObject):
 
                 new_res = diff["new_res"]
 
-                # そうだね数を既存レスに反映
-                if th_cur and diff["sd"]:
-                    for r in th_cur.res_list:
-                        sd_val = diff["sd"].get(str(r.no), None)
-                        if sd_val is not None:
-                            try:
-                                r.sodane = int(sd_val)
-                            except ValueError:
-                                pass
-                    th_cur._sd_update = {int(k): int(v) for k, v in diff["sd"].items()
-                                         if v.lstrip("-").isdigit()}
-                else:
-                    if th_cur:
-                        th_cur._sd_update = {}
+                # そうだね数は上（スレ落ち検知の直後、_apply_sd）でモデルへ入れてある
 
                 entry.last_update_str = _dt.now().strftime("%y/%m/%d %H:%M:%S")
 
@@ -13358,9 +13410,14 @@ class AutoRefreshManager(QObject):
                     # 重複を除いて追記（start+1でもAPIが同じNoを返すことがあるため）
                     existing_nos = {r.no for r in th_cur.res_list}
                     added = [r for r in new_res if r.no not in existing_nos]
+                    # 新着レス自身のそうだね数も同じ差分の sd にある（取り込みより前に
+                    # _apply_sd を済ませているので、ここで新着にも入れる）
+                    _sd_now = getattr(th_cur, "_sd_update", {}) or {}
                     for r in added:
                         r.is_new = True
                         r.res_idx = len(th_cur.res_list)
+                        if r.no in _sd_now:
+                            r.sodane = _sd_now[r.no]
                         th_cur.res_list.append(r)
                     th_cur.received_count = len(th_cur.res_list)
                     if added:
@@ -13399,8 +13456,11 @@ class AutoRefreshManager(QObject):
 
                 if new_n == 0:
                     # 新着なし・そうだね数のみ更新
+                    # 裏のタブにも渡す（見えていなければビュー側で控え、開いた時に流す）。
+                    # 以前は見えている時だけ渡していたため、新着の無い裏のタブは
+                    # そうだね数が古いまま残り、スレが落ちるとそのまま固まっていた
                     _sd = getattr(th_cur, "_sd_update", {}) if th_cur else {}
-                    if _sd and view and not view.isHidden():
+                    if _sd and view:
                         self._sd_apply.emit(view, _sd)
                     # 新着が無いとこの先 _update_view を通らないため、スレ落ち予定
                     # （JSONの die）だけはここで表示へ反映する。これが無いと初回
@@ -13490,8 +13550,13 @@ class AutoRefreshManager(QObject):
                 return
         except Exception:
             pass
-        for no, cnt in sd.items():
-            view._view.page().runJavaScript(f"if(typeof updateSodane==='function')updateSodane({no},{cnt});")
+        # 見えていない・読み込み中のタブは、ビュー側で控えて開いた時に流す
+        _apply = getattr(view, "apply_sodane", None)
+        if _apply is not None:
+            _apply(sd)
+        else:
+            for no, cnt in sd.items():
+                view._view.page().runJavaScript(f"if(typeof updateSodane==='function')updateSodane({no},{cnt});")
         th = getattr(view, '_thread', None)
         if th:
             view._check_self_res_notifications(th, [])
