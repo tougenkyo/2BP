@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.495"
+APP_VER = "0.9.496"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4734,6 +4734,35 @@ _VIDEO_CACHE_DIR = Path(
 _VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def set_window_on_top(win, on: bool) -> bool:
+    """ウインドウを他のウインドウより前面に出す／やめる。
+
+    Windows では作り直さずに切り替える。Qt のウインドウフラグで切り替えると
+    ネイティブウインドウが作り直され、動画の再生が止まったり、中の WebEngine が
+    描き直しになって画像が一瞬消えたりするため。
+    Windows 以外・失敗時は Qt のフラグで切り替える。"""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            _HWND_TOPMOST, _HWND_NOTOPMOST = -1, -2
+            _SWP_NOSIZE, _SWP_NOMOVE, _SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+            if ctypes.windll.user32.SetWindowPos(
+                    int(win.winId()),
+                    _HWND_TOPMOST if on else _HWND_NOTOPMOST, 0, 0, 0, 0,
+                    _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE):
+                return True
+    except Exception:
+        pass
+    try:
+        _vis = win.isVisible()
+        win.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, bool(on))
+        if _vis:
+            win.show()
+        return True
+    except Exception:
+        return False
+
+
 class VideoPlayerWindow(QWidget):
     """QMediaPlayer を使ったネイティブ動画再生ウィンドウ。
     fetcher が渡された場合はキャッシュ確認後にダウンロードして再生
@@ -4837,6 +4866,14 @@ class VideoPlayerWindow(QWidget):
         vol.setStyleSheet(_ss)
         bl.addWidget(vol)
         self._vol_slider = vol
+
+        # ── 「前面」チェック（このウインドウをブラウザより前に出しておく）──
+        self._ontop_chk = QCheckBox("前面", bar)
+        self._ontop_chk.setToolTip("この動画ウインドウを他のウインドウより前面に出しておく")
+        self._ontop_chk.setChecked(
+            bool(getattr(self._settings, "video_window_on_top", False)))
+        self._ontop_chk.toggled.connect(self._on_ontop_toggled)
+        bl.addWidget(self._ontop_chk)
 
         # 保存先パネルの開閉ボタン
         self._panel_btn = QPushButton("💾", bar)
@@ -5155,6 +5192,22 @@ class VideoPlayerWindow(QWidget):
         QMessageBox.warning(self, "動画エラー",
                             f"再生できません:\n{error_string}\n\n"
                             "GStreamer 等のコーデックが不足している可能性があります。")
+
+    def _on_ontop_toggled(self, checked: bool):
+        """「前面」チェック → このウインドウの前面固定を切り替えて設定へ保存"""
+        if self._settings is not None:
+            try:
+                self._settings.video_window_on_top = bool(checked)
+                self._settings.save()
+            except Exception:
+                pass
+        set_window_on_top(self, bool(checked))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 表示のたびに当て直す（作り直された時も前面のままにする）
+        if getattr(self, "_ontop_chk", None) is not None:
+            set_window_on_top(self, self._ontop_chk.isChecked())
 
     def _on_video_volume_changed(self, v: int):
         """音量スライダー変更 → audio反映 + 設定へ保存（再起動後も維持）"""
@@ -14839,6 +14892,15 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._info_chk.setFixedWidth(52)
         self._info_chk.toggled.connect(self._on_info_chk_toggled)
         ctrl_lay.addWidget(self._info_chk)
+        # ── 「前面」チェックボックス（ウインドウで開いている時だけ出す）──
+        # 画像タブの時はウインドウではないので隠しておく（ImageWindow が出す）
+        self._ontop_win = None
+        self._ontop_chk = QCheckBox("前面")
+        self._ontop_chk.setToolTip("この画像ウインドウを他のウインドウより前面に出しておく")
+        self._ontop_chk.setFixedWidth(52)
+        self._ontop_chk.hide()
+        self._ontop_chk.toggled.connect(self._on_ontop_toggled)
+        ctrl_lay.addWidget(self._ontop_chk)
         lay.addWidget(ctrl)
 
         # ── WebEngine ビュー（画像・WebM 用）────────────────────────────
@@ -16805,6 +16867,30 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         else:
             self._res_overlay_widget.hide()
 
+    # ── 前面表示 ──────────────────────────────────────────────────────────
+
+    def enable_on_top_toggle(self, win):
+        """「前面」チェックを出して、入れ物のウインドウと結ぶ（ImageWindow から呼ぶ）"""
+        self._ontop_win = win
+        on = bool(getattr(self._settings_ref, "image_window_on_top", False)) \
+            if self._settings_ref is not None else False
+        self._ontop_chk.blockSignals(True)
+        self._ontop_chk.setChecked(on)
+        self._ontop_chk.blockSignals(False)
+        self._ontop_chk.show()
+
+    def _on_ontop_toggled(self, checked: bool):
+        """「前面」チェック → 入れ物のウインドウの前面固定を切り替えて設定へ保存"""
+        if self._settings_ref is not None:
+            try:
+                self._settings_ref.image_window_on_top = bool(checked)
+                self._settings_ref.save()
+            except Exception:
+                pass
+        win = getattr(self, "_ontop_win", None)
+        if win is not None:
+            set_window_on_top(win, bool(checked))
+
     def _css_board(self):
         """画像を開いた元のタブの板。ユーザーCSSをその板の設定から読むために使う
         （元のタブが無い＝最近開いた画像などから開いた時は None → 全体設定）"""
@@ -16870,6 +16956,11 @@ class ImageWindow(QMainWindow):
         self.setWindowTitle("画像")
         self._image_view = image_view
         self.setCentralWidget(image_view)
+        # 「前面」チェックはウインドウで開いた時だけ出す
+        try:
+            image_view.enable_on_top_toggle(self)
+        except Exception:
+            pass
         # ジオメトリ復元
         try:
             geo = getattr(settings, "image_window_geometry", None) if settings else None
@@ -16896,6 +16987,15 @@ class ImageWindow(QMainWindow):
 
     def moveEvent(self, event):
         super().moveEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 表示のたびに当て直す（閉じても壊さず隠して使い回すので、次に出した時も前面のまま）
+        try:
+            set_window_on_top(
+                self, bool(getattr(self._settings, "image_window_on_top", False)))
+        except Exception:
+            pass
 
     def changeEvent(self, event):
         super().changeEvent(event)

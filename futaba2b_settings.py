@@ -723,6 +723,8 @@ class AppSettings:
         self.new_res_mark_style: int       = 0       # 新着の目印 0=通常 1=控えめ 2=表示しない
         self.img_overlay_res: bool         = False   # 画像タブ「レス」オーバーレイ
         self.img_overlay_info: bool        = False   # 画像タブ「情報」オーバーレイ
+        self.image_window_on_top: bool     = False   # 画像ウインドウを他のウインドウより前面に
+        self.video_window_on_top: bool     = False   # 動画ウインドウを他のウインドウより前面に
         self.video_volume: int             = 80      # 動画音量 (0-100)
         self.video_save_panel_open: bool   = False   # 動画プレーヤーの保存先パネルを開いておく
         self.update_skip_css: bool         = True    # アップデート時にCSSを上書きしない
@@ -1237,6 +1239,7 @@ class AppSettings:
                 ("catalog_few_res_hide", False), ("catalog_few_res_count", 5), ("catalog_sort_type", 0),
                 ("catalog_sort_desc", False),
                 ("img_overlay_res", False), ("img_overlay_info", False),
+                ("image_window_on_top", False), ("video_window_on_top", False),
                 ("video_volume", 80), ("video_save_panel_open", False),
                 ("update_skip_css", True),
                 ("image_resize_use", True), ("image_resize_size", 200),
@@ -1444,6 +1447,8 @@ class AppSettings:
                         "app_config": self._dump_app_config(),
                         "img_overlay_res":  self.img_overlay_res,
                         "img_overlay_info": self.img_overlay_info,
+                        "image_window_on_top": self.image_window_on_top,
+                        "video_window_on_top": self.video_window_on_top,
                         "window_geometry": self.window_geometry,
                         "window_splitter": self.window_splitter,
                         "catalog_view_states": self.catalog_view_states,
@@ -1538,6 +1543,10 @@ class AppSettings:
             "catalog_read_mark", "catalog_image_size", "catalog_image_turn",
             "catalog_turn_enabled", "catalog_turn_count",
             "catalog_few_res_hide", "catalog_few_res_count", "catalog_sort_type", "catalog_sort_desc",
+            # 画像まわり。読み込みは app_config から行うので、ここに入れないと
+            # 保存しても起動のたびに既定へ戻る（レス・情報チェックが戻らなかった）
+            "img_overlay_res", "img_overlay_info",
+            "image_window_on_top", "video_window_on_top",
             "video_volume", "video_save_panel_open", "update_skip_css",
             "image_resize_use", "image_resize_size", "show_image_external",
             "disp_ikioi", "show_self_res_mark", "delete_key", "board_start_action", "url_count",
