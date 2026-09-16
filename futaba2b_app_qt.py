@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.499"
+APP_VER = "0.9.500"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -14966,20 +14966,25 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         )
         self._info_overlay.setFixedWidth(320)
         self._info_overlay.setFixedHeight(200)
-        # レス表示と同じ理由でネイティブの窓にする（動画の上に出すため）
-        self._info_overlay.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self._info_overlay.hide()
         self._info_overlay_visible = False
 
         # ── レスオーバーレイ（右上・WebEngineView・半透明） ──────────────
-        self._res_overlay_widget = QWidget(self)
+        # 画像ウインドウ（またはタブ）に付いていく、枠の無い小さな別ウインドウにする。
+        #  ・動画（QVideoWidget）はネイティブの窓で描くので、ふつうの子ウィジェットは
+        #    前に出しても覆われる（動画を再生するとレス表示が消えていた）
+        #  ・子をネイティブの窓にすると親まで巻き込まれて、画像が描けず黒くなる
+        # 別ウインドウなら、半透明のまま画像の上にも動画の上にも出せる。
+        # 押しても画像ウインドウから入力を奪わないようにしておく。
+        self._res_overlay_widget = QWidget(
+            self, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.NoDropShadowWindowHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus)
+        self._res_overlay_widget.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self._res_overlay_widget.setFixedWidth(self._RES_OV_W)
         self._res_overlay_widget.setFixedHeight(self._RES_OV_H)
         self._res_overlay_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        # 動画（QVideoWidget）はネイティブの窓で描くので、ふつうの子ウィジェットは
-        # 前に出しても覆われてしまう（動画を再生するとレス表示が消えていた）。
-        # こちらもネイティブの窓にすると、前に出した順で上に出せる。半透明も保てる。
-        self._res_overlay_widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        self._ov_host_win = None      # レス表示を付いていかせる親ウインドウ（表示時に決まる）
         res_ov_lay = QVBoxLayout(self._res_overlay_widget)
         res_ov_lay.setContentsMargins(0, 0, 0, 0)
         res_ov_profile = QWebEngineProfile(self)  # off-the-record
@@ -15136,6 +15141,52 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         #    再コンポジットされず黒画面のまま
         # の2要因で真っ黒になる。表示された瞬間に両方を修正する。
         QTimer.singleShot(0, self._refit_on_show)
+        # レス表示（別ウインドウ）を出し直し、親ウインドウの移動を見張る
+        self._watch_host_window()
+        QTimer.singleShot(0, self._sync_res_overlay)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        # タブを切り替えた・ウインドウを閉じた → 別ウインドウのレス表示も隠す
+        QTimer.singleShot(0, self._sync_res_overlay)
+
+    def _watch_host_window(self):
+        """親ウインドウの移動・大きさ・最小化・表示を見張る（レス表示を付いていかせる）"""
+        host = self.window()      # このビュー自身が一番外側の窓のこともある
+        if host is self._ov_host_win:
+            return
+        old = self._ov_host_win
+        if old is not None:
+            try:
+                old.removeEventFilter(self)
+            except RuntimeError:
+                pass
+        host.installEventFilter(self)
+        self._ov_host_win = host
+
+    def eventFilter(self, obj, ev):
+        if obj is self._ov_host_win and ev.type() in (
+                QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.WindowStateChange,
+                QEvent.Type.Show, QEvent.Type.Hide):
+            QTimer.singleShot(0, self._sync_res_overlay)
+        return super().eventFilter(obj, ev)
+
+    def _sync_res_overlay(self):
+        """レス表示（別ウインドウ）を、このビューが見えている間だけ出して位置を合わせる。
+        タブを切り替えた・画像ウインドウを閉じた・最小化した時は隠す。"""
+        try:
+            ov = self._res_overlay_widget
+            host = self.window()
+            want = bool(self._res_overlay_visible and self.isVisible()
+                        and not host.isMinimized())
+        except RuntimeError:
+            return
+        if want:
+            if not ov.isVisible():
+                ov.show()
+            self._reposition_overlays()
+        elif ov.isVisible():
+            ov.hide()
 
     def _refit_on_show(self):
         """表示時に再コンポジット強制＋フィット再適用（BGタブ初回表示の黒画面対策）"""
@@ -15281,8 +15332,11 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             self._info_overlay.move(self.width() - ow, self.height() - oh)
             self._info_overlay.raise_()
         if self._res_overlay_widget.isVisible():
+            # レス表示は別ウインドウなので、画面上の位置で合わせる
+            from PySide6.QtCore import QPoint
             rw = self._res_overlay_widget.width()
-            self._res_overlay_widget.move(self.width() - rw - 3, 75)
+            self._res_overlay_widget.move(
+                self.mapToGlobal(QPoint(self.width() - rw - 3, 75)))
             self._res_overlay_widget.raise_()
 
 
@@ -16583,7 +16637,12 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             self._view.deleteLater()
         except Exception:
             pass
-        # レスオーバーレイの WebEngine リソースを解放
+        # レスオーバーレイ（別ウインドウ）を隠して、WebEngine リソースを解放
+        try:
+            self._res_overlay_visible = False
+            self._res_overlay_widget.hide()
+        except Exception:
+            pass
         try:
             blank2 = QWebEnginePage(self)
             self._res_overlay_view.setPage(blank2)
@@ -16722,7 +16781,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         _info_on = self._info_chk.isChecked()
         if _res_on:
             self._res_overlay_visible = True
-            self._res_overlay_widget.show()
+            self._sync_res_overlay()     # 見えていなければ、表示された時に出す
             self._show_res_overlay()
         if _info_on:
             self._info_overlay_visible = True
@@ -16912,13 +16971,12 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             self._settings_ref.img_overlay_res = checked
             self._settings_ref.save()
         if checked:
-            self._res_overlay_widget.show()
-            self._reposition_overlays()
+            self._sync_res_overlay()
             self._show_res_overlay()
         else:
             self._res_overlay_expanded = False
             self._apply_res_overlay_height()
-            self._res_overlay_widget.hide()
+            self._sync_res_overlay()
 
     # ── 前面表示 ──────────────────────────────────────────────────────────
 
