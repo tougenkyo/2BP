@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.496"
+APP_VER = "0.9.497"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -14932,6 +14932,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         )
         self._info_overlay.setFixedWidth(320)
         self._info_overlay.setFixedHeight(200)
+        # レス表示と同じ理由でネイティブの窓にする（動画の上に出すため）
+        self._info_overlay.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self._info_overlay.hide()
         self._info_overlay_visible = False
 
@@ -14940,6 +14942,10 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._res_overlay_widget.setFixedWidth(500)
         self._res_overlay_widget.setFixedHeight(220)
         self._res_overlay_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # 動画（QVideoWidget）はネイティブの窓で描くので、ふつうの子ウィジェットは
+        # 前に出しても覆われてしまう（動画を再生するとレス表示が消えていた）。
+        # こちらもネイティブの窓にすると、前に出した順で上に出せる。半透明も保てる。
+        self._res_overlay_widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         res_ov_lay = QVBoxLayout(self._res_overlay_widget)
         res_ov_lay.setContentsMargins(0, 0, 0, 0)
         res_ov_profile = QWebEngineProfile(self)  # off-the-record
@@ -15254,6 +15260,9 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._mp_lbl.setText("⏳ ダウンロード中...")
         self._mp_lbl.show()
         self._mp_ctr.show()
+        # 動画の入れ物はレス表示より後に作るので、そのままだと上に来て覆ってしまう。
+        # 出すたびに、レス表示・情報表示を前に出し直す
+        self._reposition_overlays()
 
         cp = VideoPlayerWindow._cache_path(url)
         _mp_seq = self._media_seq   # 進捗バーのシーケンス（前へ/次へで古い進捗を破棄）
@@ -15376,6 +15385,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._mp_ctr.layout().insertWidget(0, self._mp_video_w, 1)
         self._mp_lbl.hide()
         self._mp_video_w.show()
+        self._reposition_overlays()   # 映像の窓を入れた後も、レス表示を前に出し直す
 
         print("[VID] step5: setVideoOutput", flush=True)
         self._mp_player.setVideoOutput(self._mp_video_w)
