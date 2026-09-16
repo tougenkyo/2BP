@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.497"
+APP_VER = "0.9.498"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -14768,6 +14768,18 @@ class AutoRefreshDialog(QDialog):
 _IMG_TAB_SAVE_MAX = 200
 
 
+def inject_popup_js(view, settings) -> None:
+    """引用ポップアップの仕組み（スレ本文のもの）を、別のビューにも入れる。
+
+    画像ウインドウのレス表示で引用元を見るために使う。JS はスレ本文と同じものを
+    共有する（同じ物が二つに分かれて、片方だけ直る状態を避ける）。
+    ThreadView._inject_popup_js はビュー・設定・ヒートマップしか使わないので、
+    その3つだけ持つ入れ物を渡す。"""
+    import types as _types
+    ThreadView._inject_popup_js(_types.SimpleNamespace(
+        _view=view, _settings=settings, _apply_heatmap=lambda: None))
+
+
 class ImageTabView(_MouseGestureMixin, QWidget):
     # 画像ページは QWebChannel を持たないため document.title 経由で通知する
     _MG_VIA_TITLE = True
@@ -14939,8 +14951,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
 
         # ── レスオーバーレイ（右上・WebEngineView・半透明） ──────────────
         self._res_overlay_widget = QWidget(self)
-        self._res_overlay_widget.setFixedWidth(500)
-        self._res_overlay_widget.setFixedHeight(220)
+        self._res_overlay_widget.setFixedWidth(self._RES_OV_W)
+        self._res_overlay_widget.setFixedHeight(self._RES_OV_H)
         self._res_overlay_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         # 動画（QVideoWidget）はネイティブの窓で描くので、ふつうの子ウィジェットは
         # 前に出しても覆われてしまう（動画を再生するとレス表示が消えていた）。
@@ -14959,6 +14971,13 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._res_overlay_view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._res_overlay_view.page().setBackgroundColor(Qt.GlobalColor.transparent)
         res_ov_lay.addWidget(self._res_overlay_view)
+        # 読み終わったらスレ本文と同じ引用ポップアップの仕組みを入れる。
+        # ページ側からは document.title で「ポップアップが出ている」を知らせてもらう
+        self._res_overlay_view.loadFinished.connect(self._on_res_overlay_loaded)
+        self._res_overlay_view.titleChanged.connect(self._on_res_overlay_title)
+        self._res_overlay_expanded = False   # 引用ポップアップ中で枠を広げているか
+        self._res_pool_key = None            # 隠して入れておくレス一式の作り直し判定
+        self._res_pool_cache = ""
         self._res_overlay_widget.hide()
         self._res_overlay_visible = False
 
@@ -16875,6 +16894,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             self._reposition_overlays()
             self._show_res_overlay()
         else:
+            self._res_overlay_expanded = False
+            self._apply_res_overlay_height()
             self._res_overlay_widget.hide()
 
     # ── 前面表示 ──────────────────────────────────────────────────────────
@@ -16907,6 +16928,78 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         src = getattr(self, "_src_thread_view", None)
         return getattr(src, "_board", None) if src is not None else None
 
+    # ── レス表示の枠（引用ポップアップの間だけ縦に広げる） ──────────────────
+    _RES_OV_W, _RES_OV_H, _RES_OV_H_MAX = 500, 220, 560
+    _RES_POOL_MAX = 400      # 引用元を辿るために隠して入れておくレスの数
+
+    # ページ側の見張り: 引用ポップアップの出入りを document.title で知らせ、
+    # ポップアップに出た画像だけ読みに行かせる（隠してあるレスの画像は読まない）
+    _RES_OV_WATCH_JS = (
+        "<script>(function(){"
+        "var last='';"
+        "function want(n){var t='_rp:'+n;if(t!==last){last=t;document.title=t;}}"
+        "function fix(n){if(n&&n.querySelectorAll)"
+        "n.querySelectorAll('img[data-src]').forEach(function(i){"
+        "i.src=i.getAttribute('data-src');i.removeAttribute('data-src');});}"
+        "new MutationObserver(function(ms){ms.forEach(function(m){"
+        "Array.prototype.forEach.call(m.addedNodes,fix);});"
+        "want(document.querySelectorAll('._rp').length?1:0);})"
+        ".observe(document.documentElement,{childList:true,subtree:true});"
+        "document.addEventListener('mouseover',function(e){var t=e.target;"
+        "if(t&&t.closest&&t.closest('span.qt,.quote-ind,._rp,a.no'))want(1);});"
+        "document.addEventListener('mouseout',function(){setTimeout(function(){"
+        "want(document.querySelectorAll('._rp').length?1:0);},250);});"
+        "want(0);})();</script>"
+    )
+
+    def _res_pool_html(self, thread, cur) -> str:
+        """引用ポップアップ用に、同じスレの他のレスを隠して入れておく中身を作る。
+
+        引用元は、番号引用も文章引用も、そのレスがページの中に居ないと辿れない。
+        長いスレを毎回まるごと入れると重いので、今のレスの前後 _RES_POOL_MAX 件までにする。
+        画像は src を data-src に逃がして読みに行かせない
+        （ポップアップに出た時だけ、上の見張りが読み込ませる）。"""
+        lst = list(getattr(thread, "res_list", []) or [])
+        idx = next((i for i, r in enumerate(lst) if r.no == cur.no), 0)
+        lo = max(0, idx - self._RES_POOL_MAX // 2)
+        hi = min(len(lst), lo + self._RES_POOL_MAX)
+        lo = max(0, hi - self._RES_POOL_MAX)
+        key = (getattr(thread, "no", 0), len(lst), lo, hi, cur.no)
+        if self._res_pool_key == key:
+            return self._res_pool_cache
+        parts = [render_res(r, r.is_op, []) for r in lst[lo:hi] if r.no != cur.no]
+        body = re.sub(r'(<img\b[^>]*?)\bsrc=', r'\1data-src=', "".join(parts))
+        html = f'<div id="_respool" style="display:none">{body}</div>'
+        self._res_pool_key, self._res_pool_cache = key, html
+        return html
+
+    def _on_res_overlay_loaded(self, ok: bool):
+        """レス表示のページを読み終えた → スレ本文と同じ引用ポップアップを効かせる"""
+        if not ok:
+            return
+        try:
+            inject_popup_js(self._res_overlay_view, self._settings_ref)
+        except Exception:
+            pass
+
+    def _on_res_overlay_title(self, title: str):
+        """ページ側の知らせ（_rp:件数）で、引用ポップアップ中だけ枠を広げる"""
+        t = str(title or "")
+        if not t.startswith("_rp:"):
+            return
+        self._res_overlay_expanded = t[4:].strip() not in ("", "0")
+        self._apply_res_overlay_height()
+
+    def _apply_res_overlay_height(self):
+        """引用ポップアップ中は枠を縦に広げる。
+        500x220 のままだとポップアップが枠に収まらず、切れて読めないため。"""
+        h = self._RES_OV_H
+        if getattr(self, "_res_overlay_expanded", False):
+            h = max(self._RES_OV_H, min(self._RES_OV_H_MAX, self.height() - 90))
+        if self._res_overlay_widget.height() != h:
+            self._res_overlay_widget.setFixedHeight(h)
+            self._reposition_overlays()
+
     def _show_res_overlay(self):
         """現在画像のレスをレスオーバーレイに表示"""
         if not self._res_overlay_visible:
@@ -16926,6 +17019,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             return
         try:
             res_html = render_res(res, res.is_op, [])
+            # 引用元を辿れるように、同じスレの他のレスも隠して入れておく
+            _pool = self._res_pool_html(thread, res)
             _ucss_o = (_load_board_user_css(getattr(src, "_board", None), self._settings_ref)
                        if self._settings_ref else "")
             _usr_o = f'<style>{_ucss_o}</style>' if _ucss_o else ''
@@ -16943,8 +17038,15 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                     f'function openThread(){{}} function openThreadBg(){{}} '
                     f'function quoteNo(){{}} function sodane(){{}} '
                     f'function ngRes(){{}} function delRes(){{}} '
+                    # レスのHTMLから呼ばれる残りも空で用意する。
+                    # 無いとサムネの読み込み失敗などで「◯◯ is not defined」になる
+                    f'function thumbFB(){{}} function openUrl(){{}} '
+                    f'function quoteComment(){{}} function quoteImg(){{}} '
+                    f'function quoteIdIp(){{}} function showIdExtraction(){{}} '
+                    f'function playVideoInline_footer(){{}} '
                     f'</script>'
-                    f'</head><body>{res_html}</body></html>')
+                    f'</head><body>{res_html}{_pool}'
+                    f'{self._RES_OV_WATCH_JS}</body></html>')
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html',
                                              encoding='utf-8', delete=False) as tf:
