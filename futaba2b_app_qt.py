@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.498"
+APP_VER = "0.9.499"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4734,25 +4734,47 @@ _VIDEO_CACHE_DIR = Path(
 _VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+_SET_WINDOW_POS = None
+
+
+def _win_set_window_pos():
+    """user32.SetWindowPos を引数の型を決めて用意する。
+
+    型を決めずに呼ぶと、64bit では HWND_TOPMOST(-1) が32bitの整数で渡って
+    別物になり、呼び出しが失敗していた（→ 作り直しの経路に落ち、
+    画像ウインドウが一瞬消えていた）。他と共有しないよう専用に読み込む。"""
+    global _SET_WINDOW_POS
+    if _SET_WINDOW_POS is None:
+        import ctypes
+        from ctypes import wintypes
+        f = ctypes.WinDLL("user32", use_last_error=True).SetWindowPos
+        f.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                      ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        f.restype = wintypes.BOOL
+        _SET_WINDOW_POS = f
+    return _SET_WINDOW_POS
+
+
 def set_window_on_top(win, on: bool) -> bool:
     """ウインドウを他のウインドウより前面に出す／やめる。
 
     Windows では作り直さずに切り替える。Qt のウインドウフラグで切り替えると
-    ネイティブウインドウが作り直され、動画の再生が止まったり、中の WebEngine が
-    描き直しになって画像が一瞬消えたりするため。
+    ネイティブウインドウが作り直され（一度隠れる）、画像ウインドウが一瞬消えたり、
+    動画の再生が止まったりするため。
     Windows 以外・失敗時は Qt のフラグで切り替える。"""
     try:
         if sys.platform == "win32":
-            import ctypes
+            from ctypes import wintypes
             _HWND_TOPMOST, _HWND_NOTOPMOST = -1, -2
             _SWP_NOSIZE, _SWP_NOMOVE, _SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
-            if ctypes.windll.user32.SetWindowPos(
-                    int(win.winId()),
-                    _HWND_TOPMOST if on else _HWND_NOTOPMOST, 0, 0, 0, 0,
-                    _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE):
+            if _win_set_window_pos()(
+                    wintypes.HWND(int(win.winId())),
+                    wintypes.HWND(_HWND_TOPMOST if on else _HWND_NOTOPMOST),
+                    0, 0, 0, 0, _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE):
                 return True
-    except Exception:
-        pass
+            print(f"[Window] 前面の切り替えに失敗 → Qtのフラグで切り替える")
+    except Exception as e:
+        print(f"[Window] 前面の切り替えに失敗: {e} → Qtのフラグで切り替える")
     try:
         _vis = win.isVisible()
         win.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, bool(on))
