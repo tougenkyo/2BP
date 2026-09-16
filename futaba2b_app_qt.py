@@ -90,7 +90,7 @@ from futaba2b_models   import (BoardInfo, BoardCategory, AutoRefreshEntry, Catal
 from futaba2b_network  import FutabaFetcher
 from futaba2b_settings import AppSettings, NgFilter
 from futaba2b_html     import (thread_to_html, catalog_to_html, render_res, search_to_html,
-                               THREAD_CSS, WEBCHANNEL_JS, is_ng_catalog_entry,
+                               THREAD_CSS, WEBCHANNEL_JS, QUOTE_IND_JS, is_ng_catalog_entry,
                                img_cache_root_js as _img_cache_root_js)
 from futaba2b_bridge   import ThreadBridge, CatalogBridge
 from futaba2b_const    import UA, ThemeManager as _TM
@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.500"
+APP_VER = "0.9.501"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -15005,6 +15005,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._res_overlay_expanded = False   # 引用ポップアップ中で枠を広げているか
         self._res_pool_key = None            # 隠して入れておくレス一式の作り直し判定
         self._res_pool_cache = ""
+        self._res_pool_thread = None         # 1件ずつの描画を使い回しているスレ
+        self._res_pool_parts: dict = {}      # (レスNo, 削除済みか) → 描画済みHTML
         self._res_overlay_widget.hide()
         self._res_overlay_visible = False
 
@@ -17010,7 +17012,9 @@ class ImageTabView(_MouseGestureMixin, QWidget):
 
     # ── レス表示の枠（引用ポップアップの間だけ縦に広げる） ──────────────────
     _RES_OV_W, _RES_OV_H, _RES_OV_H_MAX = 500, 220, 560
-    _RES_POOL_MAX = 400      # 引用元を辿るために隠して入れておくレスの数
+    # 引用元（前のレス）と ▼＝引用しているレス（後のレス）を辿るために、隠して入れておく
+    # レスの数。スレ全体を入れる（ふたばの上限は1000）。1件ずつの描画は使い回す
+    _RES_POOL_MAX = 1000
 
     # ページ側の見張り: 引用ポップアップの出入りを document.title で知らせ、
     # ポップアップに出た画像だけ読みに行かせる（隠してあるレスの画像は読まない）
@@ -17035,8 +17039,10 @@ class ImageTabView(_MouseGestureMixin, QWidget):
     def _res_pool_html(self, thread, cur) -> str:
         """引用ポップアップ用に、同じスレの他のレスを隠して入れておく中身を作る。
 
-        引用元は、番号引用も文章引用も、そのレスがページの中に居ないと辿れない。
-        長いスレを毎回まるごと入れると重いので、今のレスの前後 _RES_POOL_MAX 件までにする。
+        引用元（番号引用も文章引用も）も、▼（そのレスを引用しているレス）も、
+        相手のレスがページの中に居ないと辿れない。▼は後のレス、引用元は前のレスが
+        要るので、スレ全体（_RES_POOL_MAX 件まで）を入れる。
+        画像を送るたびに作り直すと重いので、1件ずつの描画をスレごとに使い回す。
         画像は src を data-src に逃がして読みに行かせない
         （ポップアップに出た時だけ、上の見張りが読み込ませる）。"""
         lst = list(getattr(thread, "res_list", []) or [])
@@ -17045,11 +17051,23 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         hi = min(len(lst), lo + self._RES_POOL_MAX)
         lo = max(0, hi - self._RES_POOL_MAX)
         key = (getattr(thread, "no", 0), len(lst), lo, hi, cur.no)
-        if self._res_pool_key == key:
+        if self._res_pool_key == key and self._res_pool_thread is thread:
             return self._res_pool_cache
-        parts = [render_res(r, r.is_op, []) for r in lst[lo:hi] if r.no != cur.no]
-        body = re.sub(r'(<img\b[^>]*?)\bsrc=', r'\1data-src=', "".join(parts))
-        html = f'<div id="_respool" style="display:none">{body}</div>'
+        if self._res_pool_thread is not thread:   # スレを読み直したら作り直す
+            self._res_pool_thread = thread
+            self._res_pool_parts = {}
+        parts = []
+        for r in lst[lo:hi]:
+            if r.no == cur.no:
+                continue
+            k = (r.no, bool(getattr(r, "is_deleted", False)))
+            h = self._res_pool_parts.get(k)
+            if h is None:
+                h = re.sub(r'(<img\b[^>]*?)\bsrc=', r'\1data-src=',
+                           render_res(r, r.is_op, []))
+                self._res_pool_parts[k] = h
+            parts.append(h)
+        html = f'<div id="_respool" style="display:none">{"".join(parts)}</div>'
         self._res_pool_key, self._res_pool_cache = key, html
         return html
 
@@ -17125,6 +17143,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                     f'function quoteIdIp(){{}} function showIdExtraction(){{}} '
                     f'function playVideoInline_footer(){{}} '
                     f'</script>'
+                    # 見出しの ▼（このレスを引用しているレス）。スレ本文と同じ作り
+                    f'<script>{QUOTE_IND_JS}</script>'
                     f'</head><body>{res_html}{_pool}'
                     f'{self._RES_OV_WATCH_JS}</body></html>')
             import tempfile

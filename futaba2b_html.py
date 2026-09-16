@@ -768,6 +768,151 @@ function showIdPopup(id, x, y, fromEl) { /* injected after load */ }
 function showOpPopup(x, y, fromEl) { /* injected after load */ }
 """
 
+# ── ▼ 被引用インジケータ（スレ本文と、画像ウインドウのレス表示で共有） ──────────
+# 各レスの見出しに ▼（そのレスを引用しているレスの数）を付ける。
+# WEBCHANNEL_JS の途中につないで使う（スレ本文のページの中身は変わらない）。
+QUOTE_IND_JS = """\
+/* ─ ▼ 被引用インジケータ: 引用されたレスの通し番号左に挿入 ─ */
+/* 引用マップ構築を関数化（画像モードのギャラリーセルからも再利用するため）。
+   quotedBy[no] = [引用者No のリスト] を返す。 */
+function _computeQuotedBy() {
+    var quotedBy = {};
+    // 事前計算: 各resの引用除去済みプレーンテキストとURL/ファイル名集を1回だけ作る。
+    // テキスト引用・画像名引用の探索でO(n^2)のDOM深クローン/再クエリを避ける。
+    var _allRes = Array.from(document.querySelectorAll('.res'));
+    var _info = _allRes.map(function(el) {
+        var im = (el.id || '').match(/^r(\\d+)$/);
+        var no = im ? parseInt(im[1]) : -1;
+        var plain = '';
+        var c0 = el.querySelector('.comment');
+        if (c0) {
+            var cl = c0.cloneNode(true);
+            cl.querySelectorAll('span.qt').forEach(function(s) { s.remove(); });
+            plain = (cl.textContent || '').toLowerCase();
+        }
+        var urls = '';
+        el.querySelectorAll('a[href], img[src]').forEach(function(a) {
+            urls += (a.getAttribute('href') || a.getAttribute('src') || '').toLowerCase() + ' ';
+        });
+        el.querySelectorAll('.ul-fname').forEach(function(s) {
+            urls += (s.textContent || '').toLowerCase() + ' ';
+        });
+        return { no: no, plain: plain, urls: urls };
+    });
+    var _idxByNo = {};
+    _info.forEach(function(o, i) { if (o.no >= 0) _idxByNo[o.no] = i; });
+    /* OP(0レス目)のレス番号。スレ画/スレあき の被引用集計に使う */
+    var _opEl = document.querySelector('.res.op');
+    var _opNo = _opEl ? parseInt((_opEl.id || '').slice(1)) : -1;
+    if (isNaN(_opNo)) _opNo = -1;
+    document.querySelectorAll('.res').forEach(function(el) {
+        var m = (el.id || '').match(/^r(\\d+)$/);
+        if (!m) return;
+        var myNo = parseInt(m[1]);
+        /* スレ画/スレあき → OP を引用扱い（OP自身は除く） */
+        if (_opNo >= 0 && myNo !== _opNo && el.querySelector('.comment span[data-op-ref]')) {
+            if (!quotedBy[_opNo]) quotedBy[_opNo] = [];
+            if (quotedBy[_opNo].indexOf(myNo) < 0) quotedBy[_opNo].push(myNo);
+        }
+        /* comment 内の #r{no} リンク */
+        el.querySelectorAll('.comment a[href^="#r"]').forEach(function(a) {
+            var m2 = (a.getAttribute('href') || '').match(/#r(\\d+)/);
+            if (!m2) return;
+            var tgt = parseInt(m2[1]);
+            if (!quotedBy[tgt]) quotedBy[tgt] = [];
+            if (quotedBy[tgt].indexOf(myNo) < 0) quotedBy[tgt].push(myNo);
+        });
+        /* span.qt で数字引用 + テキスト引用 */
+        el.querySelectorAll('.comment span.qt').forEach(function(sp) {
+            if (sp.querySelector('a')) return;
+            if (sp.dataset && sp.dataset.idRef) return;
+            var t = (sp.textContent || '').trim();
+            /* 数字引用: >数字 / >No.数字 */
+            var m3 = t.match(/^>+(No\\.)?(\\d+)\\s*$/);
+            if (m3) {
+                var tgt = parseInt(m3[2]);
+                if (!quotedBy[tgt]) quotedBy[tgt] = [];
+                if (quotedBy[tgt].indexOf(myNo) < 0) quotedBy[tgt].push(myNo);
+                return;
+            }
+            /* テキスト引用: 自分より前のレスの中で引用文を（引用行以外で）含む最近接1件のみ記録
+               （事前計算 _info[].plain を使い、DOM深クローンを排除） */
+            var q = t.replace(/^>+/, '').trim();
+            if (q.length < 2) return;
+            var ql = q.toLowerCase();
+            var selfIdx = _idxByNo[myNo];
+            if (selfIdx === undefined) selfIdx = _info.length;
+            var hit = null;
+            for (var ri = 0; ri < selfIdx; ri++) {
+                if (_info[ri].no < 0) continue;
+                if (_info[ri].plain.indexOf(ql) >= 0) hit = _info[ri].no;
+            }
+            if (hit !== null) {
+                if (!quotedBy[hit]) quotedBy[hit] = [];
+                if (quotedBy[hit].indexOf(myNo) < 0) quotedBy[hit].push(myNo);
+            }
+        });
+        /* 画像ファイル名引用: span.qt[data-img-ref] → 同名画像を持つ前方レスに ▼
+           （事前計算 _info[].urls を使用） */
+        el.querySelectorAll('.comment span.qt[data-img-ref]').forEach(function(sp) {
+            var fname = (sp.getAttribute('data-img-ref') || '').toLowerCase();
+            if (!fname) return;
+            for (var ri = 0; ri < _info.length; ri++) {
+                var o2 = _info[ri];
+                if (o2.no < 0 || o2.no >= myNo) continue;
+                if (o2.urls.indexOf(fname) >= 0) {
+                    if (!quotedBy[o2.no]) quotedBy[o2.no] = [];
+                    if (quotedBy[o2.no].indexOf(myNo) < 0) quotedBy[o2.no].push(myNo);
+                }
+            }
+        });
+    });
+    return quotedBy;
+}
+/* 自分のレスを引用しているレス（＝自分宛ての返信）に印を付ける。
+   自分のレス自身の青帯(self-res)が優先。引用関係は▼と同じ計算を使う。 */
+function _markRepliesToSelf(quotedBy) {
+    document.querySelectorAll('.res.to-self-res').forEach(function(el) {
+        el.classList.remove('to-self-res');
+    });
+    document.querySelectorAll('.res.self-res').forEach(function(me) {
+        var m = (me.id || '').match(/^r(\\d+)$/);
+        if (!m) return;
+        (quotedBy[parseInt(m[1])] || []).forEach(function(qno) {
+            var q = document.getElementById('r' + qno);
+            if (q && !q.classList.contains('self-res')) q.classList.add('to-self-res');
+        });
+    });
+}
+document.addEventListener('DOMContentLoaded', function() {
+    var quotedBy = _computeQuotedBy();
+    _markRepliesToSelf(quotedBy);
+    /* 全レスの .header 先頭に ▼(被引用あり) / …(被引用なし) を追加 (inject_popup_js でフックを後付け) */
+    document.querySelectorAll('.res').forEach(function(el) {
+        var m = (el.id || '').match(/^r(\\d+)$/);
+        if (!m) return;
+        var no = parseInt(m[1]);
+        var qs = quotedBy[no];
+        var header = el.querySelector('.header');
+        if (!header) return;
+        var btn = document.createElement('span');
+        if (qs && qs.length) {
+            btn.className = 'quote-ind';
+            btn.textContent = '▼';
+            btn.setAttribute('data-quoters', qs.join(','));
+            var cnt = document.createElement('span');
+            cnt.className = 'quote-ind-count';
+            cnt.textContent = qs.length;
+            btn.appendChild(cnt);
+        } else {
+            btn.className = 'quote-ind no-quote';
+            btn.textContent = '…';
+        }
+        header.insertBefore(btn, header.firstChild);
+    });
+});
+"""
+
 WEBCHANNEL_JS = """
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script>
@@ -1265,145 +1410,7 @@ function toggleDeleted() {
         if (link) link.textContent = '隠す';
     }
 }
-/* ─ ▼ 被引用インジケータ: 引用されたレスの通し番号左に挿入 ─ */
-/* 引用マップ構築を関数化（画像モードのギャラリーセルからも再利用するため）。
-   quotedBy[no] = [引用者No のリスト] を返す。 */
-function _computeQuotedBy() {
-    var quotedBy = {};
-    // 事前計算: 各resの引用除去済みプレーンテキストとURL/ファイル名集を1回だけ作る。
-    // テキスト引用・画像名引用の探索でO(n^2)のDOM深クローン/再クエリを避ける。
-    var _allRes = Array.from(document.querySelectorAll('.res'));
-    var _info = _allRes.map(function(el) {
-        var im = (el.id || '').match(/^r(\\d+)$/);
-        var no = im ? parseInt(im[1]) : -1;
-        var plain = '';
-        var c0 = el.querySelector('.comment');
-        if (c0) {
-            var cl = c0.cloneNode(true);
-            cl.querySelectorAll('span.qt').forEach(function(s) { s.remove(); });
-            plain = (cl.textContent || '').toLowerCase();
-        }
-        var urls = '';
-        el.querySelectorAll('a[href], img[src]').forEach(function(a) {
-            urls += (a.getAttribute('href') || a.getAttribute('src') || '').toLowerCase() + ' ';
-        });
-        el.querySelectorAll('.ul-fname').forEach(function(s) {
-            urls += (s.textContent || '').toLowerCase() + ' ';
-        });
-        return { no: no, plain: plain, urls: urls };
-    });
-    var _idxByNo = {};
-    _info.forEach(function(o, i) { if (o.no >= 0) _idxByNo[o.no] = i; });
-    /* OP(0レス目)のレス番号。スレ画/スレあき の被引用集計に使う */
-    var _opEl = document.querySelector('.res.op');
-    var _opNo = _opEl ? parseInt((_opEl.id || '').slice(1)) : -1;
-    if (isNaN(_opNo)) _opNo = -1;
-    document.querySelectorAll('.res').forEach(function(el) {
-        var m = (el.id || '').match(/^r(\\d+)$/);
-        if (!m) return;
-        var myNo = parseInt(m[1]);
-        /* スレ画/スレあき → OP を引用扱い（OP自身は除く） */
-        if (_opNo >= 0 && myNo !== _opNo && el.querySelector('.comment span[data-op-ref]')) {
-            if (!quotedBy[_opNo]) quotedBy[_opNo] = [];
-            if (quotedBy[_opNo].indexOf(myNo) < 0) quotedBy[_opNo].push(myNo);
-        }
-        /* comment 内の #r{no} リンク */
-        el.querySelectorAll('.comment a[href^="#r"]').forEach(function(a) {
-            var m2 = (a.getAttribute('href') || '').match(/#r(\\d+)/);
-            if (!m2) return;
-            var tgt = parseInt(m2[1]);
-            if (!quotedBy[tgt]) quotedBy[tgt] = [];
-            if (quotedBy[tgt].indexOf(myNo) < 0) quotedBy[tgt].push(myNo);
-        });
-        /* span.qt で数字引用 + テキスト引用 */
-        el.querySelectorAll('.comment span.qt').forEach(function(sp) {
-            if (sp.querySelector('a')) return;
-            if (sp.dataset && sp.dataset.idRef) return;
-            var t = (sp.textContent || '').trim();
-            /* 数字引用: >数字 / >No.数字 */
-            var m3 = t.match(/^>+(No\\.)?(\\d+)\\s*$/);
-            if (m3) {
-                var tgt = parseInt(m3[2]);
-                if (!quotedBy[tgt]) quotedBy[tgt] = [];
-                if (quotedBy[tgt].indexOf(myNo) < 0) quotedBy[tgt].push(myNo);
-                return;
-            }
-            /* テキスト引用: 自分より前のレスの中で引用文を（引用行以外で）含む最近接1件のみ記録
-               （事前計算 _info[].plain を使い、DOM深クローンを排除） */
-            var q = t.replace(/^>+/, '').trim();
-            if (q.length < 2) return;
-            var ql = q.toLowerCase();
-            var selfIdx = _idxByNo[myNo];
-            if (selfIdx === undefined) selfIdx = _info.length;
-            var hit = null;
-            for (var ri = 0; ri < selfIdx; ri++) {
-                if (_info[ri].no < 0) continue;
-                if (_info[ri].plain.indexOf(ql) >= 0) hit = _info[ri].no;
-            }
-            if (hit !== null) {
-                if (!quotedBy[hit]) quotedBy[hit] = [];
-                if (quotedBy[hit].indexOf(myNo) < 0) quotedBy[hit].push(myNo);
-            }
-        });
-        /* 画像ファイル名引用: span.qt[data-img-ref] → 同名画像を持つ前方レスに ▼
-           （事前計算 _info[].urls を使用） */
-        el.querySelectorAll('.comment span.qt[data-img-ref]').forEach(function(sp) {
-            var fname = (sp.getAttribute('data-img-ref') || '').toLowerCase();
-            if (!fname) return;
-            for (var ri = 0; ri < _info.length; ri++) {
-                var o2 = _info[ri];
-                if (o2.no < 0 || o2.no >= myNo) continue;
-                if (o2.urls.indexOf(fname) >= 0) {
-                    if (!quotedBy[o2.no]) quotedBy[o2.no] = [];
-                    if (quotedBy[o2.no].indexOf(myNo) < 0) quotedBy[o2.no].push(myNo);
-                }
-            }
-        });
-    });
-    return quotedBy;
-}
-/* 自分のレスを引用しているレス（＝自分宛ての返信）に印を付ける。
-   自分のレス自身の青帯(self-res)が優先。引用関係は▼と同じ計算を使う。 */
-function _markRepliesToSelf(quotedBy) {
-    document.querySelectorAll('.res.to-self-res').forEach(function(el) {
-        el.classList.remove('to-self-res');
-    });
-    document.querySelectorAll('.res.self-res').forEach(function(me) {
-        var m = (me.id || '').match(/^r(\\d+)$/);
-        if (!m) return;
-        (quotedBy[parseInt(m[1])] || []).forEach(function(qno) {
-            var q = document.getElementById('r' + qno);
-            if (q && !q.classList.contains('self-res')) q.classList.add('to-self-res');
-        });
-    });
-}
-document.addEventListener('DOMContentLoaded', function() {
-    var quotedBy = _computeQuotedBy();
-    _markRepliesToSelf(quotedBy);
-    /* 全レスの .header 先頭に ▼(被引用あり) / …(被引用なし) を追加 (inject_popup_js でフックを後付け) */
-    document.querySelectorAll('.res').forEach(function(el) {
-        var m = (el.id || '').match(/^r(\\d+)$/);
-        if (!m) return;
-        var no = parseInt(m[1]);
-        var qs = quotedBy[no];
-        var header = el.querySelector('.header');
-        if (!header) return;
-        var btn = document.createElement('span');
-        if (qs && qs.length) {
-            btn.className = 'quote-ind';
-            btn.textContent = '▼';
-            btn.setAttribute('data-quoters', qs.join(','));
-            var cnt = document.createElement('span');
-            cnt.className = 'quote-ind-count';
-            cnt.textContent = qs.length;
-            btn.appendChild(cnt);
-        } else {
-            btn.className = 'quote-ind no-quote';
-            btn.textContent = '…';
-        }
-        header.insertBefore(btn, header.firstChild);
-    });
-});
+""" + QUOTE_IND_JS + """\
 /* ─ レス抽出 ─ */
 function showExtraction(no) {
     var posts = [];
