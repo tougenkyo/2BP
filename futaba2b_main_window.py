@@ -2720,7 +2720,7 @@ class MainWindow(QMainWindow):
         """「最近閉じたタブ」サブメニューを動的構築（スレタブと板内検索タブ）。
 
         既定は、スレ落ち等で自動で閉じたスレも自分で閉じたタブと同じ段に、
-        閉じた順で並べる（自動で閉じたスレには（自閉じ）と付ける）。
+        閉じた順で並べる（自動で閉じたスレには（自動閉）と付ける）。
         設定で分けた時は、自動で閉じたスレをサブメニュー「自動で閉じたスレ」に
         まとめる。自分で閉じたタブとは別に件数を持つので、同じ段に並べると
         倍の長さになり、落ちたスレが続いた時に自分で閉じたタブが埋もれるため。"""
@@ -2769,12 +2769,12 @@ class MainWindow(QMainWindow):
 
     def _add_closed_entry_action(self, menu, entry, mark_auto: bool = False):
         """閉じたタブ1件ぶんの項目をメニューに足す。
-        mark_auto: 自動で閉じたスレに（自閉じ）と付ける（1つの段にまとめて並べる時）"""
+        mark_auto: 自動で閉じたスレに（自動閉）と付ける（1つの段にまとめて並べる時）"""
         board_url, board_name, thread_no, thread_url, label = entry[:5]
         bdn = self._board_display_name(board_name, board_url)
         text = f"{bdn} / {label}" if label else f"{bdn} / No.{thread_no}"
         if mark_auto:
-            text += "（自閉じ）"
+            text += "（自動閉）"
         act = menu.addAction(text)
         # インデックスではなくエントリ自体を渡す。メニュー表示中に自動
         # クローズ等でスタックが変化すると、控えた添字が別のスレを指す。

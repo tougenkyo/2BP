@@ -5708,7 +5708,7 @@ class AppSettingsDialog(QDialog):
         self._recent_closed_split_auto.setToolTip(
             "[ファイル]-[最近閉じたタブ] での出し方です。\n"
             "OFF（既定）… 自分で閉じたタブと一緒に閉じた順に並べ、\n"
-            "　自動で閉じたスレには（自閉じ）と付けます。\n"
+            "　自動で閉じたスレには（自動閉）と付けます。\n"
             "ON … 自動で閉じたスレを、先頭の「自動で閉じたスレ」にまとめます。\n"
             "「閉じたタブを開き直す」で開くのは、どちらでも自分で閉じたタブだけです。")
         clf2.addWidget(self._recent_closed_split_auto)

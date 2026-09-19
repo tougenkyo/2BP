@@ -579,7 +579,7 @@ class AppSettings:
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
         self.recent_closed_max: int = 30     # 最近閉じたタブの保持件数（自分で閉じた分・自動で閉じた分それぞれ）
         # 「最近閉じたタブ」で、自動で閉じたスレを別のサブメニューに分けるか。
-        # False（既定）＝自分で閉じたタブと同じ段に閉じた順で並べ、（自閉じ）と付ける
+        # False（既定）＝自分で閉じたタブと同じ段に閉じた順で並べ、（自動閉）と付ける
         self.recent_closed_split_auto: bool = False
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
         # スレッド履歴パネルの保持件数（全板の合計）。並び替え「履歴」の
