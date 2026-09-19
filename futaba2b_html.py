@@ -2013,6 +2013,9 @@ _YT_RE        = re.compile(r"(?:youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_\-
 _URL_SPLIT_RE = re.compile(r"(https?://[^\s\u3000\u3002\uff0c\uff01]+)")
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 _ID_STRIP_RE  = re.compile(r"\s*ID:\S+")
+# 日時欄に混ざるHTMLの注釈（ふたばはアニメGIFのレスに <!--AnimationGIF--> を入れる）。
+# 取り除かないとそのまま文字として出る（読み込み側でも取っているが、念のため）
+_DT_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 _EMAIL_IDIP_RE = re.compile(r'\s*(?:id|ip)\s*表示\s*', re.IGNORECASE)
 
 _IMG_QUOTE_RE = re.compile(
@@ -2208,7 +2211,8 @@ def video_placeholder_src(ext: str) -> str:
     return "data:image/svg+xml;charset=utf-8," + _q(video_placeholder_svg(ext), safe="")
 
 
-def _media_type_label(image_url: str, image_name: str, thumb_url: str) -> str:
+def _media_type_label(image_url: str, image_name: str, thumb_url: str,
+                      is_anime_gif: bool = False) -> str:
     """ファイル名右側に表示するメディアタイプラベル（太字赤字）を返す。
     mp4/webm → 'MP4'/'WEBM'、アニメーションGIF → 'GIF'、静止画GIF → ''"""
     lo = (image_url or "").lower().split('?')[0]
@@ -2217,12 +2221,15 @@ def _media_type_label(image_url: str, image_name: str, thumb_url: str) -> str:
         return '<b style="color:#cc0000;margin-left:4px;">MP4</b>'
     if lo.endswith('.webm') or lo_name.endswith('.webm'):
         return '<b style="color:#cc0000;margin-left:4px;">WEBM</b>'
-    # GIF: サムネイルURLが.gifで終わる場合はアニメーションGIFと判定
+    # GIF: ふたばの印（日時の後ろの <!--AnimationGIF-->）があればアニメーションGIF。
+    # 印が無い板・古いキャッシュのために、サムネイルURLが.gifの時もそう見なす。
+    # サムネイルがjpgに変換されているアニメGIFは、印でしか分からない（実際に
+    # may板のGIFはほぼjpgサムネで、印を見るまで「GIF」が出せていなかった）。
     if lo.endswith('.gif') or lo_name.endswith('.gif'):
         thumb_lo = (thumb_url or "").lower().split('?')[0]
-        if thumb_lo.endswith('.gif'):
+        if is_anime_gif or thumb_lo.endswith('.gif'):
             return '<b style="color:#cc0000;margin-left:4px;">GIF</b>'
-        # サムネイルがjpg変換済み（静止画GIF）→ ラベルなし
+        # 静止画GIF → ラベルなし
         return ''
     return ''
 
@@ -2393,7 +2400,8 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
     if res.image_url and res.image_name and img_tab_idx is not None:
         eu  = _e(res.image_url)
         sz_str = f"({res.file_size_bytes} B)" if res.file_size_bytes else ""
-        _mlabel = _media_type_label(res.image_url, res.image_name, res.thumb_url or "")
+        _mlabel = _media_type_label(res.image_url, res.image_name, res.thumb_url or "",
+                                    getattr(res, "is_anime_gif", False))
         if _is_video(res.image_url):
             _il = (f'<a class="fi-inline" href="{eu}"'
                    f' onclick="playVideoInline_footer(\'{eu}\');return false;">'
@@ -2459,7 +2467,7 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
         else:
             email_badge = ''
         name_block = email_badge
-    dt   = _e(_ID_STRIP_RE.sub("", res.datetime_str).strip())
+    dt   = _e(_DT_COMMENT_RE.sub("", _ID_STRIP_RE.sub("", res.datetime_str)).strip())
     sod  = _e(f"そうだねx{res.sodane}" if res.sodane > 0 else "+")
     exp  = f'<span class="expiry">&nbsp;{_e(res.expiry_str)}</span>' \
            if is_op and res.expiry_str else ""

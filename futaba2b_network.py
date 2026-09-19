@@ -126,6 +126,20 @@ IMAGE_CACHE_MAX  = 120                # メモリキャッシュ最大件数（�
 IMAGE_CACHE_MAX_BYTES = 48 * 1024 * 1024  # メモリキャッシュ最大バイト数（主・48MB）
 COOKIES_FILE   = Path("futaba2b_cookies.json")  # セッションクッキー永続化
 
+# ── 日時欄の <!--AnimationGIF--> ────────────────────────────────────────────
+# ふたばは、アニメーションGIFを貼ったレスの日時のすぐ後ろに
+# <!--AnimationGIF--> を入れる。HTMLでは注釈なので画面に出ないが、
+# JSON(mode=json)の now にはそのまま入っていて、自動更新で足したレスの
+# 日時に「<!--AnimationGIF-->」と出ていた。日時からは取り除き、
+# 「アニメGIFである」という情報だけ ResData.is_anime_gif に移す。
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+_ANIME_GIF_MARK = "AnimationGIF"
+
+
+def _clean_datetime_str(s: str) -> str:
+    """日時欄からHTMLの注釈（<!--AnimationGIF--> など）を取り除く"""
+    return _HTML_COMMENT_RE.sub("", str(s or "")).strip()
+
 
 def cleanup_image_cache(max_days: int = 7) -> tuple[int, int]:
     """画像キャッシュから max_days 日より古いファイルを削除する。
@@ -527,7 +541,7 @@ class FutabaFetcher:
             res.hits.append(SearchHit(
                 no=no,
                 resto=int(d.get("resto", 0) or 0),
-                datetime_str=str(d.get("now", "") or ""),
+                datetime_str=_clean_datetime_str(d.get("now", "")),
                 name=str(d.get("name", "") or ""),
                 email=str(d.get("email", "") or ""),
                 subject=str(d.get("sub", "") or ""),
@@ -551,8 +565,10 @@ class FutabaFetcher:
 
     # キャッシュのHTMLは「日時 → No. → （画像など）→ blockquote」の並びが
     # OPも返信も共通なので、これ1本でレスを切り出せる。
+    # 日時の後ろに <!--AnimationGIF--> が入る事がある（アニメGIFのレス）。
+    # これを見落とすとそのレスだけ切り出せず、検索に出てこなかった。
     _CACHE_RES_RE = re.compile(
-        r'<span class="cnw">(?P<dt>[^<]*)</span>\s*'
+        r'<span class="cnw">(?P<dt>[^<]*)(?:<!--.*?-->\s*)*</span>\s*'
         r'<span class="cno">No\.(?P<no>\d+)</span>'
         r'(?P<mid>.*?)'
         r'<blockquote[^>]*>(?P<com>.*?)</blockquote>', re.S)
@@ -628,7 +644,7 @@ class FutabaFetcher:
                 res.hits.append(SearchHit(
                     no=no,
                     resto=(0 if no == th_no else th_no),
-                    datetime_str=m.group("dt"),
+                    datetime_str=_clean_datetime_str(m.group("dt")),
                     subject=title,
                     comment_html=com,
                     comment_text=text,
@@ -2372,9 +2388,12 @@ class FutabaFetcher:
             # separator なしの get_text(strip=True) は各テキストを詰めて連結する
             # ため "…08:25:24ID:xxxx" となり、\bID: が境界なしでマッチせず
             # スレを立てた人のIDだけ取れなくなっていた。空白で連結する。
-            dts = cnw.get_text(separator=" ", strip=True)
+            dts = _clean_datetime_str(cnw.get_text(separator=" ", strip=True))
+            # アニメGIFの印は注釈なので get_text では取れない。span のHTMLで見る
+            is_anime_gif = _ANIME_GIF_MARK in str(cnw)
         else:
             dts = ""
+            is_anime_gif = False
 
         # csb（img板はcsbなし → 空文字、may板等はcsb取得）
         csb_ctx = thre if is_img_board else soup
@@ -2412,7 +2431,8 @@ class FutabaFetcher:
             comment_html=ch,comment_text=ct,image_url=iu,thumb_url=tu,
                     csb=csb_text,
             image_name=iname,image_size=isz,thumb_w=tw,thumb_h=th,sodane=sod,is_op=True,
-            res_idx=0,file_size_bytes=fsz,id_str=id_str,ip_str=ip_str)
+            res_idx=0,file_size_bytes=fsz,id_str=id_str,ip_str=ip_str,
+            is_anime_gif=is_anime_gif)
 
     def _parse_res_node(self, node, board) -> Optional[ResData]:
         cno=node.find("span",class_="cno")
@@ -2438,9 +2458,12 @@ class FutabaFetcher:
             if cnw_a and cnw_a.get("href","").startswith("mailto:"):
                 email = cnw_a.get("href","")[len("mailto:"):]
             # 日時とIDが別テキストに分かれるため空白で連結する（OPと同じ理由）
-            dts = cnw.get_text(separator=" ", strip=True)
+            dts = _clean_datetime_str(cnw.get_text(separator=" ", strip=True))
+            # アニメGIFの印は注釈なので get_text では取れない。span のHTMLで見る
+            is_anime_gif = _ANIME_GIF_MARK in str(cnw)
         else:
             dts = ""
+            is_anime_gif = False
         # csb（感情）を正しく取得。csbがない板（img板等）は空文字
         csb_el = node.find("span", class_="csb")
         csb_text = csb_el.get_text(strip=True) if csb_el else ""
@@ -2509,7 +2532,8 @@ class FutabaFetcher:
             comment_html=ch,comment_text=ct,image_url=iu,thumb_url=tu,
             image_name=iname,image_size=isz,thumb_w=tw,thumb_h=th,
             sodane=sod,is_op=False,is_deleted=isdel,
-            res_idx=res_idx,file_size_bytes=fsz,id_str=id_str,ip_str=ip_str,csb=csb_text)
+            res_idx=res_idx,file_size_bytes=fsz,id_str=id_str,ip_str=ip_str,csb=csb_text,
+            is_anime_gif=is_anime_gif)
 
 
 
@@ -2614,12 +2638,16 @@ class FutabaFetcher:
             iname = f"{tim}{ext}" if tim and ext else ""
 
             rsc = rd.get("rsc", 0)
+            # now にはHTMLと同じ <!--AnimationGIF--> が入っている事がある。
+            # そのまま渡すと日時の後ろに注釈の文字がそのまま出るので取り除く。
+            _now_raw = str(rd.get("now", "") or "")
             res = ResData(
                 no=rno,
                 name=rd.get("name", ""),
                 trip="",
                 email=rd.get("email", ""),
-                datetime_str=rd.get("now", ""),
+                datetime_str=_clean_datetime_str(_now_raw),
+                is_anime_gif=(_ANIME_GIF_MARK in _now_raw),
                 subject=rd.get("sub", ""),
                 comment_html=com_html,
                 comment_text=com_text_plain,
