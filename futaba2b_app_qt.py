@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.503"
+APP_VER = "0.9.504"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1934,6 +1934,54 @@ def _my_nos_for(settings, thread) -> set:
         return set()
     url = getattr(thread, "url", "") if thread else ""
     return set(getattr(settings, "my_post_nos", {}).get(url, []))
+
+
+# ── 返信通知の引用判定（_check_self_res_notifications で使う） ──────────────
+# 画像ファイル名・ID・レス番号の引用は別に判定するので、テキスト引用には入れない
+_QUOTE_IMG_RE = re.compile(r'\d{10,}\.(jpe?g|png|gif|webp|bmp|mp4|webm)$')
+_QUOTE_ID_RE = re.compile(r'ID:(\S+)$')
+_QUOTE_NO_RE = re.compile(r'>*(?:No\.)?\d+$')
+
+
+def _quote_hits_line(content: str, ln: str) -> bool:
+    """引用 content（先頭の > を1つ外した物）が、レスの1行 ln からの引用か。
+    完全一致（引用行 >X への >>X を含む）か、地の文（>で始まらない行）への部分一致"""
+    return content == ln or (not ln.startswith(">") and content in ln)
+
+
+def _text_quote_blocks(comment_text: str) -> list:
+    """本文の引用行を、続けて書かれたまとまりごとに分ける。
+    返す値は [[content, ...], ...]。content は先頭の > を1つ外した物で、
+    テキスト引用だけを入れる（画像ファイル名・ID・レス番号の引用行は、
+    まとまりを切らずに飛ばす）。引用でない行・空行でまとまりが切れる。"""
+    blocks, cur = [], []
+    for raw in (comment_text or "").splitlines():
+        s = raw.strip()
+        if s.startswith(">"):
+            c = s[1:].strip()
+            if (c and not _QUOTE_IMG_RE.match(c.lower())
+                    and not _QUOTE_ID_RE.match(c) and not _QUOTE_NO_RE.match(c)):
+                cur.append(c)
+            continue
+        if cur:
+            blocks.append(cur)
+            cur = []
+    if cur:
+        blocks.append(cur)
+    return blocks
+
+
+def _nearest_block_source(block: list, all_res_lines: list, before_no: int):
+    """引用のまとまりの行が、どれも同じ1つのレスの行に当たる時、そのレス番号
+    （before_no より前で、一番後の1件）。当たるレスが無ければ None。
+    all_res_lines は [(no, [行...]), ...] のレス番号昇順。"""
+    near = None
+    for no, lines in all_res_lines:
+        if no >= before_no:
+            break
+        if all(any(_quote_hits_line(c, ln) for ln in lines) for c in block):
+            near = no
+    return near
 
 
 def _is_pseudo_red_thread(thread, settings) -> bool:
@@ -9432,6 +9480,16 @@ class ThreadView(_MouseGestureMixin, QWidget):
                     for r2 in thread.res_list:
                         if r2.no in my_nos and r2.id_str:
                             my_ids.setdefault(r2.id_str, []).append(r2.no)
+                    # 続けて書かれた引用行は、ひとまとまり（1つのレスからの引用）として見る。
+                    #   例: No.100「>邪神クズやん／これでもまだ…」をまるごと引用した
+                    #   「>>邪神クズやん／>これでもまだ…」は No.100 宛て。1行ずつ見ると、
+                    #   同じ引用行 >邪神クズやん だけを書いた後の自分のレスに当たり、
+                    #   自分宛てと誤通知していた（▼ では自分のレスに数えていなかった）。
+                    _block_of = {}      # content -> その行のまとまり
+                    for _blk in _text_quote_blocks(ct):
+                        for _c in _blk:
+                            _block_of.setdefault(_c, _blk)
+                    _block_near = {}    # id(まとまり) -> 引用先（None=1つのレスに収まらない）
                     for font in soup.find_all("font", color="#789922"):
                         for _raw in font.get_text("\n").split("\n"):
                             q = _raw.strip()
@@ -9472,12 +9530,25 @@ class ThreadView(_MouseGestureMixin, QWidget):
                             # 含まれる語句が他人宛ての引用に部分一致して誤通知になる。
                             #   ・完全一致（引用行 >X への >>X 返信を含む）
                             #   ・地の文（>で始まらない行）は部分一致も許容（部分引用対策）
+                            # 2行以上のまとまりの行が、どれも同じ1つのレスの行に当たる時は、
+                            # まとまりごとそのレス宛て（当たるレスの中で直近の1件）。
+                            _blk = _block_of.get(content)
+                            if _blk is not None and len(_blk) >= 2:
+                                if id(_blk) not in _block_near:
+                                    _block_near[id(_blk)] = _nearest_block_source(
+                                        _blk, all_res_lines, r.no)
+                                _bn = _block_near[id(_blk)]
+                                if _bn is not None:
+                                    if _bn in my_nos:
+                                        hit_nos.add(_bn)
+                                    continue
+                            # 1行だけの引用・まとまりが1つのレスに収まらない時は、1行ずつ
                             _near = None
                             for no, lines in all_res_lines:
                                 if no >= r.no:
                                     break          # レス番号昇順なので以降は対象外
                                 for ln in lines:
-                                    if content == ln or (not ln.startswith(">") and content in ln):
+                                    if _quote_hits_line(content, ln):
                                         _near = no
                                         break
                             if _near is not None and _near in my_nos:
