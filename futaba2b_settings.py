@@ -578,6 +578,9 @@ class AppSettings:
         self.history_sort_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
         self.recent_closed_max: int = 30     # 最近閉じたタブの保持件数（自分で閉じた分・自動で閉じた分それぞれ）
+        # 「最近閉じたタブ」で、自動で閉じたスレを別のサブメニューに分けるか。
+        # False（既定）＝自分で閉じたタブと同じ段に閉じた順で並べ、（自閉じ）と付ける
+        self.recent_closed_split_auto: bool = False
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
         # スレッド履歴パネルの保持件数（全板の合計）。並び替え「履歴」の
         # カタログ表示もこの履歴を使う。
@@ -1123,6 +1126,7 @@ class AppSettings:
             self.history_sort_mode = max(0, min(2, int(raw.get("history_sort_mode", 0))))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
+            self.recent_closed_split_auto = bool(raw.get("recent_closed_split_auto", False))
             self.recent_images_max = min(100, max(1, int(raw.get("recent_images_max", 30))))
             self.thread_history_max = min(5000, max(100, int(raw.get("thread_history_max", 500))))
             self.history_pane_height = min(800, max(60, int(raw.get("history_pane_height", 120))))
@@ -1369,6 +1373,7 @@ class AppSettings:
                         "history_sort_mode":         self.history_sort_mode,
                         "catalog_show_email":    self.catalog_show_email,
                         "recent_closed_max": self.recent_closed_max,
+                        "recent_closed_split_auto": self.recent_closed_split_auto,
                         "recent_images_max": self.recent_images_max,
                         "thread_history_max": self.thread_history_max,
                         "history_pane_height": self.history_pane_height,

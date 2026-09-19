@@ -2692,9 +2692,14 @@ class MainWindow(QMainWindow):
         if idx < 0:
             if self._closed_tabs:
                 # 自動クローズ分しか残っていない → メニューから開ける旨を案内する
-                self._st_log.setText(
-                    "再オープンできるタブがありません"
-                    "（自動で閉じたスレは[ファイル]-[最近閉じたタブ]-[自動で閉じたスレ]から開けます）")
+                if getattr(self._settings, "recent_closed_split_auto", False):
+                    self._st_log.setText(
+                        "再オープンできるタブがありません"
+                        "（自動で閉じたスレは[ファイル]-[最近閉じたタブ]-[自動で閉じたスレ]から開けます）")
+                else:
+                    self._st_log.setText(
+                        "再オープンできるタブがありません"
+                        "（自動で閉じたスレは[ファイル]-[最近閉じたタブ]から開けます）")
             else:
                 self._st_log.setText("再オープンできるタブがありません")
             return
@@ -2714,14 +2719,23 @@ class MainWindow(QMainWindow):
     def _build_recent_closed_menu(self):
         """「最近閉じたタブ」サブメニューを動的構築（スレタブと板内検索タブ）。
 
-        スレ落ち等で自動で閉じたスレは、サブメニュー「自動で閉じたスレ」にまとめる。
-        自分で閉じたタブとは別に件数を持つので、同じ段に並べると倍の長さになり、
-        落ちたスレが続いた時に自分で閉じたタブが埋もれて探しにくい。"""
+        既定は、スレ落ち等で自動で閉じたスレも自分で閉じたタブと同じ段に、
+        閉じた順で並べる（自動で閉じたスレには（自閉じ）と付ける）。
+        設定で分けた時は、自動で閉じたスレをサブメニュー「自動で閉じたスレ」に
+        まとめる。自分で閉じたタブとは別に件数を持つので、同じ段に並べると
+        倍の長さになり、落ちたスレが続いた時に自分で閉じたタブが埋もれるため。"""
         menu = self._menu_recent_closed
         menu.clear()
         if not self._closed_tabs:
             a = menu.addAction("（なし）")
             a.setEnabled(False)
+            return
+        if not getattr(self._settings, "recent_closed_split_auto", False):
+            # 新しい順（末尾が最新）で表示
+            for entry in reversed(self._closed_tabs):
+                self._add_closed_entry_action(
+                    menu, entry, mark_auto=self._entry_auto_closed(entry))
+            self._add_clear_closed_action(menu)
             return
         manual = [e for e in self._closed_tabs if not self._entry_auto_closed(e)]
         auto   = [e for e in self._closed_tabs if self._entry_auto_closed(e)]
@@ -2744,16 +2758,23 @@ class MainWindow(QMainWindow):
         # 新しい順（末尾が最新）で表示
         for entry in reversed(manual):
             self._add_closed_entry_action(menu, entry)
+        self._add_clear_closed_action(menu)
+
+    def _add_clear_closed_action(self, menu):
+        """「最近閉じたタブ」の末尾に「すべてクリア」を足す（自動で閉じた分も消える）"""
         menu.addSeparator()
         menu.addAction("すべてクリア").triggered.connect(
             lambda: (self._closed_tabs.clear(),
                      self._st_log.setText("閉じたタブの履歴をクリアしました")))
 
-    def _add_closed_entry_action(self, menu, entry):
-        """閉じたタブ1件ぶんの項目をメニューに足す"""
+    def _add_closed_entry_action(self, menu, entry, mark_auto: bool = False):
+        """閉じたタブ1件ぶんの項目をメニューに足す。
+        mark_auto: 自動で閉じたスレに（自閉じ）と付ける（1つの段にまとめて並べる時）"""
         board_url, board_name, thread_no, thread_url, label = entry[:5]
         bdn = self._board_display_name(board_name, board_url)
         text = f"{bdn} / {label}" if label else f"{bdn} / No.{thread_no}"
+        if mark_auto:
+            text += "（自閉じ）"
         act = menu.addAction(text)
         # インデックスではなくエントリ自体を渡す。メニュー表示中に自動
         # クローズ等でスタックが変化すると、控えた添字が別のスレを指す。

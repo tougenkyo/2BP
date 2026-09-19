@@ -5703,6 +5703,15 @@ class AppSettingsDialog(QDialog):
             "（自動保存されるので内容は残ります）\n"
             "OFFにすると、上の設定だけに従います。")
         clf2.addWidget(self._auto_close_rev_ng)
+        self._recent_closed_split_auto = QCheckBox(
+            "自動で閉じたスレを「最近閉じたタブ」の中の別メニューに分ける")
+        self._recent_closed_split_auto.setToolTip(
+            "[ファイル]-[最近閉じたタブ] での出し方です。\n"
+            "OFF（既定）… 自分で閉じたタブと一緒に閉じた順に並べ、\n"
+            "　自動で閉じたスレには（自閉じ）と付けます。\n"
+            "ON … 自動で閉じたスレを、先頭の「自動で閉じたスレ」にまとめます。\n"
+            "「閉じたタブを開き直す」で開くのは、どちらでも自分で閉じたタブだけです。")
+        clf2.addWidget(self._recent_closed_split_auto)
         def _toggle_close(checked): self._auto_close_skip_pinned.setEnabled(checked or self._auto_close_full.isChecked())
         def _toggle_close_full(checked): self._auto_close_skip_pinned.setEnabled(checked or self._auto_close.isChecked())
         self._auto_close.toggled.connect(_toggle_close); _toggle_close(False)
@@ -5761,7 +5770,8 @@ class AppSettingsDialog(QDialog):
         self._recent_closed_max = _spin(1, 100, " 件", width=80,
             tip="「最近閉じたタブ」メニューの保持件数。\n"
                 "自分で閉じたタブと、スレ落ちなどで自動で閉じたスレを、\n"
-                "それぞれこの件数まで残します")
+                "それぞれこの件数まで残します\n"
+                "（1つにまとめて並べる時は、合わせて最大でこの倍の件数になります）")
         kpf.addRow("最近閉じたタブ:", self._recent_closed_max)
         self._recent_images_max = _spin(1, 100, " 件", width=80,
             tip="「最近開いた画像」メニューの保持件数")
@@ -6723,6 +6733,8 @@ class AppSettingsDialog(QDialog):
             getattr(s, "uploader_insert_to_comment", True))
         self._image_open_actual.setChecked(getattr(s, "image_open_actual_size", False))
         self._recent_closed_max.setValue(getattr(s, "recent_closed_max", 30))
+        self._recent_closed_split_auto.setChecked(
+            getattr(s, "recent_closed_split_auto", False))
         self._recent_images_max.setValue(getattr(s, "recent_images_max", 30))
         self._thread_history_max.setValue(getattr(s, "thread_history_max", 500))
         self._id_warn_count.setValue(getattr(s, "id_warn_count", 5))
@@ -6927,6 +6939,7 @@ class AppSettingsDialog(QDialog):
         s.uploader_insert_to_comment = self._uploader_insert.isChecked()
         s.image_open_actual_size  = self._image_open_actual.isChecked()
         s.recent_closed_max       = self._recent_closed_max.value()
+        s.recent_closed_split_auto = self._recent_closed_split_auto.isChecked()
         s.recent_images_max       = self._recent_images_max.value()
         s.thread_history_max      = self._thread_history_max.value()
         s.id_warn_count           = self._id_warn_count.value()
