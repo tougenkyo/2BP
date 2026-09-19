@@ -308,6 +308,9 @@ class MainWindow(QMainWindow):
              r.get("extra", {}) if isinstance(r.get("extra", {}), dict) else {})
             for r in getattr(self._settings, "recent_closed_list", [])
         ]
+        # 今の並べ方の件数に合わせる。1つにまとめる時は合わせて保持件数までなので、
+        # 種類ごとに数えていた頃（v0.9.502 まで）の分は、古い方が溢れる
+        self._trim_closed_tabs()
         # 最近開いた画像: [{url, name, board_name, board_url}, ...]
         # 過去バージョンで data:URI（MHTログの数MB base64）が記録されていると
         # settings.json が肥大化して全保存が遅くなるため、読み込み時に除去する
@@ -2556,7 +2559,8 @@ class MainWindow(QMainWindow):
             label = f"{label}（ログ）"
         if thread_no:
             # 自動クローズ（スレ落ち・1000レス到達）で閉じたものは印を付ける。
-            # メニューには残すが Ctrl+Shift+T の対象からは外す。
+            # メニューでは（自動閉）と付けるか、別のサブメニューに分ける。
+            # 分ける設定の時は Ctrl+Shift+T の対象からも外す。
             _auto = bool(getattr(view, "_auto_closed", False))
             self._closed_tabs.append(
                 (board.url, board.name, thread_no, thread_url, label, _auto,
@@ -2650,10 +2654,14 @@ class MainWindow(QMainWindow):
     def _trim_closed_tabs(self):
         """「最近閉じたタブ」を保持件数まで詰める。
 
-        自分で閉じたタブと、スレ落ち・逆NGなどで自動で閉じたスレは別々に数え、
-        それぞれ保持件数まで残す。溢れた分は同じ種類の古い方から捨てる。
-        落ちたスレが続いても自分で閉じたタブは押し出されず（Ctrl+Shift+T が
-        効かなくならない）、手で閉じ続けても自動で閉じたスレは押し出されない。
+        1つの一覧にまとめて並べる時（既定）は、種類を問わず合わせて保持件数まで
+        残し、溢れた分は古い方から捨てる（入れたばかりの分は必ず残る）。
+
+        自動で閉じたスレを別メニューに分ける時は、自分で閉じたタブと、
+        スレ落ち・逆NGなどで自動で閉じたスレを別々に数え、それぞれ保持件数まで
+        残す。溢れた分は同じ種類の古い方から捨てる。落ちたスレが続いても
+        自分で閉じたタブは押し出されず（Ctrl+Shift+T が効かなくならない）、
+        手で閉じ続けても自動で閉じたスレは押し出されない。
 
         以前は一つの枠を分け合い、溢れたら自動で閉じた分から捨てていた。
         それだと自分で閉じたタブで枠が埋まった後は、自動で閉じたスレを
@@ -2664,6 +2672,10 @@ class MainWindow(QMainWindow):
             _max = max(1, int(_max))
         except (TypeError, ValueError):
             _max = 30
+        if not getattr(self._settings, "recent_closed_split_auto", False):
+            if len(self._closed_tabs) > _max:
+                del self._closed_tabs[:len(self._closed_tabs) - _max]   # 先頭側＝古い方から
+            return
         for _auto in (False, True):
             _mine = [i for i, e in enumerate(self._closed_tabs)
                      if self._entry_auto_closed(e) == _auto]
@@ -2674,8 +2686,11 @@ class MainWindow(QMainWindow):
                                     if i not in _drop]
 
     def _reopen_closed_tab(self):
-        """Ctrl+Shift+T: 最後に「自分で閉じた」タブを再オープン。
-        スレ落ち等の自動クローズは対象外（メニューからは開ける）。"""
+        """Ctrl+Shift+T: 最後に閉じたタブを再オープン（「最近閉じたタブ」の一番上）。
+
+        1つの一覧にまとめて並べる時（既定）は、スレ落ち等で自動で閉じたスレ
+        （自動閉）も対象。自動で閉じたスレを別メニューに分ける時は、最後に
+        「自分で閉じた」タブだけが対象（自動で閉じた分はサブメニューから開ける）。"""
         # スレタブ1枚ごとに QWebEngineProfile を1つ作るため、キーリピートや
         # 連打で毎秒何十枚も生成されるとWebEngineのリソースが枯渇して落ちる。
         # 短時間の連続実行は捨てる（押し続けても一定間隔で1枚ずつ開く）。
@@ -2684,22 +2699,18 @@ class MainWindow(QMainWindow):
         if _now - getattr(self, "_last_reopen_at", 0.0) < 0.3:
             return
         self._last_reopen_at = _now
+        _split = getattr(self._settings, "recent_closed_split_auto", False)
         idx = -1
         for i in range(len(self._closed_tabs) - 1, -1, -1):
-            if not self._entry_auto_closed(self._closed_tabs[i]):
+            if not (_split and self._entry_auto_closed(self._closed_tabs[i])):
                 idx = i
                 break
         if idx < 0:
             if self._closed_tabs:
-                # 自動クローズ分しか残っていない → メニューから開ける旨を案内する
-                if getattr(self._settings, "recent_closed_split_auto", False):
-                    self._st_log.setText(
-                        "再オープンできるタブがありません"
-                        "（自動で閉じたスレは[ファイル]-[最近閉じたタブ]-[自動で閉じたスレ]から開けます）")
-                else:
-                    self._st_log.setText(
-                        "再オープンできるタブがありません"
-                        "（自動で閉じたスレは[ファイル]-[最近閉じたタブ]から開けます）")
+                # 分けている時に、自動クローズ分しか残っていない → メニューから開ける旨を案内する
+                self._st_log.setText(
+                    "再オープンできるタブがありません"
+                    "（自動で閉じたスレは[ファイル]-[最近閉じたタブ]-[自動で閉じたスレ]から開けます）")
             else:
                 self._st_log.setText("再オープンできるタブがありません")
             return
@@ -2722,8 +2733,8 @@ class MainWindow(QMainWindow):
         既定は、スレ落ち等で自動で閉じたスレも自分で閉じたタブと同じ段に、
         閉じた順で並べる（自動で閉じたスレには（自動閉）と付ける）。
         設定で分けた時は、自動で閉じたスレをサブメニュー「自動で閉じたスレ」に
-        まとめる。自分で閉じたタブとは別に件数を持つので、同じ段に並べると
-        倍の長さになり、落ちたスレが続いた時に自分で閉じたタブが埋もれるため。"""
+        まとめる（件数も種類ごとに持つので、落ちたスレが続いても
+        自分で閉じたタブが埋もれない）。件数の数え方は _trim_closed_tabs。"""
         menu = self._menu_recent_closed
         menu.clear()
         if not self._closed_tabs:
@@ -5646,7 +5657,7 @@ class MainWindow(QMainWindow):
         # 優先されるため、明示的に塗り直さないと色が変わらない）
         self._apply_statusbar_theme()
         # 最近閉じたタブ・最近開いた画像のリストを新しいmax件数でトリム
-        self._trim_closed_tabs()   # 自動クローズ分から先に捨てる
+        self._trim_closed_tabs()   # まとめる時は合わせて・分ける時は種類ごとに、古い方から捨てる
         _max_images = getattr(self._settings, "recent_images_max", 30)
         if len(self._recent_images) > _max_images:
             self._recent_images = self._recent_images[-_max_images:]

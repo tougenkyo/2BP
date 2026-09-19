@@ -577,9 +577,14 @@ class AppSettings:
         # 0 は古いスレを開き直すたびに最上部へ来るため、1/2 を選べるようにした。
         self.history_sort_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
-        self.recent_closed_max: int = 30     # 最近閉じたタブの保持件数（自分で閉じた分・自動で閉じた分それぞれ）
+        # 最近閉じたタブの保持件数（まとめて並べる時は合わせて・分ける時は
+        # 自分で閉じた分と自動で閉じた分それぞれ）
+        self.recent_closed_max: int = 30
         # 「最近閉じたタブ」で、自動で閉じたスレを別のサブメニューに分けるか。
-        # False（既定）＝自分で閉じたタブと同じ段に閉じた順で並べ、（自動閉）と付ける
+        # False（既定）＝自分で閉じたタブと同じ段に閉じた順で並べ、（自動閉）と付ける。
+        #   Ctrl+Shift+T も（自動閉）を開く
+        # True ＝先頭のサブメニュー「自動で閉じたスレ」に分ける。Ctrl+Shift+T は
+        #   自分で閉じたタブだけ
         self.recent_closed_split_auto: bool = False
         self.recent_images_max: int = 30     # 最近開いた画像の保持件数
         # スレッド履歴パネルの保持件数（全板の合計）。並び替え「履歴」の

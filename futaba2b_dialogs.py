@@ -5709,8 +5709,11 @@ class AppSettingsDialog(QDialog):
             "[ファイル]-[最近閉じたタブ] での出し方です。\n"
             "OFF（既定）… 自分で閉じたタブと一緒に閉じた順に並べ、\n"
             "　自動で閉じたスレには（自動閉）と付けます。\n"
+            "　残すのは合わせて保持件数まで。\n"
+            "　「閉じたタブを開き直す」は（自動閉）も開きます（一覧の一番上）。\n"
             "ON … 自動で閉じたスレを、先頭の「自動で閉じたスレ」にまとめます。\n"
-            "「閉じたタブを開き直す」で開くのは、どちらでも自分で閉じたタブだけです。")
+            "　残すのは自分で閉じたタブ・自動で閉じたスレ、それぞれ保持件数まで。\n"
+            "　「閉じたタブを開き直す」は自分で閉じたタブだけ開きます。")
         clf2.addWidget(self._recent_closed_split_auto)
         def _toggle_close(checked): self._auto_close_skip_pinned.setEnabled(checked or self._auto_close_full.isChecked())
         def _toggle_close_full(checked): self._auto_close_skip_pinned.setEnabled(checked or self._auto_close.isChecked())
@@ -5769,9 +5772,9 @@ class AppSettingsDialog(QDialog):
         g_keep = QGroupBox("保持件数"); f0.addWidget(g_keep); kpf = QFormLayout(g_keep)
         self._recent_closed_max = _spin(1, 100, " 件", width=80,
             tip="「最近閉じたタブ」メニューの保持件数。\n"
-                "自分で閉じたタブと、スレ落ちなどで自動で閉じたスレを、\n"
-                "それぞれこの件数まで残します\n"
-                "（1つにまとめて並べる時は、合わせて最大でこの倍の件数になります）")
+                "1つにまとめて並べる時（既定）は、自分で閉じたタブと、\n"
+                "スレ落ちなどで自動で閉じたスレを、合わせてこの件数まで残します。\n"
+                "自動で閉じたスレを別メニューに分ける時は、それぞれこの件数まで残します")
         kpf.addRow("最近閉じたタブ:", self._recent_closed_max)
         self._recent_images_max = _spin(1, 100, " 件", width=80,
             tip="「最近開いた画像」メニューの保持件数")
