@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.508"
+APP_VER = "0.9.509"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -635,6 +635,11 @@ class WrapTabBar(QTabBar):
         # 出している間は、タブウィジェットに高さを伝えない（伝えると、その分の
         # 空きがタブの中に残って隙間になる）。外での高さは固定値で与える。
         self._detached = False
+        # 外に出している間の、板のレイアウトが決めた置き場所。
+        # タブウィジェットは外へ出した後もタブバーを自分の中へ置こうとするので、
+        # 横取りされたらここへ戻す（_keep_detached_geometry）。
+        self._detached_geom = None
+        self._fixing_geom = False
         # 多段タブの段の並び順（今画面に出ている順。値はタブ番号順に組んだ段の番号）。
         # これを覚えずに毎回タブ番号順から組み直していたため、画面の並びと関係の
         # 無い位置へ段が飛び、段どうしが入れ替わったように見えていた。
@@ -887,14 +892,52 @@ class WrapTabBar(QTabBar):
             return
         self.setFixedHeight(max(1, getattr(self, "_cached_rows", 1)) * self._ROW_H)
 
+    def _keep_detached_geometry(self):
+        """外に出している間、横取りされた置き場所を元へ戻す。
+
+        タブウィジェットは、タブバーを外へ出した後も「自分の中のタブの場所」へ
+        置こうとする（中の並びを組み直すたびに setGeometry する）。親は板なので
+        タブの座標がそのまま板の座標として使われ、タブバーが左上へ飛んで幅も
+        タブ側の幅になる。板のレイアウトが戻すまでその姿で描かれるため、
+        タブを切り替えるたびにタブがちらついて見えた。
+        板のレイアウトが決めた置き場所を覚えておき、違う所へ置かれたら
+        同じ呼び出しの中で戻す（戻してから描かれるので、ちらつかない）。"""
+        if not getattr(self, "_detached", False) or getattr(self, "_fixing_geom", False):
+            return
+        p = self.parentWidget()
+        lay = p.layout() if p is not None else None
+        if lay is None:
+            return
+        try:
+            cr = lay.contentsRect()
+            if self.x() == cr.x() and self.width() == cr.width() and self.y() > cr.y():
+                self._detached_geom = QRect(self.geometry())   # 板が決めた置き場所
+                return
+            g = self._detached_geom
+            if g is None:
+                return
+            self._fixing_geom = True
+            try:
+                self.setGeometry(g)
+            finally:
+                self._fixing_geom = False
+        except RuntimeError:
+            pass
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._keep_detached_geometry()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        rows = len(self._layout(event.size().width())) or 1
+        # 数え直しは「今の幅」で見る。横取りを戻した後は、届いた大きさの方が古い
+        rows = len(self._layout()) or 1
         if rows != getattr(self, "_cached_rows", 1):
             self._cached_rows = rows
             self.updateGeometry()
             self._apply_detached_height()
         self.update()
+        self._keep_detached_geometry()
 
     def showEvent(self, event):
         """隠れている間の描き直し要求は捨てられる。板を切り替えて戻った時
@@ -4109,12 +4152,20 @@ class BoardPane(QWidget):
             else:
                 if bar.parent() is self._tabs:
                     return
+                # 先に、戻った後の幅（板の幅いっぱい）にしてからタブへ入れる。
+                # 狭いままのタブへ入れると、その幅で段数を数えてしまい
+                # （40枚なら10段）いったんその高さで組まれてから、正しい段数で
+                # もう一度組み直される。スレの表示が2回動くので、ブラウザ部分が
+                # ちらついて見えた。
+                self.layout().removeWidget(bar)   # 板のレイアウトから外す
                 bar.set_detached(False)
+                self.layout().activate()          # タブ側を板の幅いっぱいにする
                 bar.setParent(self._tabs)
-                # タブウィジェットに中の並びを作り直させる（タブの位置を
-                # 変えた時に作り直すので、往復させて促す）
-                self._tabs.setTabPosition(QTabWidget.TabPosition.South)
-                self._tabs.setTabPosition(QTabWidget.TabPosition.North)
+                bar.show()   # 隠れたまま数えさせると高さ0で組まれる
+                # タブウィジェットに中の並びを作り直させる。
+                # 以前はタブの位置を South→North と往復させて促していたが、
+                # 往復のたびに中身が上下に動き、これもちらつきの元だった
+                QApplication.sendEvent(self._tabs, QEvent(QEvent.Type.LayoutRequest))
             bar.show()
         except RuntimeError:
             pass
@@ -4138,7 +4189,23 @@ class BoardPane(QWidget):
         QTimer.singleShot(0, _show)
 
     def apply_split_mode(self, mode: str):
-        """左右分割の切り替え。
+        """左右分割の切り替え。切り替えの途中は描かせない（ちらつき防止）。
+
+        中身の入れ替え・置き直しは何度かに分かれて起きる。その途中を描くと、
+        スレの表示が一瞬別の大きさ・場所で見えてちらつく。まとめて止めて、
+        終わってから一度だけ描く。"""
+        self.setUpdatesEnabled(False)
+        try:
+            self._apply_split_mode(mode)
+        finally:
+            try:
+                self.layout().activate()
+            except RuntimeError:
+                pass
+            self.setUpdatesEnabled(True)
+
+    def _apply_split_mode(self, mode: str):
+        """左右分割の切り替え（中身）。
         mode: ""=分けない（カタログはタブに戻す）/ "cat_left"=左にカタログ /
               "cat_right"=右にカタログ。カタログがまだ無い板では、
         作られた時に MainWindow が呼び直す。"""
@@ -4162,6 +4229,13 @@ class BoardPane(QWidget):
                 except RuntimeError:
                     pass
             self._cat_host.hide()
+            # 分割線（つまみ）をすぐ片付けさせる。放っておくと、つまみの分
+            # （5px）だけ狭いまま一度組まれ、少し経ってから広がる。その分
+            # スレの表示がもう一度作り直されるので、ちらつきの元になる
+            try:
+                self._split.refresh()
+            except (RuntimeError, AttributeError):
+                pass
             self._split_mode = ""
             self._cat_focused = False
             self._move_tab_bar(False)
@@ -4186,6 +4260,10 @@ class BoardPane(QWidget):
             self._repaint_split_cat()
         if self._split_cat is not None:
             self._cat_host.show()
+        try:
+            self._split.refresh()       # 分割線（つまみ）をすぐ出させる
+        except (RuntimeError, AttributeError):
+            pass
         self._move_tab_bar(True)
         self._apply_split_sizes()
         self._update_tab_stack_page()
