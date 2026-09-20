@@ -577,6 +577,11 @@ class AppSettings:
         # 0 は古いスレを開き直すたびに最上部へ来るため、1/2 を選べるようにした。
         self.history_sort_mode: int = 0
         self.catalog_show_email:    bool = False  # カタログのメール欄バッジ表示
+        # 板の中を左右に分ける表示（カタログとスレを並べる）。
+        # "" = 分けない / "cat_left" = 左にカタログ / "cat_right" = 右にカタログ
+        self.board_split_mode: str = ""
+        # 分割線の位置 [カタログ側の幅, タブ側の幅]（空なら半々）
+        self.board_split_sizes: list = []
         # 最近閉じたタブの保持件数（まとめて並べる時は合わせて・分ける時は
         # 自分で閉じた分と自動で閉じた分それぞれ）
         self.recent_closed_max: int = 30
@@ -1130,6 +1135,13 @@ class AppSettings:
             self.history_self_mode = int(raw.get("history_self_mode", 0))
             self.history_sort_mode = max(0, min(2, int(raw.get("history_sort_mode", 0))))
             self.catalog_show_email    = bool(raw.get("catalog_show_email",    False))
+            _bsm = str(raw.get("board_split_mode", "") or "")
+            self.board_split_mode = _bsm if _bsm in ("cat_left", "cat_right") else ""
+            _bss = raw.get("board_split_sizes", [])
+            self.board_split_sizes = (
+                [int(_bss[0]), int(_bss[1])]
+                if isinstance(_bss, list) and len(_bss) == 2
+                and all(str(x).lstrip("-").isdigit() for x in _bss) else [])
             self.recent_closed_max = min(100, max(1, int(raw.get("recent_closed_max", 30))))
             self.recent_closed_split_auto = bool(raw.get("recent_closed_split_auto", False))
             self.recent_images_max = min(100, max(1, int(raw.get("recent_images_max", 30))))
@@ -1377,6 +1389,8 @@ class AppSettings:
                         "history_self_mode":         self.history_self_mode,
                         "history_sort_mode":         self.history_sort_mode,
                         "catalog_show_email":    self.catalog_show_email,
+                        "board_split_mode":  self.board_split_mode,
+                        "board_split_sizes": self.board_split_sizes,
                         "recent_closed_max": self.recent_closed_max,
                         "recent_closed_split_auto": self.recent_closed_split_auto,
                         "recent_images_max": self.recent_images_max,

@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.505"
+APP_VER = "0.9.506"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -3794,14 +3794,47 @@ class BoardPane(QWidget):
         self._no_tab_widget.hide()
 
         # _tabs と _no_tab_widget を QStackedWidget で管理
+        # 左右に分けている時のプレースホルダ（カタログは横に出ているので、
+        # 「カタログを開く」ではなく、スレを開くよう案内する）
+        self._split_hint_widget = QWidget()
+        _shw_lay = QVBoxLayout(self._split_hint_widget)
+        _shw_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        _shw_lbl = QLabel("カタログからスレを開くと、ここに出ます")
+        _shw_lbl.setStyleSheet(f"color:{_TM.ui('text_secondary', '#888')};")
+        _shw_lay.addWidget(_shw_lbl)
+        self._split_hint_widget.hide()
+
         self._tab_stack = QStackedWidget()
         self._tab_stack.addWidget(self._tabs)          # index 0
         self._tab_stack.addWidget(self._no_tab_widget) # index 1
+        self._tab_stack.addWidget(self._split_hint_widget)  # index 2（左右に分けている時）
         # 作りたてはタブが0枚。空のタブウィジェットを出すと真っ黒な板になり
         # 手がかりが何も無いので、最初から「カタログを開く」を見せておく。
         # （復元の途中や、板だけ開いてタブが1枚も戻らなかった時に出る）
         self._tab_stack.setCurrentIndex(1)
-        lay.addWidget(self._tab_stack)
+
+        # ── 左右分割（カタログを横に出す）────────────────────────────────
+        # カタログのウィジェットをタブから外してこちら側へ移す。境目は
+        # ドラッグで動かせる。分けていない時は左側を隠しておく（見た目も
+        # 今までと同じ）。実際の出し入れは apply_split_mode で行う。
+        self._cat_host = QWidget()
+        _ch_lay = QVBoxLayout(self._cat_host)
+        _ch_lay.setContentsMargins(0, 0, 0, 0)
+        _ch_lay.setSpacing(0)
+        self._cat_host.hide()
+        self._split = QSplitter(Qt.Orientation.Horizontal)
+        self._split.setChildrenCollapsible(False)   # 端まで寄せても潰れない
+        self._split.addWidget(self._cat_host)
+        self._split.addWidget(self._tab_stack)
+        self._split.splitterMoved.connect(self._on_split_moved)
+        self._split_cat = None      # 分割側へ出しているカタログ（None=出していない）
+        self._split_mode = ""       # "" / "cat_left" / "cat_right"
+        self._cat_focused = False   # 最後に触ったのがカタログ側か
+        lay.addWidget(self._split)
+        try:
+            QApplication.instance().focusChanged.connect(self._on_focus_changed)
+        except Exception:
+            pass
 
         # 自動更新タイマー
         self._auto_interval = 0
@@ -3928,6 +3961,159 @@ class BoardPane(QWidget):
     def setTabIcon(self, i, ic):   self._wrap_bar.setTabIcon(i, ic)
     def tabBar(self):              return self._wrap_bar
 
+    # ── 左右分割（カタログを横に出す）────────────────────────────────────────
+    def catalog_view(self):
+        """この板のカタログ。左右に分けて横に出している時も返す（無ければ None）"""
+        c = self._split_cat
+        if c is not None:
+            try:
+                from shiboken6 import isValid as _iv
+                if not _iv(c):
+                    self._split_cat = c = None
+            except Exception:
+                pass
+        if c is not None:
+            return c
+        for i in range(self._tabs.count()):
+            w = self._tabs.widget(i)
+            if isinstance(w, CatalogView):
+                return w
+        return None
+
+    def active_view(self):
+        """ツールバー（更新・中止・自動更新・移動）の操作先。
+        左右に分けている時は、最後に触った側（カタログ or タブ）に効かせる。"""
+        if self._split_cat is not None and self._cat_focused:
+            return self._split_cat
+        return self._tabs.currentWidget()
+
+    def _on_focus_changed(self, _old, new):
+        """カタログ側とタブ側、どちらを最後に触ったかを覚える（操作先の判定用）"""
+        if self._split_cat is None or new is None:
+            return
+        try:
+            if self._cat_host.isAncestorOf(new):
+                self._cat_focused = True
+            elif self._tab_stack.isAncestorOf(new):
+                self._cat_focused = False
+        except RuntimeError:
+            pass
+
+    def _update_tab_stack_page(self):
+        """タブが1枚も無い時に何を出すか。
+        分けていない時は「カタログを開く」、分けている時はカタログが横にあるので案内文。"""
+        try:
+            if self._tabs.count() > 0:
+                self._tab_stack.setCurrentIndex(0)
+            elif self._split_mode:
+                self._tab_stack.setCurrentIndex(2)
+            else:
+                self._tab_stack.setCurrentIndex(1)
+        except RuntimeError:
+            pass
+
+    def _split_sizes_setting(self) -> list:
+        """覚えている分割の幅 [カタログ側, タブ側]（無ければ半々）"""
+        s = list(getattr(self._settings, "board_split_sizes", []) or [])
+        if len(s) == 2:
+            try:
+                s = [int(s[0]), int(s[1])]
+            except (TypeError, ValueError):
+                s = []
+        else:
+            s = []
+        if not s or min(s) <= 0:
+            w = max(self.width(), 800)
+            s = [w // 2, w - w // 2]
+        return s
+
+    def _apply_split_sizes(self):
+        s = self._split_sizes_setting()
+        if self._split.indexOf(self._cat_host) != 0:
+            s = [s[1], s[0]]        # カタログが右の時は入れ替えて渡す
+        try:
+            self._split.setSizes(s)
+        except (RuntimeError, TypeError):
+            pass
+
+    def _on_split_moved(self, *_):
+        """分割線を動かしたら幅を覚える（他の板・次の起動でも同じ幅にする）"""
+        if not self._split_mode:
+            return
+        try:
+            s = [int(x) for x in self._split.sizes()]
+            if self._split.indexOf(self._cat_host) != 0:
+                s = [s[1], s[0]]    # 覚えるのは [カタログ側, タブ側] の順
+            if len(s) == 2 and min(s) > 0:
+                self._settings.board_split_sizes = s
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
+    def _repaint_split_cat(self):
+        """付け替えた直後のカタログを描き直す。
+        入れ物を移すと中身が描かれない（黒いまま）。サイズを動かすだけでは戻らず、
+        一度隠して出すと描き直される（実機で確かめた）。"""
+        c = self._split_cat
+        if c is None:
+            return
+        try:
+            c.hide()
+        except RuntimeError:
+            return
+        def _show(_c=c):
+            try:
+                _c.show()
+            except RuntimeError:
+                pass
+        QTimer.singleShot(0, _show)
+
+    def apply_split_mode(self, mode: str):
+        """左右分割の切り替え。
+        mode: ""=分けない（カタログはタブに戻す）/ "cat_left"=左にカタログ /
+              "cat_right"=右にカタログ。カタログがまだ無い板では、
+        作られた時に MainWindow が呼び直す。"""
+        mode = mode if mode in ("cat_left", "cat_right") else ""
+        if not mode:
+            cat, self._split_cat = self._split_cat, None
+            if cat is not None:
+                try:
+                    self._cat_host.layout().removeWidget(cat)
+                    self._tabs.insertTab(0, cat, "カタログ")
+                    if self._main is not None:
+                        _ico = self._main._catalog_icon()
+                        if _ico is not None and not _ico.isNull():
+                            self._tabs.setTabIcon(0, _ico)
+                    cat.hide()
+                    QTimer.singleShot(0, cat.show)
+                except RuntimeError:
+                    pass
+            self._cat_host.hide()
+            self._split_mode = ""
+            self._cat_focused = False
+            self._update_tab_stack_page()
+            return
+
+        cat = self.catalog_view()
+        self._split_mode = mode
+        if cat is not None and self._split_cat is None:
+            # カタログをタブから外して横の枠へ移す
+            _idx = self._tabs.indexOf(cat)
+            if _idx >= 0:
+                self._tabs.removeTab(_idx)
+            self._cat_host.layout().addWidget(cat)
+            self._split_cat = cat
+            self._cat_host.show()
+            self._repaint_split_cat()
+        # 左右の並び
+        _want_left = (mode == "cat_left")
+        if (self._split.indexOf(self._cat_host) == 0) != _want_left:
+            self._split.insertWidget(0 if _want_left else 1, self._cat_host)
+            self._repaint_split_cat()
+        if self._split_cat is not None:
+            self._cat_host.show()
+        self._apply_split_sizes()
+        self._update_tab_stack_page()
+
     def _on_close_tab(self, idx: int):
         # 中クリック連打対策: 閉じた直後はタブバーの再配置と次のクリックが競合し、
         # 既に存在しないインデックスや破棄処理中のビューが渡ることがある。
@@ -3972,7 +4158,7 @@ class BoardPane(QWidget):
         ]
 
         if self._tabs.count() == 0:
-            self._tab_stack.setCurrentIndex(1)  # カタログを開くボタン表示
+            self._update_tab_stack_page()   # 「カタログを開く」/ 分割中の案内
             self._title_lbl.setFullText("")
             return
 
@@ -4196,7 +4382,7 @@ class BoardPane(QWidget):
         """タブが0枚の状態からカタログを再作成して表示する"""
         if self._main and self._board:
             self._main._ensure_catalog_exists(self._board)
-        self._tab_stack.setCurrentIndex(0)
+        self._update_tab_stack_page()
 
     def _update_title_lbl(self, w=None):
         """ツールバーのスレタイラベルを現在タブに合わせて更新する"""
@@ -4234,7 +4420,7 @@ class BoardPane(QWidget):
 
     # ── ツールバーボタン ───────────────────────────────────────────────────────
     def _on_stop(self):
-        w = self._tabs.currentWidget()
+        w = self.active_view()      # 左右に分けている時は最後に触った側
         if hasattr(w, '_view'): w._view.stop()
 
     def _on_reply(self):
@@ -4242,7 +4428,7 @@ class BoardPane(QWidget):
         if tv: tv.open_reply_window.emit(0, "")
 
     def _on_update(self):
-        w = self._tabs.currentWidget()
+        w = self.active_view()      # 左右に分けている時は最後に触った側
         if isinstance(w, ThreadView):
             w.request_manual_reload()  # リーディングエッジ＋1秒クールダウン（連打抑制）
             # 自動更新に登録済みなら残り時間をリセット
@@ -4256,7 +4442,7 @@ class BoardPane(QWidget):
 
     def _on_open_ar(self):
         """アクティブビューの自動更新ダイアログを開く"""
-        w = self._tabs.currentWidget()
+        w = self.active_view()      # 左右に分けている時は最後に触った側
         if isinstance(w, (ThreadView, CatalogView)):
             w.auto_refresh_requested.emit()
         elif isinstance(w, ImageTabView):
@@ -4297,7 +4483,7 @@ class BoardPane(QWidget):
         """今のタブのページへJSを流す。スレでもカタログでも動く操作用。
         （先頭/末尾へ移動は表示中のページに対する操作なのでこちらを使う。
         画像タブは先頭/末尾の概念が薄いので対象外）"""
-        w = self._tabs.currentWidget()
+        w = self.active_view()      # 左右に分けている時は最後に触った側
         if not isinstance(w, (ThreadView, CatalogView)):
             return
         _v = self._get_webview(w)
@@ -4560,7 +4746,7 @@ class BoardPane(QWidget):
             _dispose_tab_view_later(_w, 50 + _n * self._BULK_DISPOSE_STEP_MS)
             _n += 1
         if self._tabs.count() == 0:
-            self._tab_stack.setCurrentIndex(1)
+            self._update_tab_stack_page()
             self._title_lbl.setFullText("")
 
     def _ctx_close_others(self):

@@ -710,6 +710,23 @@ class MainWindow(QMainWindow):
                              triggered=self._toggle_history,
                              shortcut=_sc("toggle_history")))
         sm.addSeparator()
+        # 板の中を左右に分ける（カタログとスレを並べる）。
+        # 今の状態にチェックを付け、同じものをもう一度選ぶと分割をやめる。
+        _split_mode = getattr(self._settings, "board_split_mode", "")
+        self._act_split_left = QAction("分割(左カタログ)(&L)", self, checkable=True)
+        self._act_split_left.setChecked(_split_mode == "cat_left")
+        self._act_split_left.triggered.connect(
+            lambda _=False: self._toggle_board_split("cat_left"))
+        self._act_split_right = QAction("分割(右カタログ)(&R)", self, checkable=True)
+        self._act_split_right.setChecked(_split_mode == "cat_right")
+        self._act_split_right.triggered.connect(
+            lambda _=False: self._toggle_board_split("cat_right"))
+        for _a in (self._act_split_left, self._act_split_right):
+            _a.setToolTip("板の中を左右に分けて、カタログとスレを並べて出します。\n"
+                          "境目をドラッグすると幅を変えられます。\n"
+                          "チェックが付いているものをもう一度選ぶと元に戻ります。")
+            sm.addAction(_a)
+        sm.addSeparator()
         sm.addAction(QAction("お気に入りに追加(&A)", self, triggered=self._add_to_favorites))
 
         hm = mb.addMenu("ヘルプ(&H)")
@@ -1265,7 +1282,13 @@ class MainWindow(QMainWindow):
             tb._tab_quar_set.discard(idx)
 
     def _pane_catalog_view(self, inner):
-        """インナータブ(QTabWidget)内の CatalogView を返す（無ければ None）。"""
+        """インナータブ(QTabWidget)内の CatalogView を返す（無ければ None）。
+        左右に分けて横に出している分も返す。"""
+        try:
+            if hasattr(inner, "catalog_view"):
+                return inner.catalog_view()
+        except (RuntimeError, AttributeError):
+            return None
         try:
             for i in range(inner.count()):
                 w = inner.widget(i)
@@ -1972,8 +1995,15 @@ class MainWindow(QMainWindow):
             pass
 
     def _ensure_catalog_exists(self, board: BoardInfo):
-        """板タブを作成し、カタログタブがなければ追加する。"""
+        """板タブを作成し、カタログタブがなければ追加する。
+        左右に分ける設定の時は、作ったカタログを横の枠へ移す。"""
         pane = self._get_or_create_board_tab(board)
+        if pane is None:
+            return
+        # 左右に分けている板ではカタログはタブに居ない。二重に作らないよう、
+        # 横に出ている分も含めて探す（catalog_view がどちらも見てくれる）
+        if pane.catalog_view() is not None:
+            return
         for i in range(pane.count()):
             if isinstance(pane.widget(i), CatalogView): return
         cat = CatalogView(self._fetcher, self._settings, pane)
@@ -1989,6 +2019,10 @@ class MainWindow(QMainWindow):
         _cat_ico = self._catalog_icon()
         if not _cat_ico.isNull():
             pane._wrap_bar.setTabIcon(0, _cat_ico)
+        # 左右に分ける設定なら、作ったカタログを横の枠へ移す
+        _split = getattr(self._settings, "board_split_mode", "")
+        if _split:
+            pane.apply_split_mode(_split)
         if True:  # 板を開いたとき常に自動取得
             cat.load(board)
 
@@ -2206,8 +2240,12 @@ class MainWindow(QMainWindow):
             return
         try:
             tabs = pane._tabs
-            for i in range(tabs.count()):
-                w = tabs.widget(i)
+            _views = [tabs.widget(i) for i in range(tabs.count())]
+            # 左右に分けている板では、カタログはタブに居ないので別に足す
+            _sc = getattr(pane, "_split_cat", None)
+            if _sc is not None:
+                _views.append(_sc)
+            for w in _views:
                 # 自動更新から先に解除する。板タブごと閉じる経路は個別タブの
                 # tab_closing を通らないため、解除しないと破棄済みビューが
                 # 自動更新に残り、次の更新でスレ/カタログを触ってクラッシュする。
@@ -5365,6 +5403,41 @@ class MainWindow(QMainWindow):
         self._settings.set("tree_visible", vis)
         self._settings.save()
 
+    # ── 板の中の左右分割（カタログとスレを並べる）──────────────────────────
+    def _toggle_board_split(self, mode: str):
+        """設定メニューの「分割(左カタログ)」「分割(右カタログ)」。
+        同じものをもう一度選ぶと分割をやめる（チェックが外れる）。"""
+        cur = getattr(self._settings, "board_split_mode", "")
+        new = "" if cur == mode else mode
+        self._settings.board_split_mode = new
+        try:
+            self._settings.save()
+        except Exception:
+            pass
+        self._apply_board_split_all()
+        self._st_log.setText(
+            "板の表示を元に戻しました" if not new else
+            ("カタログを左、スレを右に並べます" if new == "cat_left"
+             else "スレを左、カタログを右に並べます"))
+
+    def _apply_board_split_all(self):
+        """今の分割の設定を、開いている板すべてとメニューのチェックに反映する"""
+        mode = getattr(self._settings, "board_split_mode", "")
+        for _a, _m in ((getattr(self, "_act_split_left", None), "cat_left"),
+                       (getattr(self, "_act_split_right", None), "cat_right")):
+            if _a is not None:
+                try:
+                    _a.setChecked(mode == _m)
+                except RuntimeError:
+                    pass
+        for i in range(self._outer_tabs.count()):
+            pane = self._outer_tabs.widget(i)
+            if isinstance(pane, BoardPane):
+                try:
+                    pane.apply_split_mode(mode)
+                except RuntimeError:
+                    pass
+
     # ── タイトルバー更新 ────────────────────────────────────────────────────────
 
     @staticmethod
@@ -6487,6 +6560,10 @@ class MainWindow(QMainWindow):
                         self._outer_tabs.setCurrentIndex(i); break
             # 全タブ生成完了後にピン留め・アクティブ内側タブを一括復元
             _restore_pins_and_active()
+            # 左右に分ける設定なら、戻した板すべてに反映する
+            # （復元の途中でカタログが作られるので、最後にまとめて）
+            if getattr(self._settings, "board_split_mode", ""):
+                self._apply_board_split_all()
             self._st_log.setText("前回のタブ状態を復元しました")
 
         def _open_next(idx: int):
