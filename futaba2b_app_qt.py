@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.506"
+APP_VER = "0.9.507"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4049,6 +4049,29 @@ class BoardPane(QWidget):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
 
+    def _move_tab_bar(self, to_top: bool):
+        """タブバーの置き場所を変える。
+        左右に分けている時は、板の幅いっぱい（カタログとスレの上）に出す。
+        タブをたくさん開いていると、スレ側の幅だけでは何段にも折り返して
+        スレが狭くなるため。分けるのをやめたらタブウィジェットの中へ戻す。"""
+        bar = self._wrap_bar
+        try:
+            if to_top:
+                if bar.parent() is self:
+                    return
+                self.layout().insertWidget(1, bar)   # 0番=ツールバー の次
+            else:
+                if bar.parent() is self._tabs:
+                    return
+                bar.setParent(self._tabs)
+                # タブウィジェットに中の並びを作り直させる（タブの位置を
+                # 変えた時に作り直すので、往復させて促す）
+                self._tabs.setTabPosition(QTabWidget.TabPosition.South)
+                self._tabs.setTabPosition(QTabWidget.TabPosition.North)
+            bar.show()
+        except RuntimeError:
+            pass
+
     def _repaint_split_cat(self):
         """付け替えた直後のカタログを描き直す。
         入れ物を移すと中身が描かれない（黒いまま）。サイズを動かすだけでは戻らず、
@@ -4083,13 +4106,18 @@ class BoardPane(QWidget):
                         _ico = self._main._catalog_icon()
                         if _ico is not None and not _ico.isNull():
                             self._tabs.setTabIcon(0, _ico)
-                    cat.hide()
-                    QTimer.singleShot(0, cat.show)
+                    # 描き直しの隠して出すは、カタログが今見えているタブの時だけ。
+                    # 裏のタブで show() すると、今見ているスレの上に重なって出る
+                    # （カタログのツールバーがスレの上に残って見えた）
+                    if self._tabs.currentWidget() is cat:
+                        cat.hide()
+                        QTimer.singleShot(0, cat.show)
                 except RuntimeError:
                     pass
             self._cat_host.hide()
             self._split_mode = ""
             self._cat_focused = False
+            self._move_tab_bar(False)
             self._update_tab_stack_page()
             return
 
@@ -4111,6 +4139,7 @@ class BoardPane(QWidget):
             self._repaint_split_cat()
         if self._split_cat is not None:
             self._cat_host.show()
+        self._move_tab_bar(True)
         self._apply_split_sizes()
         self._update_tab_stack_page()
 

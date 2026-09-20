@@ -4534,7 +4534,11 @@ class MainWindow(QMainWindow):
         """スクショ対象ビュー（ThreadView/CatalogView）と既定保存パスを返す。
         対象タブでなければ (None, "")。"""
         inner = self._active_inner()
-        cur = inner.currentWidget() if inner else None
+        # 左右に分けている時は、最後に触った側（カタログ側も）を撮る
+        cur = None
+        if inner is not None:
+            cur = (inner.active_view() if hasattr(inner, "active_view")
+                   else inner.currentWidget())
         if isinstance(cur, ThreadView):
             thread = getattr(cur, '_thread', None)
             if thread:
