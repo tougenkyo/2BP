@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.507"
+APP_VER = "0.9.508"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -631,6 +631,10 @@ class WrapTabBar(QTabBar):
         self.setUsesScrollButtons(False)
         self.setDrawBase(False)
         self._cached_rows = 1
+        # タブウィジェットの外（板の幅いっぱい）へ出しているか。
+        # 出している間は、タブウィジェットに高さを伝えない（伝えると、その分の
+        # 空きがタブの中に残って隙間になる）。外での高さは固定値で与える。
+        self._detached = False
         # 多段タブの段の並び順（今画面に出ている順。値はタブ番号順に組んだ段の番号）。
         # これを覚えずに毎回タブ番号順から組み直していたため、画面の並びと関係の
         # 無い位置へ段が飛び、段どうしが入れ替わったように見えていた。
@@ -855,10 +859,33 @@ class WrapTabBar(QTabBar):
             w = max(pw, super().sizeHint().width(), 200)
         except RuntimeError:
             return QSize(200, self._ROW_H)
+        if getattr(self, "_detached", False):
+            # 外に出している時は高さ0。タブウィジェットはこの高さぶんの
+            # 場所をタブ用に空けるので、伝えると中身の上に隙間が残る
+            return QSize(w, 0)
         return QSize(w, getattr(self, "_cached_rows", 1) * self._ROW_H)
 
     def minimumSizeHint(self):
+        if getattr(self, "_detached", False):
+            return QSize(0, 0)
         return QSize(0, self._ROW_H)
+
+    def set_detached(self, on: bool):
+        """タブウィジェットの外へ出す/中へ戻す（板の幅いっぱいに出す時に使う）"""
+        self._detached = bool(on)
+        if self._detached:
+            self._apply_detached_height()
+        else:
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)
+        self.updateGeometry()
+
+    def _apply_detached_height(self):
+        """外に出している時の高さ（段数ぶん）を自分で決める。
+        sizeHint は0を返すので、これが無いと潰れてしまう。"""
+        if not getattr(self, "_detached", False):
+            return
+        self.setFixedHeight(max(1, getattr(self, "_cached_rows", 1)) * self._ROW_H)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -866,6 +893,7 @@ class WrapTabBar(QTabBar):
         if rows != getattr(self, "_cached_rows", 1):
             self._cached_rows = rows
             self.updateGeometry()
+            self._apply_detached_height()
         self.update()
 
     def showEvent(self, event):
@@ -881,6 +909,7 @@ class WrapTabBar(QTabBar):
         if rows != getattr(self, "_cached_rows", 1):
             self._cached_rows = rows
             self.updateGeometry()
+            self._apply_detached_height()
         self.update()
 
     def _refresh_base_color(self, idx: int):
@@ -3987,6 +4016,22 @@ class BoardPane(QWidget):
             return self._split_cat
         return self._tabs.currentWidget()
 
+    def focus_catalog(self) -> bool:
+        """左右に分けている時、横に出したカタログを操作先にする（タブは切り替えない）。
+        カタログが横に無ければ False（呼んだ側がタブを選ぶ）。"""
+        cat = self._split_cat
+        if cat is None:
+            return False
+        self._cat_focused = True
+        try:
+            cat.show()
+            _v = getattr(cat, "_view", None)
+            if _v is not None:
+                _v.setFocus()
+        except RuntimeError:
+            pass
+        return True
+
     def _on_focus_changed(self, _old, new):
         """カタログ側とタブ側、どちらを最後に触ったかを覚える（操作先の判定用）"""
         if self._split_cat is None or new is None:
@@ -4060,9 +4105,11 @@ class BoardPane(QWidget):
                 if bar.parent() is self:
                     return
                 self.layout().insertWidget(1, bar)   # 0番=ツールバー の次
+                bar.set_detached(True)
             else:
                 if bar.parent() is self._tabs:
                     return
+                bar.set_detached(False)
                 bar.setParent(self._tabs)
                 # タブウィジェットに中の並びを作り直させる（タブの位置を
                 # 変えた時に作り直すので、往復させて促す）

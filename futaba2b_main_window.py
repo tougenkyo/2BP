@@ -920,7 +920,7 @@ class MainWindow(QMainWindow):
         self._show_board_catalog(board)
 
     def _show_board_catalog(self, board: BoardInfo | None = None,
-                            reload: bool = True):
+                            reload: bool = True, activate: bool = True):
         """板のカタログタブを前面に出す（無ければ作る）。
 
         reload=True なら取り直す（「この板の更新」）。False なら出すだけで
@@ -949,12 +949,25 @@ class MainWindow(QMainWindow):
         board = board or self._current_board
         if not board:
             return
-        inner = self._get_or_create_board_tab(board)
-        # 既存カタログタブを探して再ロード（catset POSTも実行）
-        for i in range(inner.count()):
-            w = inner.widget(i)
+        inner = self._get_or_create_board_tab(board, activate=activate)
+        if inner is None:
+            return
+        # 既存カタログを探して再ロード（catset POSTも実行）。
+        # 左右に分けている板ではカタログはタブに居ないので、横に出している分も
+        # 見る（見ないと二枚目のカタログを作ってしまう）
+        _cats = []
+        _split_cat = inner.catalog_view() if hasattr(inner, "catalog_view") else None
+        if _split_cat is not None:
+            _cats.append(_split_cat)
+        else:
+            _cats = [inner.widget(i) for i in range(inner.count())]
+        for w in _cats:
             if isinstance(w, CatalogView):
-                inner.setCurrentIndex(i)
+                _i = inner.indexOf(w)
+                if _i >= 0:
+                    inner.setCurrentIndex(_i)
+                elif hasattr(inner, "focus_catalog"):
+                    inner.focus_catalog()   # 横に出ている（タブは切り替えない）
                 # 出すだけの時は取り直さない。ただし中身が空（まだ一度も
                 # 取れていない）なら取りに行く。
                 if not reload and getattr(w, "_all_entries", None):
@@ -991,10 +1004,17 @@ class MainWindow(QMainWindow):
             lambda nos, _inner=inner, _cv=cat_view: self._recolor_quar_tabs(_inner, _cv))
         cat_view.auto_refresh_requested.connect(
             lambda v=cat_view: self._open_ar_dialog(v))
+        _prev_cur = inner.currentIndex()   # 横へ移した後に見ていたタブへ戻すため
         inner.insertTab(0, cat_view, "カタログ"); inner.setCurrentIndex(0)
         _cat_ico = self._catalog_icon()
         if not _cat_ico.isNull():
             inner._wrap_bar.setTabIcon(0, _cat_ico)
+        # 左右に分ける設定なら、作ったカタログを横の枠へ移す
+        _split = getattr(self._settings, "board_split_mode", "")
+        if _split and hasattr(inner, "apply_split_mode"):
+            inner.apply_split_mode(_split)
+            if 0 <= _prev_cur < inner.count():
+                inner.setCurrentIndex(_prev_cur)   # 見ていたタブに戻す
 
         # カタログを開いたとき自動更新に自動追加（板設定から判断）
         _bs_cat = get_board_settings(board.base_url)
@@ -5436,11 +5456,16 @@ class MainWindow(QMainWindow):
                     pass
         for i in range(self._outer_tabs.count()):
             pane = self._outer_tabs.widget(i)
-            if isinstance(pane, BoardPane):
-                try:
-                    pane.apply_split_mode(mode)
-                except RuntimeError:
-                    pass
+            if not isinstance(pane, BoardPane):
+                continue
+            try:
+                # 分けるにはカタログが要る。前の版の保存から戻した等で
+                # 持っていない板には、ここで作る（板タブは切り替えない）
+                if mode and pane.catalog_view() is None and pane._board is not None:
+                    self._show_board_catalog(pane._board, reload=True, activate=False)
+                pane.apply_split_mode(mode)
+            except RuntimeError:
+                pass
 
     # ── タイトルバー更新 ────────────────────────────────────────────────────────
 
@@ -6063,6 +6088,10 @@ class MainWindow(QMainWindow):
             # アクティブ位置は「保存する並びの中での位置」で数え直す。
             _active_w = inner.currentWidget()
             _active_j = 0
+            # 左右に分けている板ではカタログがタブに居ない。覚えておかないと
+            # 次の起動でカタログが作られず、分割にならない
+            if getattr(inner, "_split_cat", None) is not None:
+                tabs_info.append({"type": "catalog", "no": 0, "pinned": False})
             for j in range(inner.count()):
                 w = inner.widget(j)
                 is_pinned = (w in inner._pinned)
