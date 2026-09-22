@@ -26,7 +26,7 @@ from PySide6.QtWebEngineCore    import (
 from PySide6.QtWebChannel import QWebChannel
 
 from futaba2b_models   import BoardInfo, BoardCategory, AutoRefreshEntry
-from futaba2b_network  import FutabaFetcher
+from futaba2b_network  import FutabaFetcher, is_temporary_server_error
 from futaba2b_settings import AppSettings, NgFilter, get_board_settings
 from futaba2b_html     import thread_to_html, catalog_to_html, render_res, THREAD_CSS, WEBCHANNEL_JS
 from futaba2b_bridge   import ThreadBridge, CatalogBridge
@@ -39,7 +39,7 @@ from futaba2b_app_qt import (
     VideoPlayerWindow, ThreadView, CatalogView, ImageTabView, ImageWindow,
     BoardSearchView, DelRequestQueue, apply_page_bg,
     AutoRefreshManager, AutoRefreshDialog,
-    _compute_interval_sec,
+    _compute_interval_sec, AR_FIRST_LOAD_RETRY_SEC,
     _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
     _dispose_tab_view_later, _safe_run_js,
     _schedule_gc,
@@ -1191,11 +1191,7 @@ class MainWindow(QMainWindow):
         view.unread_state_changed.connect(
             lambda has, _inner=inner, _view=view: self._on_unread_state(_inner, _view, has))
         # ── スレを開いた時に自動的に自動更新に追加（板設定から判断）──────────
-        _bs_thr1 = get_board_settings(board.base_url)
-        if getattr(_bs_thr1, 'auto_add_to_ar', False):
-            view.thread_loaded.connect(
-                lambda _no, _cnt, _v=view, _b=board:
-                self._auto_add_to_ar(_v, _b))
+        self._connect_auto_add_to_ar(view, board)
         if open_mode_override is not None:
             _open_mode = open_mode_override
         else:
@@ -1600,21 +1596,51 @@ class MainWindow(QMainWindow):
             if init_entry:
                 self._ar_dlg._tabs.setCurrentIndex(1)
 
-    def _auto_add_to_ar(self, view, board):
-        """スレを開いた時に自動的に自動更新に追加する"""
+    def _connect_auto_add_to_ar(self, view, board):
+        """板設定「自動更新に自動登録」: 読めたら自動更新に追加する。
+
+        最初の取得がサーバーの一時エラー(5xx)で終わった時も登録しておく。
+        読めた時にしか登録しなかったため、逆NGが開いた直後の 502 などで
+        一度も読めなかったスレは、自動更新にも入らず放っておかれていた。
+        登録しておけば自動更新が取り直す（読めるまでは短い間隔で）。"""
+        _bs = get_board_settings(board.base_url)
+        if not getattr(_bs, 'auto_add_to_ar', False):
+            return
+        view.thread_loaded.connect(
+            lambda _no, _cnt, _v=view, _b=board:
+            self._auto_add_to_ar(_v, _b))
+        view.first_load_failed.connect(
+            lambda _err, _v=view, _b=board:
+            self._auto_add_to_ar(_v, _b, after_failure=True))
+
+    def _auto_add_to_ar(self, view, board, after_failure: bool = False):
+        """スレを開いた時に自動的に自動更新に追加する。
+        after_failure: 一度も読めないまま取得に失敗した時の呼び出し
+        （サーバーの一時エラーなら登録し、すぐ取り直させる）"""
         if not view._thread:
             return
         th  = view._thread
         url = th.url or ""
-        has = self._ar_mgr.has_url(url)
-        if not url or has:
-            return   # URL 未確定 or 既に登録済み
+        if not url:
+            return   # URL 未確定
+        if self._ar_mgr.has_url(url):
+            # 読めないうちに登録した分は、読めた時に題名を入れ直す
+            # （登録した時は「No.xxx - 板名」の仮の題名しか無い）
+            _e = self._ar_mgr.find_by_url(url)
+            if (_e is not None and getattr(_e, "_title_pending", False)
+                    and not after_failure and not th.error and th.title):
+                _e.title = th.title
+                _e._title_pending = False
+            return   # 既に登録済み
 
         # スレが落ちている・1000レス到達の場合は追加しない（サイレント）
         # view._is_dead も見る。手元のモデルから描き直しただけの時に
         # 「読み込めた」扱いでここへ来ると、落ちたスレの自動更新が復活して
         # しまうため（タブ切替でのNG再描画で起きていた）。
-        if (th.error or getattr(th, 'is_full', False)
+        # エラーは、読めないまま失敗した時のサーバーの一時エラー(5xx)だけ通す
+        # （404=スレが無い・接続エラーは今まで通り登録しない）。
+        _temp_fail = after_failure and is_temporary_server_error(th.error)
+        if ((th.error and not _temp_fail) or getattr(th, 'is_full', False)
                 or getattr(view, '_is_dead', False)):
             return
 
@@ -1667,6 +1693,15 @@ class MainWindow(QMainWindow):
             max_saved    = max_saved,
             adaptive_intervals = adaptive,
         )
+        if _temp_fail:
+            # 読めるまでは短い間隔で取り直す（自動更新の _do_refresh が
+            # 読めていないタブを見分けて、開いた時と同じ読み込みをやり直させる）
+            entry._title_pending = True
+            self._ar_mgr.add(entry, view, first_in=AR_FIRST_LOAD_RETRY_SEC)
+            self._st_log.setText(
+                f"自動更新に追加: No.{th.no}  読めなかったので "
+                f"{AR_FIRST_LOAD_RETRY_SEC}秒後に取り直します（{th.error}）")
+            return
         self._ar_mgr.add(entry, view)
         _disp = (f"{interval_sec}秒" if interval_sec < 60
                  else f"{interval_sec // 60}分")
@@ -1822,11 +1857,7 @@ class MainWindow(QMainWindow):
         view.unread_state_changed.connect(
             lambda has, _inner=inner, _view=view: self._on_unread_state(_inner, _view, has))
         # ── 板設定の自動更新自動登録チェック ─────────────────────────────
-        _bs_m = get_board_settings(board.base_url)
-        if getattr(_bs_m, 'auto_add_to_ar', False):
-            view.thread_loaded.connect(
-                lambda _no, _cnt, _v=view, _b=board:
-                self._auto_add_to_ar(_v, _b))
+        self._connect_auto_add_to_ar(view, board)
         def _update_mode():
             if view._thread and view._thread.title:
                 t = view._thread.title.rsplit(" - ", 1)[0]
@@ -1947,11 +1978,7 @@ class MainWindow(QMainWindow):
         view.unread_state_changed.connect(
             lambda has, _p=pane, _view=view: self._on_unread_state(_p, _view, has))
         # ── 板設定の自動更新自動登録チェック ─────────────────────────────
-        _bs_bg = get_board_settings(board.base_url)
-        if getattr(_bs_bg, 'auto_add_to_ar', False):
-            view.thread_loaded.connect(
-                lambda _no, _cnt, _v=view, _b=board:
-                self._auto_add_to_ar(_v, _b))
+        self._connect_auto_add_to_ar(view, board)
         _cur = pane.currentIndex()
         pane.addTab(view, f"No.{no}")
         pane.setCurrentIndex(_cur)

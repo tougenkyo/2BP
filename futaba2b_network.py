@@ -141,6 +141,21 @@ def _clean_datetime_str(s: str) -> str:
     return _HTML_COMMENT_RE.sub("", str(s or "")).strip()
 
 
+# ── サーバー側の一時エラー ──────────────────────────────────────────────────
+# ふたばの中継サーバーは、混んでいる時などに 502 Proxy Error を返す事がある。
+# 少し待って取り直すと取れる事が多いので、スレの取得(GET)ではこの3つだけ
+# 取り直す。投稿(POST)は取り直さない（二重投稿になる恐れがあるため）。
+_TRANSIENT_STATUS = (502, 503, 504)
+_TRANSIENT_WAITS = (1.0, 2.0)   # 1回目の取り直しまで1秒、2回目まで2秒
+
+
+def is_temporary_server_error(err: str) -> bool:
+    """エラー文字列（'502 Proxy Error' など）が、サーバー側の一時エラー(5xx)か。
+    404（スレが無い）や接続エラーは含めない。"""
+    w = str(err or "").split()
+    return bool(w) and w[0].isdigit() and 500 <= int(w[0]) <= 599
+
+
 def cleanup_image_cache(max_days: int = 7) -> tuple[int, int]:
     """画像キャッシュから max_days 日より古いファイルを削除する。
     max_days==0 の場合は何もしない。
@@ -2028,6 +2043,22 @@ class FutabaFetcher:
             print(f'[NET] fetch_raw_thread_html error: {e} → cache fallback')
         return self._load_thread_cache(url)
 
+    def _get_retrying_transient(self, url: str, headers: dict):
+        """GET して、502/503/504 なら少し待って取り直す（2回まで）。
+
+        初めて開くスレ（逆NGが開いた直後など）は手元に控えが無いので、
+        1回の 502 でエラー画面だけになり、そのまま放っておかれていた。
+        すぐ取り直せば取れる事が多い。GET 専用（投稿には使わない）。
+        呼ぶのは裏のスレッドから（待つ間も画面は止まらない）。"""
+        r = self.session.get(url, headers=headers, timeout=self.timeout)
+        for wait in _TRANSIENT_WAITS:
+            if r.status_code not in _TRANSIENT_STATUS:
+                break
+            print(f'[NET] {r.status_code} {r.reason} → {wait:g}秒待って取り直す  url={url}')
+            time.sleep(wait)
+            r = self.session.get(url, headers=headers, timeout=self.timeout)
+        return r
+
     def fetch_thread(self, board: BoardInfo, no: int) -> ThreadData:
         """
         スレッドを取得する。失敗時はキャッシュから復元する。
@@ -2043,7 +2074,7 @@ class FutabaFetcher:
                 "Sec-Fetch-Site": "same-origin", "Sec-Fetch-User": "?1",
                 "Cache-Control": "no-cache", "Pragma": "no-cache",
             })
-            r = self.session.get(url, headers=hdr, timeout=self.timeout)
+            r = self._get_retrying_transient(url, hdr)
             print(f'[NET] fetch_thread  status={r.status_code}  size={len(r.content)}B'
                   f'  encoding={r.encoding}')
             if not r.ok:

@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.509"
+APP_VER = "0.9.510"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -169,6 +169,11 @@ def _safe_run_js(view, js, cb=None) -> bool:
     except RuntimeError:
         return False
 _FETCH_POOL = _TPE(max_workers=3, thread_name_prefix='2BP_fetch')
+
+# 最初の取得がサーバーの一時エラー(5xx)で終わったスレを、自動更新が
+# 取り直すまでの間隔（秒）。読めるまではこの間隔で取り直す。
+# 板の段階更新の間隔を使うと、できたばかりのスレは1時間後になってしまう。
+AR_FIRST_LOAD_RETRY_SEC = 60
 
 # 自動更新で「削除されたレス」を確認する間隔（秒）。
 # JSON差分API(futaba.php?mode=json)は新着しか返さず削除が分からないため、
@@ -5758,6 +5763,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
     # thread_loaded はタブ名の再構築なども担うため、背景更新では別の口を使う。
     bg_new_arrival        = Signal(int, int)   # (thread_no, unread_count)
     thread_error          = Signal(str)         # エラー発生時 (error_msg)
+    # 一度も表示できていないスレの取得に失敗した (error_msg)。
+    # 自動更新への自動登録は読めた時(thread_loaded)にしか走らないので、
+    # サーバーの一時エラーならこちらで登録させる（自動更新が取り直す）
+    first_load_failed     = Signal(str)
     thread_dead           = Signal(str)         # スレ落ち確定 (url) → 自動更新から削除
     scroll_count_updated  = Signal(int)         # 末尾スクロール残回数 (0=リセット)
     auto_refresh_requested = Signal()           # 自動更新ダイアログを開く要求
@@ -6458,6 +6467,11 @@ class ThreadView(_MouseGestureMixin, QWidget):
         if thread_no != self._thread_no:
             self._known_res_count = 0
             self._reload_pending = False   # 別スレへ移動 → 保留再取得は破棄
+        elif not open_mode and not self._first_load_done:
+            # まだ一度も表示できていないスレの取り直し（更新・自動更新）。
+            # 開いた時に頼まれた表示モード（裏で開く時の画像モード等）を持ち越す。
+            # 取り直しはモード無しで呼ばれるので、ここで消すと返信モードで出る
+            open_mode = getattr(self, "_pending_open_mode", "") or ""
         self._board = board; self._thread_no = thread_no
         self._pending_open_mode = open_mode  # ロード完了後に適用するモード
         self._lbl_count.setText("読み込み中…")
@@ -6741,6 +6755,18 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return
         self.reload_thread()
 
+    def needs_first_load(self) -> bool:
+        """最初の取得が失敗したまま、まだ一度も表示できていないか。
+
+        自動更新はこの状態のタブに差分を使わず、開いた時と同じ読み込みを
+        やり直させる。差分は「今あるレスの続き」しか返さないので、
+        スレ本文（最初の書き込み）が入らないため。"""
+        th = getattr(self, "_thread", None)
+        return bool(th is not None and not th.res_list
+                    and (getattr(th, "error", "") or "")
+                    and not self._first_load_done
+                    and not self._is_dead and not self._is_log)
+
     def reload_thread(self):
         # 保存ログのオフライン表示はネット更新しない
         if self._is_log:
@@ -6973,6 +6999,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 self._capture_scroll_anchor(lambda: self._show_impl(_cached))
             else:
                 self._show_error(thread)
+                if not self._first_load_done and self._is_alive():
+                    self.first_load_failed.emit(err)
             return
         def _go(_th=thread):
             if not self._is_alive():
@@ -13524,14 +13552,16 @@ class AutoRefreshManager(QObject):
                 pass
         self._thread_full_sig.connect(_on_thread_full_sig)
     # ── エントリ管理 ──
-    def add(self, entry: AutoRefreshEntry, view=None):
+    def add(self, entry: AutoRefreshEntry, view=None, first_in: int = 0):
+        """first_in: 最初の更新までの秒数（0=いつもの間隔。短い方を使う）"""
         # 同じURLの重複登録を防止
         for e in self._entries:
             if e.url == entry.url:
                 return
         self._entries.append(entry)
         self._views.append(_wr.ref(view) if view else None)
-        self._remain.append(entry.interval_sec)
+        self._remain.append(min(entry.interval_sec, int(first_in))
+                            if first_in and first_in > 0 else entry.interval_sec)
         self._new_cnt.append(0)
         self._res_cnt.append(0)
         # 監視を止めている間に登録しても勝手に動き出さない。
@@ -13706,6 +13736,29 @@ class AutoRefreshManager(QObject):
                 finally:
                     self._fetching_done.emit(_u)
             threading.Thread(target=_catalog_fetch, daemon=True).start()
+            return
+
+        # まだ一度も表示できていないスレ（最初の取得がサーバーの一時エラーで
+        # 終わったもの）。差分は「今あるレスの続き」しか返さないので、スレ本文が
+        # 入らない。開いた時と同じ読み込みを、タブにやり直させる（更新ボタンと同じ）。
+        # 読めるまでは短い間隔で取り直す。読めればタブ側の普段の経路で
+        # タブ名・履歴なども整う。
+        _v0 = ref_v() if ref_v else None
+        try:
+            _need_first = bool(
+                _v0 is not None
+                and (_sb_valid is None or _sb_valid(_v0))
+                and _v0.needs_first_load())
+        except RuntimeError:
+            _need_first = False
+        if _need_first:
+            self._fetching.discard(_url)
+            self._remain[idx] = min(entry.interval_sec, AR_FIRST_LOAD_RETRY_SEC)
+            print(f'[AutoRefresh] まだ読めていない No.{entry.no} → 開いた時と同じ読み込みをやり直す')
+            try:
+                _v0.reload_thread()
+            except RuntimeError:
+                pass
             return
 
         def _fetch():
