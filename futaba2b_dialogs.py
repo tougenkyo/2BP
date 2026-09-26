@@ -5965,12 +5965,24 @@ class AppSettingsDialog(QDialog):
         _sem_hint.setStyleSheet("color: gray; font-size: 11px;")
         prf.addRow("", _sem_hint)
 
-        # ログ（コンソール）設定
+        # ログ設定（ウインドウとテキストファイルは別々に ON/OFF）
         g_log = QGroupBox("ログ"); f_ap.addWidget(g_log); lgf = QVBoxLayout(g_log)
-        self._show_console = QCheckBox("ログを出力する（黒いコンソールウィンドウを表示する）")
-        lgf.addWidget(self._show_console)
-        _log_hint = QLabel("チェックを外すと、黒いコンソールウィンドウを出さずに起動します。\n"
-                           "設定の反映には再起動が必要です。")
+        self._log_window_chk = QCheckBox("ログウインドウを表示する")
+        self._log_window_chk.setToolTip(
+            "2BP の動作ログを、2BP とは別のウインドウに出します\n"
+            "（以前の黒いコンソールウィンドウの代わりです）。\n"
+            "ONにすると起動時に開きます。閉じても 2BP は終了しません。\n"
+            "OFFでも［ヘルプ］→［ログウインドウ］からいつでも開けます。")
+        lgf.addWidget(self._log_window_chk)
+        self._log_file_chk = QCheckBox("ログをテキストファイルに保存する（logs\\console フォルダ）")
+        self._log_file_chk.setToolTip(
+            "動作ログをテキストファイルに書き出します（不具合の報告用）。\n"
+            "2BP が落ちた時の記録（落ちた瞬間に何をしていたか）もここに残ります。\n"
+            "新しいものから20個まで残し、古いものは自動で消します。")
+        lgf.addWidget(self._log_file_chk)
+        _log_hint = QLabel("ウインドウとテキストファイルは別々に ON/OFF できます。"
+                           "どちらもすぐに反映されます（再起動は要りません）。\n"
+                           "黒いコンソールウィンドウは出なくなりました。")
         _log_hint.setStyleSheet("color: gray; font-size: 11px;")
         _log_hint.setWordWrap(True)
         lgf.addWidget(_log_hint)
@@ -6719,7 +6731,8 @@ class AppSettingsDialog(QDialog):
         self._scroll_top_count.setValue(getattr(s, "scroll_top_count", 0))
         self._update_skip_css.setChecked(getattr(s, "update_skip_css", True))
         self._parse_sem_kb.setValue(getattr(s, "parse_sem_kb", 50))
-        self._show_console.setChecked(getattr(s, "show_console", False))
+        self._log_window_chk.setChecked(getattr(s, "log_window", False))
+        self._log_file_chk.setChecked(getattr(s, "log_to_file", False))
         self._tab_max_width.setValue(getattr(s, "tab_max_width", 0))
         self._tab_active_row_bottom.setChecked(
             getattr(s, "tab_active_row_bottom", True))
@@ -6921,7 +6934,8 @@ class AppSettingsDialog(QDialog):
         s.scroll_top_count        = self._scroll_top_count.value()
         s.update_skip_css         = self._update_skip_css.isChecked()
         s.parse_sem_kb            = self._parse_sem_kb.value()
-        s.show_console            = self._show_console.isChecked()
+        s.log_window              = self._log_window_chk.isChecked()
+        s.log_to_file             = self._log_file_chk.isChecked()
         # 0=無制限。1未満は下限へ丸める（丸めた値は次に開いた時に表示される）
         _tw = self._tab_max_width.value()
         s.tab_max_width           = 0 if _tw <= 0 else max(_TAB_MIN_WIDTH(), _tw)

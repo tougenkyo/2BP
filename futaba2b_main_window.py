@@ -254,6 +254,10 @@ class MainWindow(QMainWindow):
         self._settings     = AppSettings()
         self._fetcher      = FutabaFetcher(self._settings)
         self._image_window = None   # 画像表示モード=ウインドウ の単一インスタンス
+        # ログウインドウ（開いた時に作る）。設定の「表示する」を切り替えた時だけ
+        # 開け閉めするため、今の設定の値を覚えておく
+        self._log_window   = None
+        self._log_window_pref = bool(getattr(self._settings, "log_window", False))
         self._ar_mgr       = AutoRefreshManager(self._fetcher, self._settings, self)
         self._ar_dlg: "AutoRefreshDialog | None" = None
         # 削除依頼(del)の送信待ち行列。間隔を空けて1件ずつ送り、断られたぶんは
@@ -736,6 +740,9 @@ class MainWindow(QMainWindow):
         hm.addSeparator()
         hm.addAction(QAction("ショートカットを作る(&S)…", self,
                              triggered=self._make_shortcuts))
+        # triggered は checked(bool) を渡してくるので、そのまま繋ぐと activate=False になる
+        hm.addAction(QAction("ログウインドウ(&G)", self,
+                             triggered=lambda _=False: self._show_log_window()))
         hm.addSeparator()
         hm.addAction(QAction("バージョン情報(&A)…", self, triggered=self._show_about))
 
@@ -5761,6 +5768,8 @@ class MainWindow(QMainWindow):
         # ショートカット設定変更を反映（メニュー再構築）
         self.menuBar().clear()
         self._build_menu()
+        # ログ（ウインドウ・テキストファイル）の ON/OFF を反映
+        self._apply_log_settings()
         # 開いている全BoardPaneのショートカットを更新
         for i in range(self._outer_tabs.count()):
             pane = self._outer_tabs.widget(i)
@@ -5924,6 +5933,45 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "バージョン情報",
             f"2BP ─ ふたばちゃんねる専用ブラウザ\nバージョン {APP_VER}\n\n"
             "PySide6 + QtWebEngine 版\n旧 tkinter 版から全機能を移行")
+
+    # ── ログウインドウ ──────────────────────────────────────────────────
+    # 以前の黒いコンソールの代わり（futaba2b_log.py）。閉じても隠れるだけで、
+    # 2BP は終わらない。
+
+    def _show_log_window(self, activate: bool = True):
+        """ログウインドウを開く（［ヘルプ］→［ログウインドウ］、設定でONの時は起動時）"""
+        import futaba2b_log as _log
+        if not _log.installed():
+            return                  # ログを集めていない（テストから本体を作った時など）
+        w = self._log_window
+        if w is None:
+            w = self._log_window = _log.LogWindow(self._settings)
+        if w.isMinimized():
+            w.showNormal()
+        # 起動時は本体の窓の方を手前・入力先にする
+        w.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, not activate)
+        w.show()
+        w.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+        if activate:
+            w.raise_()
+            w.activateWindow()
+
+    def _apply_log_settings(self):
+        """設定のログ（ウインドウ・テキスト）を再起動なしで反映する。
+        ウインドウは「表示する」を切り替えた時だけ開け閉めする（OFFのまま
+        ［ヘルプ］から開いていた窓を、ほかの設定を変えただけで閉じないように）"""
+        import futaba2b_log as _log
+        if not _log.installed():
+            return
+        s = self._settings
+        _log.set_file_output(bool(getattr(s, "log_to_file", False)))
+        want = bool(getattr(s, "log_window", False))
+        if want != self._log_window_pref:
+            if want:
+                self._show_log_window()
+            elif self._log_window is not None:
+                self._log_window.hide()
+        self._log_window_pref = want
 
     # ── アップデート ────────────────────────────────────────────────────
 
@@ -6089,9 +6137,12 @@ class MainWindow(QMainWindow):
                 kwargs["creationflags"] = (
                     getattr(subprocess, "CREATE_NO_WINDOW", 0) |
                     getattr(subprocess, "DETACHED_PROCESS", 0))
+            # 標準出力は捨て場(NUL)で渡す。何も渡さないと今のログファイルを
+            # 引き継ぎ、起動し直した 2BP まで握ったままになる
             subprocess.Popen(
                 [sys.executable, str(launcher_path), str(_os.getpid()), qt_path, str(base)],
-                cwd=str(base), **kwargs)
+                cwd=str(base), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, **kwargs)
         except Exception as e:
             QMessageBox.warning(self, "アップデート",
                 f"更新は完了しましたが再起動の起動に失敗しました。\n"
@@ -6732,6 +6783,8 @@ class MainWindow(QMainWindow):
             pass
 
     def closeEvent(self, event):
+        # 普通に閉じた事をログに残す（無いまま途切れていれば、落ちたか強制終了）
+        print("[LOG] 終了処理を始めます", flush=True)
         # ── 終了処理の最初にバックグラウンド更新を全停止する ──────────────────
         # 1日運用でタブ（＝WebEngineプロファイル）が多いと破棄に時間がかかり、
         # その間も自動更新スレッドが破棄途中のビューを触ってクラッシュ
@@ -6777,6 +6830,14 @@ class MainWindow(QMainWindow):
         self._settings.window_geometry = self.saveGeometry().toHex().data().decode()
         if hasattr(self, "_splitter"):
             self._settings.window_splitter = self._splitter.saveState().toHex().data().decode()
+        # ログウインドウは位置を覚えて隠す（残っていると終わっていないように見える）
+        _lw = getattr(self, "_log_window", None)
+        if _lw is not None:
+            try:
+                _lw.save_geometry()
+                _lw.hide()
+            except RuntimeError:
+                pass
         self._settings.save()
         # 画像ウインドウ（ウインドウモード）の WebEngine を明示クリーンアップ
         win = getattr(self, "_image_window", None)
@@ -6828,7 +6889,9 @@ def _disable_console_quickedit() -> None:
     起動の途中で固まる（アップデート直後に「[VER] 起動:」から進まない、と
     いう報告の原因）。誤クリックで止まらないよう切っておく。
     文字を選んでコピーしたい時は、ウィンドウメニューの「編集→範囲指定」か、
-    logs/console に残るログファイルを使う。"""
+    logs/console に残るログファイルを使う。
+    2BP はふだんコンソールを持たない。開発用に BP2_NO_RESPAWN=1 で
+    コンソールに残した時だけ使う。"""
     if not sys.platform.startswith("win"):
         return
     try:
@@ -6853,68 +6916,32 @@ def _disable_console_quickedit() -> None:
         print(f"[LOG] 簡易編集モードの解除に失敗: {e}", flush=True)
 
 
-def _setup_file_logging():
-    """show_console=ON のとき stdout/stderr を .log ファイルにも複製する（tee）。
-    出力先: logs/console/2bp_YYYYMMDD_HHMMSS.log（.gitignore 済み）。
-    直近20ファイルを残して古いログは自動削除する。"""
-    from pathlib import Path
+def _version_lines(app_ver: str) -> list:
+    """ログの頭に出す版数・環境（不具合報告のログから特定できるように）"""
+    import platform as _pf
     import datetime as _dt
-    logdir = Path(__file__).parent / "logs" / "console"
-    logdir.mkdir(parents=True, exist_ok=True)
-    # 古いログを掃除（更新日時の新しい順に20個保持）
     try:
-        olds = sorted(logdir.glob("2bp_*.log"),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
-        for _p in olds[20:]:
-            try: _p.unlink()
-            except OSError: pass
-    except OSError:
-        pass
-    logpath = logdir / f"2bp_{_dt.datetime.now():%Y%m%d_%H%M%S}.log"
-    _logf = open(logpath, "a", encoding="utf-8", buffering=1)
-
-    class _Tee:
-        """コンソールとファイルへ同時に書き込むラッパー"""
-        def __init__(self, *streams):
-            self._streams = [s for s in streams if s is not None]
-        def write(self, s):
-            for st in self._streams:
-                try: st.write(s)
-                except Exception: pass
-        def flush(self):
-            for st in self._streams:
-                try: st.flush()
-                except Exception: pass
-        def isatty(self):
-            return False
-
-    # ファイルを先に書く。コンソール側が何かの拍子に詰まっても、そこまでの
-    # ログはファイルに残る（コンソールを先にすると1行も残らない）。
-    sys.stdout = _Tee(_logf, sys.__stdout__)
-    sys.stderr = _Tee(_logf, sys.__stderr__)
-    import atexit
-    atexit.register(lambda: (_logf.flush(), _logf.close()))
-    print(f"[LOG] ファイル出力: {logpath}", flush=True)
-    # バージョン等はこの tee 設定より前に print されるためログに残らない。
-    # 不具合報告のログから版数・環境を特定できるよう、ここで改めて記録する。
-    try:
-        import platform as _pf
-        from futaba2b_app_qt import APP_VER as _VER
-        try:
-            from PySide6 import __version__ as _PSV
-            from PySide6.QtCore import qVersion as _qv
-            _qt = f"PySide6 {_PSV} / Qt {_qv()}"
-        except Exception:
-            _qt = "PySide6 ?"
-        print(f"[VER] 2BP v{_VER}", flush=True)
-        print(f"[VER] {_qt} / Python {_pf.python_version()}", flush=True)
-        print(f"[VER] {_pf.platform()}", flush=True)
-        print(f"[VER] 起動: {_dt.datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
-    except Exception as _e:
-        print(f"[VER] 記録失敗: {_e}", flush=True)
+        from PySide6 import __version__ as _PSV
+        from PySide6.QtCore import qVersion as _qv
+        _qt = f"PySide6 {_PSV} / Qt {_qv()}"
+    except Exception:
+        _qt = "PySide6 ?"
+    return [f"[VER] 2BP v{app_ver}",
+            f"[VER] {_qt} / Python {_pf.python_version()}",
+            f"[VER] {_pf.platform()}",
+            f"[VER] 起動: {_dt.datetime.now():%Y-%m-%d %H:%M:%S}"]
 
 
 def main():
+    # ── ログ（print の出力）を 2BP の中へ集める ─────────────────────────────
+    # 2BP はコンソールを持たずに動く（futaba2b_qt.py が pythonw.exe で起動し
+    # 直す）。print はログウインドウとテキストファイルへ配る（futaba2b_log.py）。
+    # futaba2b_qt.py から来た時はもう入っている（何度呼んでもよい）。
+    import futaba2b_log as _log
+    try:
+        _log.install()
+    except Exception:
+        pass
     from futaba2b_app_qt import APP_VER
     print(f"2BP v{APP_VER}  起動", flush=True)
 
@@ -6930,41 +6957,43 @@ def main():
     except Exception:
         pass
 
-    # ── ログ出力（黒いコンソール）の表示/非表示 ──────────────────────────
-    # 設定 show_console が False（既定）なら、起動時に Windows のコンソール
-    # ウィンドウを隠す。設定は futaba2b_settings.json から先読みする。
-    #
-    # ここで隠せるのは従来のコンソール ホストの窓だけ。Windows ターミナル配下
-    # では GetConsoleWindow() が見えない代理の窓を返すので効かない。そのため
-    # 普段は futaba2b_qt.py が pythonw.exe で起動し直して、コンソールを最初から
-    # 持たないようにしている。ここは起動し直せなかった時
-    # （pythonw が無い・run_2bp_loop.bat から等）の保険。
+    # ── ログの出し方 ─────────────────────────────────────────────────────
+    # テキストファイルに書くかは設定（その他 → ログ）。起動の最初から書くため、
+    # 設定は futaba2b_settings.json から先読みする。ログウインドウは本体の窓を
+    # 作った後で開く（どちらも後から設定で切り替えるとすぐ反映される）。
     try:
         import json as _jc
         from pathlib import Path as _Pc
-        _show_console = False
+        _log_to_file = False
         _scf = _Pc(__file__).parent / "futaba2b_settings.json"
         if _scf.exists():
             _scd = _jc.loads(_scf.read_text(encoding="utf-8"))
-            _show_console = bool(_scd.get("show_console", False))
-        if _show_console:
-            # 誤クリックで出力が止まり起動が固まるのを防ぐ
-            try:
-                _disable_console_quickedit()
-            except Exception:
-                pass
-            # コンソール表示に加え、stdout/stderr を .log にも複製（tee）
-            try:
-                _setup_file_logging()
-            except Exception:
-                pass
-        if not _show_console and sys.platform.startswith("win"):
+            # 以前は「ログを出力する（黒いコンソール）」1つで窓とテキストの両方だった
+            _log_to_file = bool(_scd.get("log_to_file", _scd.get("show_console", False)))
+        _log.print_header(_version_lines(APP_VER))
+        if _log_to_file:
+            _log.set_file_output(True)
+    except Exception:
+        pass
+    # Qt の警告もログへ（コンソールが無いと、どこにも出ない）
+    _log.install_qt_handler()
+    # コンソールが残っている時
+    #   ・BP2_NO_RESPAWN=1 で起動（開発用にコンソールへ出したい）→ 出したまま。
+    #     誤クリックで出力が止まり起動が固まるのを防ぐ
+    #   ・pythonw.exe で起動し直せなかった → 隠す（保険。従来のコンソール ホスト
+    #     の窓だけ隠せる。Windows ターミナル配下では GetConsoleWindow() が
+    #     見えない代理の窓を返すので効かない）
+    if sys.platform.startswith("win"):
+        try:
             import ctypes
             _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
             if _hwnd:
-                ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
-    except Exception:
-        pass
+                if os.environ.get("BP2_NO_RESPAWN"):
+                    _disable_console_quickedit()
+                else:
+                    ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
+        except Exception:
+            pass
     # ─────────────────────────────────────────────────────────────────────
 
     # FFmpeg の詳細ログを抑制（swscaler警告・hwaccel通知等を非表示）
@@ -7089,8 +7118,19 @@ def main():
         if _icon_found:
             break
 
-    win = MainWindow(); win.show()
-    sys.exit(app.exec())
+    win = MainWindow()
+    # ログウインドウ（設定で ON の時）。本体の窓を手前・入力先にしたいので先に出す
+    if getattr(win._settings, "log_window", False):
+        win._show_log_window(activate=False)
+    win.show()
+    _rc = app.exec()
+    # Qt の警告の受け口を外してから後片付けに入る（Python が先に片付いた後で
+    # Qt が警告を出すと、受け口の呼び出しで落ちるため）
+    _log.uninstall_qt_handler()
+    # 普通に終わった印（これが無いまま途切れていれば、落ちたか強制終了）
+    import datetime as _dt_end
+    print(f"[VER] 終了: {_dt_end.datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
+    sys.exit(_rc)
 
 
 if __name__ == "__main__":

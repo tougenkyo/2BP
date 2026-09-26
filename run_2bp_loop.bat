@@ -3,8 +3,9 @@ cd /d "%~dp0"
 title 2BP - Auto Restart
 
 rem This window must stay: it waits for the exit code and restarts 2BP.
-rem Keep 2BP attached to this console instead of relaunching it detached.
-set BP2_NO_RESPAWN=1
+rem 2BP itself runs without a console. Closing this window does not close
+rem 2BP; it only stops the auto-restart. Logs: 2BP menu Help > Log window.
+set BP2_WAIT=1
 
 :LOOP
 echo.

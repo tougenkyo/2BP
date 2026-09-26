@@ -430,8 +430,12 @@ class AppSettings:
         self.thread_history: list[dict]   = []
         # ブックマーク（メニューバー「ブックマーク」）
         self.bookmarks: list[dict]        = [dict(b) for b in _DEFAULT_BOOKMARKS]
-        # ログを出力する（黒いコンソールを表示する）。Falseで起動時にコンソールを隠す
-        self.show_console: bool           = False
+        # ログウインドウを表示する（起動時に開く）。以前の「黒いコンソールを表示する」の代わり
+        self.log_window: bool             = False
+        # ログをテキストファイル（logs/console）に書き出す
+        self.log_to_file: bool            = False
+        # ログウインドウの位置と大きさ (hex文字列)
+        self.log_window_geometry: str     = ""
         # ★ 追加: 板リスト (BoardInfo オブジェクトのフラットなリスト)
         self.boards: list[BoardInfo]      = []
         # カスタム板グループ: [{"name":"二次元裏","boards":[{"name":"img","url":"..."}]}]
@@ -948,7 +952,12 @@ class AppSettings:
             self.user_css_file       = raw.get("user_css_file", "theme/user.css")
             self.thread_history      = raw.get("thread_history", [])
             self.bookmarks           = raw.get("bookmarks", [dict(b) for b in _DEFAULT_BOOKMARKS])
-            self.show_console        = bool(raw.get("show_console", False))
+            # 以前は「ログを出力する（黒いコンソール）」1つで、窓とテキストの両方だった。
+            # 分けてから初めて読む時は、どちらも以前の値を引き継ぐ
+            _legacy_log              = bool(raw.get("show_console", False))
+            self.log_window          = bool(raw.get("log_window", _legacy_log))
+            self.log_to_file         = bool(raw.get("log_to_file", _legacy_log))
+            self.log_window_geometry = raw.get("log_window_geometry", "") or ""
             self.custom_board_groups = raw.get("custom_board_groups", [])
             self.tab_state           = raw.get("tab_state", {})
             self.thread_read_counts  = raw.get("thread_read_counts", {})
@@ -1347,7 +1356,9 @@ class AppSettings:
                         "user_css_file":        self.user_css_file,
                         "thread_history":       self.thread_history,
                         "bookmarks":            self.bookmarks,
-                        "show_console":         self.show_console,
+                        "log_window":           self.log_window,
+                        "log_to_file":          self.log_to_file,
+                        "log_window_geometry":  self.log_window_geometry,
                         "custom_board_groups":  self.custom_board_groups,
                         "tab_state":            self.tab_state,
                         "thread_read_counts":   _thread_read,
