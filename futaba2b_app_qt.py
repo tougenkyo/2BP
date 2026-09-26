@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.511"
+APP_VER = "0.9.512"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -246,6 +246,29 @@ def _dispose_tab_view(w):
     if _dt_dis > 0.3:
         print(f"[Close] ビューの破棄に {_dt_dis*1000:.0f} ms かかりました")
     _schedule_gc()   # 破棄後に遅延GCで循環参照(BS4/Qt)を回収しRSSを下げる
+
+
+def _retire_web_bridge(channel, bridge) -> None:
+    """閉じるページの JS から Python を呼ばせなくする。webChannel はページから外さない。
+
+    page.setWebChannel(None) で外すのは危ない。外した後に、そのページで読み込み
+    途中だった文書が JS↔Python の繋ぎを取りに来ると、Qt(6.11) は繋ぎ先が無い事を
+    確かめずに使い、2BP ごと落ちる（Qt6WebEngineCore.dll のアクセス違反）。
+    スレ落ちでタブを丸ごと描き直した直後に自動で閉じた時に、実際に起きた。
+
+    channel は page の子なので、page を消せば一緒に消える。ブリッジは登録から
+    外すだけにする。以後ページの JS から呼ばれても、Qt が知らない相手として捨てる。
+    登録から外した後なら、ブリッジを先に消しても channel に古い参照は残らない。"""
+    if channel is not None and bridge is not None:
+        try:
+            channel.deregisterObject(bridge)
+        except Exception:
+            pass
+    if bridge is not None:
+        try:
+            bridge.deleteLater()
+        except Exception:
+            pass
 
 
 _gc_debounce_timer = None
@@ -10717,18 +10740,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         except Exception:
             pass
 
-        # webChannel を切り離してから channel / bridge を削除
-        try:
-            if _page is not None:
-                _page.setWebChannel(None)
-        except Exception:
-            pass
-        for obj in (_chan, _bridge):
-            if obj is not None:
-                try:
-                    obj.deleteLater()
-                except Exception:
-                    pass
+        # 閉じたタブから Python を呼ばせない。webChannel はページに付けたまま
+        # （外すと、描き直し途中のページが繋ぎに来た時に Qt の中で落ちる。
+        #   channel は page と一緒に消える）
+        _retire_web_bridge(_chan, _bridge)
 
         # ── 重いDOM(1000レス等)を抱えたpageの破棄でGUIが数秒固まるのを防ぐ ──
         # page をそのまま deleteLater すると、Chromium の WebContents/DOM 解体が
@@ -13384,17 +13399,9 @@ class BoardSearchView(QWidget):
                     obj.setParent(None)
             except Exception:
                 pass
-        try:
-            if _page is not None:
-                _page.setWebChannel(None)
-        except Exception:
-            pass
-        for obj in (_chan, _bridge):
-            try:
-                if obj is not None:
-                    obj.deleteLater()
-            except Exception:
-                pass
+        # 閉じたタブから Python を呼ばせない。webChannel はページに付けたまま
+        # （ThreadView と同じ。channel は page と一緒に消える）
+        _retire_web_bridge(_chan, _bridge)
         if _page is not None:
             if _prof is not None:
                 try:

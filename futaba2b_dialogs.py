@@ -3425,10 +3425,17 @@ document.addEventListener('keydown',function(e){{
         self._cleanup_tmp()
         # WebEngineProfile より先に Page・View を破棄しないと警告が出るため明示的に削除
         if hasattr(self, '_tegaki_page') and self._tegaki_page is not None:
-            try:
-                self._tegaki_page.setWebChannel(None)   # 破棄中のJS→Python呼び出しを断つ
-            except Exception:
-                pass
+            # 破棄中のJS→Python呼び出しは、ブリッジを登録から外して断つ。
+            # page.setWebChannel(None) で外すと、読み込み途中のページが繋ぎを
+            # 取りに来た時に Qt(6.11) の中で落ちる（2BP ごと）。
+            # channel は page の子なので、page と一緒に消える
+            _ch = getattr(self, '_tegaki_channel', None)
+            _br = getattr(self, '_tegaki_bridge', None)
+            if _ch is not None and _br is not None:
+                try:
+                    _ch.deregisterObject(_br)
+                except Exception:
+                    pass
             self._tegaki_page.deleteLater()
             self._tegaki_page = None
         self._tegaki_channel = None
