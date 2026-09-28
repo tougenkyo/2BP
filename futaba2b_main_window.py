@@ -1000,20 +1000,7 @@ class MainWindow(QMainWindow):
                 return
         # 新規作成
         cat_view = CatalogView(self._fetcher, self._settings, inner)
-        cat_view.thread_open.connect(self._open_thread_url)
-        cat_view.thread_open_bg.connect(self._open_thread_url_bg)
-        cat_view.thread_open_mode.connect(self._open_thread_url_mode)
-        cat_view.thread_open_bg_mode.connect(self._open_thread_url_bg_mode)
-        cat_view.reverse_ng_open.connect(self._open_reverse_ng_thread)
-        cat_view.status_info.connect(self._on_thread_status)
-        cat_view.error_band_changed.connect(
-            lambda text, p=inner: self._broadcast_error_band(p, text))
-        cat_view.catalog_new_arrivals.connect(
-            lambda urls, _inner=inner: self._on_catalog_new_arrivals(_inner, urls))
-        cat_view.quar_nos_changed.connect(
-            lambda nos, _inner=inner, _cv=cat_view: self._recolor_quar_tabs(_inner, _cv))
-        cat_view.auto_refresh_requested.connect(
-            lambda v=cat_view: self._open_ar_dialog(v))
+        self._connect_catalog_view(cat_view, inner)
         _prev_cur = inner.currentIndex()   # 横へ移した後に見ていたタブへ戻すため
         inner.insertTab(0, cat_view, "カタログ"); inner.setCurrentIndex(0)
         _cat_ico = self._catalog_icon()
@@ -1046,6 +1033,27 @@ class MainWindow(QMainWindow):
         cat_view.load(board)
         self._st_log.setText(
             f"カタログ取得中: {self._board_display_name(board.name, board.url)}")
+
+    def _connect_catalog_view(self, cat_view, pane):
+        """作ったカタログのシグナルをつなぐ。カタログを作る所
+        （_show_board_catalog / _ensure_catalog_exists）は必ずここを通す。
+        別々に書いていた頃は、履歴から開いた時・「カタログを開く」で作り直した
+        時のカタログだけ、スレタブの水色（新着）・隔離スレのオレンジ・自動更新
+        ボタンがつながっていなかった。"""
+        cat_view.thread_open.connect(self._open_thread_url)
+        cat_view.thread_open_bg.connect(self._open_thread_url_bg)
+        cat_view.thread_open_mode.connect(self._open_thread_url_mode)
+        cat_view.thread_open_bg_mode.connect(self._open_thread_url_bg_mode)
+        cat_view.reverse_ng_open.connect(self._open_reverse_ng_thread)
+        cat_view.status_info.connect(self._on_thread_status)
+        cat_view.error_band_changed.connect(
+            lambda text, p=pane: self._broadcast_error_band(p, text))
+        cat_view.catalog_new_arrivals.connect(
+            lambda urls, _inner=pane: self._on_catalog_new_arrivals(_inner, urls))
+        cat_view.quar_nos_changed.connect(
+            lambda nos, _inner=pane, _cv=cat_view: self._recolor_quar_tabs(_inner, _cv))
+        cat_view.auto_refresh_requested.connect(
+            lambda v=cat_view: self._open_ar_dialog(v))
 
     def _get_or_create_board_tab(self, board: BoardInfo, activate: bool = True) -> "BoardPane | None":
         for i in range(self._outer_tabs.count()):
@@ -2099,14 +2107,7 @@ class MainWindow(QMainWindow):
         for i in range(pane.count()):
             if isinstance(pane.widget(i), CatalogView): return
         cat = CatalogView(self._fetcher, self._settings, pane)
-        cat.thread_open.connect(self._open_thread_url)
-        cat.thread_open_bg.connect(self._open_thread_url_bg)
-        cat.thread_open_mode.connect(self._open_thread_url_mode)
-        cat.thread_open_bg_mode.connect(self._open_thread_url_bg_mode)
-        cat.reverse_ng_open.connect(self._open_reverse_ng_thread)
-        cat.status_info.connect(self._on_thread_status)
-        cat.error_band_changed.connect(
-            lambda text, p=pane: self._broadcast_error_band(p, text))
+        self._connect_catalog_view(cat, pane)
         pane.insertTab(0, cat, "カタログ")
         _cat_ico = self._catalog_icon()
         if not _cat_ico.isNull():
