@@ -258,6 +258,9 @@ class MainWindow(QMainWindow):
         # 開け閉めするため、今の設定の値を覚えておく
         self._log_window   = None
         self._log_window_pref = bool(getattr(self._settings, "log_window", False))
+        # 開いているスレを開き直す時（自分で読み直す）に立て、タブを選んだ時の
+        # 更新（設定 tab_reload_catalog_new）と重ならないようにする
+        self._select_reload_suppressed = False
         self._ar_mgr       = AutoRefreshManager(self._fetcher, self._settings, self)
         self._ar_dlg: "AutoRefreshDialog | None" = None
         # 削除依頼(del)の送信待ち行列。間隔を空けて1件ずつ送り、断られたぶんは
@@ -1111,6 +1114,18 @@ class MainWindow(QMainWindow):
         from futaba2b_models import thread_history_title
         return thread_history_title(thread)
 
+    def _select_tab_no_reload(self, inner, i: int):
+        """開いているスレを開き直す時のタブ切り替え。
+
+        呼んだ側がこのあと自分で読み直す（または見せたいレスへ飛ぶ）ので、
+        タブを選んだ時の更新（設定 tab_reload_catalog_new）はここでは
+        起こさない。重ねると、実行中の取得の後にもう1回取りに行ってしまう。"""
+        self._select_reload_suppressed = True
+        try:
+            inner.setCurrentIndex(i)
+        finally:
+            self._select_reload_suppressed = False
+
     def _open_thread(self, board: BoardInfo, no: int,
                      open_mode_override: str | None = None,
                      target_res: int = 0):
@@ -1120,7 +1135,7 @@ class MainWindow(QMainWindow):
         for i in range(inner.count()):
             w = inner.widget(i)
             if isinstance(w, ThreadView) and w._thread_no == no:
-                inner.setCurrentIndex(i)
+                self._select_tab_no_reload(inner, i)
                 # 見せたいレスが指定されている時は読み直さない。見たいのは
                 # そのレスであって最新の状態ではないし、読み直すと位置合わせが
                 # 「今見ている場所」に上書きされる。ページに無ければ show_res
@@ -1833,7 +1848,7 @@ class MainWindow(QMainWindow):
         for i in range(inner.count()):
             w = inner.widget(i)
             if isinstance(w, ThreadView) and w._thread_no == no:
-                inner.setCurrentIndex(i); w.reload_thread(); return
+                self._select_tab_no_reload(inner, i); w.reload_thread(); return
         from futaba2b_app_qt import ThreadView as _TV
         view = _TV(self._fetcher, self._settings, inner)
         view._from_restore = bool(getattr(self, "_restoring_tabs", False))

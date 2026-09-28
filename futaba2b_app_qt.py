@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.513"
+APP_VER = "0.9.514"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -4434,6 +4434,18 @@ class BoardPane(QWidget):
         # これが無いと開いても古い数のまま残る（読み込み直す時は読み終わりで流す）
         if isinstance(w, ThreadView):
             QTimer.singleShot(0, w._flush_pending_sodane)
+        # カタログで新着が分かったのに、まだ読み込んでいないタブ（水色）を選んだら
+        # 更新する（設定。既定OFF）。新着の無いタブ・読み込み済みのタブでは通信
+        # しない。更新ボタンと同じ入口（1秒の連打よけ付き）を通し、自動更新の残り
+        # 時間も同じく戻す。スレを開き直す操作はこのあと自分で読み直すので、その
+        # 切り替えの間は止めてある（_select_reload_suppressed。重ねると2回取る）
+        if (isinstance(w, ThreadView) and self._main is not None
+                and getattr(self._settings, "tab_reload_catalog_new", False)
+                and not getattr(self._main, "_select_reload_suppressed", False)
+                and self._main._catalog_new_unloaded(w)):
+            w.request_manual_reload()
+            if w._thread:
+                self._main._ar_mgr.reset_remain_by_url(w._thread.url or "")
 
     def _on_tab_changed(self, idx: int):
         # ドラッグ中のcurrentChanged発火は完全スキップ（ちらつき防止）
@@ -7519,6 +7531,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 if getattr(self, '_has_error_band', False):
                     self._clear_error_band()
                 self.thread_recovered.emit()
+                # ふたばから取り直せた＝今ある分が最新。カタログで控えた返信数が
+                # まだ多くても（削除などで数が合わない）、もう読み込む物は無いので
+                # 控えを捨てる。残すと水色が消えず、タブを選ぶたびに更新してしまう
+                self._cat_res_count = 0
         # 1000レス到達 → thread_deadで自動保存・自動更新停止を起動
         if getattr(thread, 'is_full', False):
             QTimer.singleShot(0, lambda: self.thread_dead.emit(thread.url or ""))

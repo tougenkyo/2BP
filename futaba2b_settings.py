@@ -641,6 +641,9 @@ class AppSettings:
         self.tab_pink_op_no_id: bool = False
         # 隔離されたスレ(json∖cat)のタブをオレンジ、ID+隔離同時は #FF0099 にする
         self.tab_orange_quarantine: bool = True
+        # カタログで新着が分かったのに、まだ読み込んでいないスレのタブ（水色）を
+        # 選んだ時に、そのスレを更新する。通信が増えるので既定OFF
+        self.tab_reload_catalog_new: bool = False
         # 画像モードにうｐろだの直リン画像も並べる。あぷはサムネが無く原寸を
         # 読むため通信量が増える → 既定OFF。
         self.image_mode_include_uploader: bool = False
@@ -1182,6 +1185,7 @@ class AppSettings:
                 raw.get("tab_switch_flicker_fix", True))
             self.tab_pink_op_no_id = bool(raw.get("tab_pink_op_no_id", False))
             self.tab_orange_quarantine = bool(raw.get("tab_orange_quarantine", True))
+            self.tab_reload_catalog_new = bool(raw.get("tab_reload_catalog_new", False))
             self.image_mode_cols = int(raw.get("image_mode_cols", 6))
             self.image_mode_include_uploader = bool(
                 raw.get("image_mode_include_uploader", False))
@@ -1429,6 +1433,7 @@ class AppSettings:
                         "tab_switch_flicker_fix": self.tab_switch_flicker_fix,
                         "tab_pink_op_no_id": self.tab_pink_op_no_id,
                         "tab_orange_quarantine": self.tab_orange_quarantine,
+                        "tab_reload_catalog_new": self.tab_reload_catalog_new,
                         "image_mode_cols": self.image_mode_cols,
                         "image_mode_include_uploader": self.image_mode_include_uploader,
                         "uploader_delete_key": self.uploader_delete_key,

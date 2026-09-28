@@ -5760,6 +5760,12 @@ class AppSettingsDialog(QDialog):
             "IDと隔離が同時の場合は #FF0099。\n"
             "※判定にはカタログのmode=json取得（メール欄/IDバッジ か 隔離まとめ表示）が必要です")
         taf.addRow(self._tab_orange_quarantine)
+        self._tab_reload_catalog_new = QCheckBox("カタログで新着が分かったスレのタブを選んだ時に更新する")
+        self._tab_reload_catalog_new.setToolTip(
+            "カタログの更新で新着が分かったのに、まだ読み込んでいないスレのタブ（水色）を\n"
+            "選んだ時に、そのスレを更新して新着を読み込みます（更新ボタンと同じ）。\n"
+            "新着の無いタブや、もう読み込んだタブを選んだ時は更新しません。")
+        taf.addRow(self._tab_reload_catalog_new)
 
         # 削除依頼(del)
         g_del = QGroupBox("削除依頼(del)"); f0.addWidget(g_del)
@@ -6747,6 +6753,7 @@ class AppSettingsDialog(QDialog):
             getattr(s, "tab_switch_flicker_fix", True))
         self._tab_pink_op_no_id.setChecked(getattr(s, "tab_pink_op_no_id", False))
         self._tab_orange_quarantine.setChecked(getattr(s, "tab_orange_quarantine", True))
+        self._tab_reload_catalog_new.setChecked(getattr(s, "tab_reload_catalog_new", False))
         self._del_hide_after.setChecked(getattr(s, "del_hide_after_report", True))
         self._image_mode_cols.setValue(getattr(s, "image_mode_cols", 6))
         self._image_mode_include_ul.setChecked(
@@ -6950,6 +6957,7 @@ class AppSettingsDialog(QDialog):
         s.tab_switch_flicker_fix  = self._tab_flicker_fix.isChecked()
         s.tab_pink_op_no_id       = self._tab_pink_op_no_id.isChecked()
         s.tab_orange_quarantine   = self._tab_orange_quarantine.isChecked()
+        s.tab_reload_catalog_new  = self._tab_reload_catalog_new.isChecked()
         s.del_hide_after_report   = self._del_hide_after.isChecked()
         s.image_mode_cols         = self._image_mode_cols.value()
         s.image_mode_include_uploader = self._image_mode_include_ul.isChecked()
