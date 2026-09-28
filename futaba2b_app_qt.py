@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.512"
+APP_VER = "0.9.513"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5858,6 +5858,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
                                         # 開いた時・読み込み終わりに画面へ流す
         self._bg_new_total    = 0      # 自動更新で貯まった未読数（タブの(+N)・青表示用）。
                                         # このタブを開いた時に0へ戻す
+        self._cat_res_count   = 0      # カタログ更新で新着ありと分かった時のカタログの返信数。
+                                        # これが読み込んだ返信数より多い間は、まだ読み込んで
+                                        # いない新着があるので、末尾を見てもタブの水色を
+                                        # 消さない。新着と言われなかったカタログ更新で0に戻す
         self._pending_self_res_popups: list = []  # 非アクティブ時のそうだね/返信通知→アクティブ化時に表示
         self._scroll_bottom_after_update = False  # 投稿後: 更新完了時に最下部へ送る
         self._prev_scroll_y   = 0   # 前回のスクロール位置 (前回のレス位置に移動 用)
@@ -11006,7 +11010,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
     thread_open_bg_mode = Signal(str, int)  # url, open_mode (BG)
     reverse_ng_open     = Signal(str, int, bool)  # 逆NGが開く: url, open_mode, 裏で開くか
     status_info    = Signal(object)  # ステータスバー更新用
-    catalog_new_arrivals = Signal(object)  # カタログ更新時 +1以上の新着があったスレURL集合
+    catalog_new_arrivals = Signal(object)  # カタログ更新時 +1以上の新着があったスレ {URL: カタログの返信数}
     auto_refresh_requested = Signal()  # 自動更新ダイアログを開く要求
     _board_info_ready = Signal()   # board情報バックグラウンド取得完了
     _email_data_ready = Signal(object)  # board topから取得したemail情報 {no: email}
@@ -11909,13 +11913,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._re_render()
         # ── カタログ更新時の新着(+N)スレURLを通知（開いているタブの色付け用）──
         #   catalog_to_html の delta 算出と同条件: 既知スレ(prev_cnt>0)かつ res増 → 新着
+        #   カタログの返信数も渡す（タブ側で「まだ読み込んでいない新着」を判断する）。
+        #   新着が1件も無くても送る。前の更新で新着と言われたタブの控えを消すため
         try:
             _rc = self._settings.catalog_read_counts
-            _new_urls = {e.thread_url for e in entries
+            _new_urls = {e.thread_url: e.res_count for e in entries
                          if e.thread_url and _rc.get(e.thread_url, 0)
                          and e.res_count > _rc.get(e.thread_url, 0)}
-            if _new_urls:
-                self.catalog_new_arrivals.emit(_new_urls)
+            self.catalog_new_arrivals.emit(_new_urls)
         except Exception:
             pass
         # ステータスバー更新

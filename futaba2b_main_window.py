@@ -1483,34 +1483,53 @@ class MainWindow(QMainWindow):
 
     def _on_catalog_new_arrivals(self, inner, urls):
         """カタログ更新で +1以上の新着があったスレの、同一板内で開いているタブを
-        青文字（#4488ff）＋青背景（水色）にする。"""
-        if not urls:
-            return
+        青文字（#4488ff）＋青背景（水色）にする。
+        urls は {スレURL: カタログの返信数}（新着が無い更新では空）。
+        返信数はタブに控える。まだ読み込んでいない新着がある間は、スレを
+        見ても水色を消さないため（_on_unread_state）。新着と言われなかった
+        タブの控えは0に戻す。"""
         try:
             tb = inner.tabBar()
         except Exception:
             return
         if not hasattr(tb, "_tab_colors"):
             return
+        urls = urls or {}
         for ii in range(inner.count()):
             w = inner.widget(ii)
-            if isinstance(w, ThreadView) and w._thread and (w._thread.url in urls):
-                # op-no-idフラグを更新してから文字色を決定（赤は維持）
-                self._update_tab_id_flag(tb, w, ii)
-                cur = tb._tab_colors.get(ii)
-                if cur != WrapTabBar.c_error():
-                    if ii in tb._tab_id_set:
-                        tb._tab_colors[ii] = WrapTabBar.c_id()    # op-no-id は常にピンク
-                    elif w.isVisible():
-                        # 表示中タブ → 青にせず基底色（既読扱い）
-                        if cur and cur == WrapTabBar.c_new():
-                            del tb._tab_colors[ii]
-                        tb._refresh_base_color(ii)
-                    else:
-                        tb._tab_colors[ii] = WrapTabBar.c_new()    # 背景タブ → 青
-                # 青背景（水色）
-                self._on_unread_state(inner, w, True)
+            if not isinstance(w, ThreadView) or not w._thread:
+                continue
+            w._cat_res_count = int(urls.get(w._thread.url, 0) or 0)
+            if w._thread.url not in urls:
+                continue
+            # op-no-idフラグを更新してから文字色を決定（赤は維持）
+            self._update_tab_id_flag(tb, w, ii)
+            cur = tb._tab_colors.get(ii)
+            if cur != WrapTabBar.c_error():
+                if ii in tb._tab_id_set:
+                    tb._tab_colors[ii] = WrapTabBar.c_id()    # op-no-id は常にピンク
+                elif w.isVisible():
+                    # 表示中タブ → 青にせず基底色（既読扱い）
+                    if cur and cur == WrapTabBar.c_new():
+                        del tb._tab_colors[ii]
+                    tb._refresh_base_color(ii)
+                else:
+                    tb._tab_colors[ii] = WrapTabBar.c_new()    # 背景タブ → 青
+            # 青背景（水色）
+            self._on_unread_state(inner, w, True)
         tb.update()
+
+    @staticmethod
+    def _catalog_new_unloaded(view) -> bool:
+        """カタログの更新で分かった新着を、このタブがまだ読み込んでいないか。
+        カタログのレス数は返信数（OP除く）なので、読み込んだ数もOPを除いて比べる。
+        落ちたスレはもう読み込めないので含めない（水色が残り続けないように）。"""
+        _cat = int(getattr(view, "_cat_res_count", 0) or 0)
+        if _cat <= 0 or getattr(view, "_is_dead", False):
+            return False
+        _th = getattr(view, "_thread", None)
+        _loaded = max(0, len(_th.res_list) - 1) if (_th and _th.res_list) else 0
+        return _cat > _loaded
 
     def _on_unread_state(self, inner, view, has_unread: bool):
         """未読（赤帯）有無に応じてタブ背景色を水色/デフォルトに切り替える"""
@@ -1518,6 +1537,10 @@ class MainWindow(QMainWindow):
         if idx < 0: return
         tb = inner.tabBar()
         if not hasattr(tb, "_tab_bg_colors"): return
+        if not has_unread and self._catalog_new_unloaded(view):
+            # カタログで分かった新着をまだ読み込んでいない。ページの末尾が
+            # 見えていても、そこは読み込んだ所までなので水色は消さない
+            has_unread = True
         if has_unread:
             tb._tab_bg_colors[idx] = WrapTabBar.c_unread_bg()  # 水色・半透明
         else:
