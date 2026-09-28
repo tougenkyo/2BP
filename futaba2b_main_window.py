@@ -1129,6 +1129,10 @@ class MainWindow(QMainWindow):
         self._select_reload_suppressed = True
         try:
             inner.setCurrentIndex(i)
+            # 左右分割中はスレ側を操作先にする（もう出ていたタブでも。
+            # 選び直しの更新はしない。このあと呼んだ側が読み直す）
+            if hasattr(inner, "show_tab_side"):
+                inner.show_tab_side()
         finally:
             self._select_reload_suppressed = False
 
@@ -6211,10 +6215,16 @@ class MainWindow(QMainWindow):
             _active_w = inner.currentWidget()
             _active_j = 0
             # 左右に分けている板ではカタログがタブに居ない。覚えておかないと
-            # 次の起動でカタログが作られず、分割にならない
-            if getattr(inner, "_split_cat", None) is not None:
-                tabs_info.append({"type": "catalog", "no": 0, "pinned": False})
+            # 次の起動でカタログが作られず、分割にならない。タブバーに出している
+            # カタログタブの位置（このタブ番号の前）に入れる
+            _sc = getattr(inner, "_split_cat", None)
+            _cat_info = ({"type": "catalog", "no": 0, "pinned": (_sc in inner._pinned)}
+                         if _sc is not None else None)
+            _cat_at = inner.split_catalog_pos() if _cat_info is not None else -1
             for j in range(inner.count()):
+                if _cat_info is not None and j >= _cat_at:
+                    tabs_info.append(_cat_info)
+                    _cat_info = None
                 w = inner.widget(j)
                 is_pinned = (w in inner._pinned)
                 if isinstance(w, CatalogView):
@@ -6240,6 +6250,8 @@ class MainWindow(QMainWindow):
                     continue
                 if w is _active_w:
                     _active_j = len(tabs_info) - 1
+            if _cat_info is not None:
+                tabs_info.append(_cat_info)     # カタログタブが最後尾
             state["boards"].append({
                 "board_name":  inner._board.name,
                 "board_url":   inner._board.url,
@@ -6627,6 +6639,10 @@ class MainWindow(QMainWindow):
             並び順・ピン留め・アクティブ内側タブを復元する"""
             def _match_widget(_pane, _t):
                 _type, _no = _t.get("type"), _t.get("no")
+                # 左右に分けている板のカタログはタブに居ない（横の枠）
+                _sc = getattr(_pane, "_split_cat", None)
+                if _type == "catalog" and _sc is not None:
+                    return _sc
                 for k in range(_pane.count()):
                     wv = _pane.widget(k)
                     if _type == "catalog" and isinstance(wv, CatalogView):
@@ -6673,6 +6689,13 @@ class MainWindow(QMainWindow):
                 if _order and hasattr(_bar, "reorder_tabs"):
                     if _bar.reorder_tabs(_order):
                         pane._refresh_tab_bar()
+                # 左右に分けている板は、タブバーのカタログタブを保存した位置へ
+                # （カタログはタブに居ないので上の並べ替えでは動かない）
+                _sc = getattr(pane, "_split_cat", None)
+                if _sc is not None and _sc in _order:
+                    pane.set_split_catalog_pos(sum(
+                        1 for _w in _order[:_order.index(_sc)]
+                        if pane.indexOf(_w) >= 0))
                 # ピン留め復元
                 for t in saved:
                     if t.get("pinned"):

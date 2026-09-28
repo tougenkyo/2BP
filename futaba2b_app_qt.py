@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.516"
+APP_VER = "0.9.517"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -617,7 +617,13 @@ class WrapTabBar(QTabBar):
     """右端でタブを折り返す多段タブバー。"""
 
     tabCloseRequested = Signal(int)
+    vcatClicked       = Signal()      # 左右分割中のカタログタブ（VCAT）を左クリックした
+    currentReclicked  = Signal(int)   # カタログ側を操作中に、右側に出ているタブを押し直した
     _ROW_H  = 26
+    # 左右に分けている時だけ出す「カタログ」タブの番号の代わり。カタログは横の枠に
+    # 出していてタブ（ページ）を持たないので、Qt のタブ番号（0〜）とは別に扱う。
+    # （-1 は「どのタブでもない」に使われているので避ける）
+    VCAT = -2
 
     @property
     def _C_SEL(self):  return _TM.ui("tab_selected_bg", "#3C3F41")
@@ -693,11 +699,22 @@ class WrapTabBar(QTabBar):
         self._drag_start_pos = None       # ドラッグ開始座標
         self._drag_active: bool = False   # ドラッグ中フラグ
         self._drag_widget_order: list = []  # ドラッグ開始時のwidget順（確定用）
+        self._drag_is_vcat: bool = False    # カタログタブ（VCAT）をドラッグしているか
+        # 左右に分けている時の「カタログ」タブ（VCAT）。中身は横の枠にあるので
+        # ページは持たず、並びの中の位置だけ持つ。_vcat_pos はこのタブ番号の
+        # 前に出す（-1=出していない）。右側のページは切り替えないので、選んだ
+        # 見た目は「カタログ側を操作中」(_vcat_active) で決める。
+        self._vcat_pos: int = -1
+        self._vcat_active: bool = False
+        self._vcat_text: str = "カタログ"
+        self._vcat_icon: "QPixmap | None" = None
+        self._vcat_widget = None           # 横に出しているカタログ（ピン・×の判定用）
         # アクティブタブ切替時にバー全体を再描画（アクティブ行を最下段へ移動するため）
         self.currentChanged.connect(self.update)
 
-    def setTabIcon(self, idx: int, icon):
-        """アイコンをローカル辞書に保存して再描画。QPixmap / QIcon どちらも受け取る。"""
+    @staticmethod
+    def _to_tab_pixmap(icon) -> "QPixmap | None":
+        """タブに描く 16x16 のアイコン。QPixmap / QIcon どちらも受け取る（無ければ None）"""
         if isinstance(icon, QPixmap):
             pix = icon
         elif isinstance(icon, QIcon):
@@ -710,17 +727,76 @@ class WrapTabBar(QTabBar):
                 pix = icon.pixmap(QSize(16, 16))
         else:
             pix = QPixmap()
-        if pix and not pix.isNull():
-            # 16x16 にスケール
-            if pix.width() != 16 or pix.height() != 16:
-                pix = pix.scaled(16, 16,
-                                 Qt.AspectRatioMode.KeepAspectRatio,
-                                 Qt.TransformationMode.SmoothTransformation)
+        if not pix or pix.isNull():
+            return None
+        # 16x16 にスケール
+        if pix.width() != 16 or pix.height() != 16:
+            pix = pix.scaled(16, 16,
+                             Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        return pix
+
+    def setTabIcon(self, idx: int, icon):
+        """アイコンをローカル辞書に保存して再描画。QPixmap / QIcon どちらも受け取る。"""
+        pix = self._to_tab_pixmap(icon)
+        if pix is not None:
             self._tab_icons[idx] = pix
         else:
             self._tab_icons.pop(idx, None)
         self._tab_width_cache.pop(idx, None)  # キャッシュ無効化
         self.update()
+
+    # ── 左右分割中のカタログタブ（ページを持たないタブ）────────────────────────
+    def set_split_catalog(self, widget, pos: int, icon=None):
+        """左右に分けている時のカタログタブを出す（位置を変える）。
+        pos=このタブ番号の前に出す。icon を渡さなければ今のアイコンのまま。"""
+        self._vcat_widget = widget
+        self._vcat_pos = max(0, min(int(pos), self.count()))
+        if icon is not None:
+            self._vcat_icon = self._to_tab_pixmap(icon)
+        self._vcat_changed()
+
+    def clear_split_catalog(self) -> int:
+        """カタログタブを消し、出していた位置を返す（出していなければ -1）"""
+        pos = self._vcat_pos
+        self._vcat_pos = -1
+        self._vcat_active = False
+        self._vcat_widget = None
+        self._vcat_changed()
+        return pos
+
+    def set_split_catalog_active(self, on: bool):
+        """カタログ側を操作中か（カタログタブを選んだ見た目にするか）"""
+        on = bool(on) and self._vcat_pos >= 0
+        if on != self._vcat_active:
+            self._vcat_active = on
+            self._vcat_changed()
+
+    def _vcat_changed(self):
+        self._tab_rects_cache_key = None
+        self._tab_width_cache.pop(self.VCAT, None)
+        self.tabLayoutChange()   # 段数が変わる事があるので、高さも合わせ直す
+
+    def _seq(self) -> list:
+        """描く並び（タブ番号の列。左右分割中はカタログタブ VCAT を途中に挟む）
+        （__init__ の途中から組み直しで呼ばれる事があるので getattr で受ける）"""
+        seq = list(range(self.count()))
+        _vp = getattr(self, "_vcat_pos", -1)
+        if _vp >= 0:
+            seq.insert(min(_vp, len(seq)), self.VCAT)
+        return seq
+
+    def _shown_current(self) -> int:
+        """選んだ見た目にするタブ（カタログ側を操作中ならカタログタブ）"""
+        if getattr(self, "_vcat_pos", -1) >= 0 and getattr(self, "_vcat_active", False):
+            return self.VCAT
+        return self.currentIndex()
+
+    def _t_text(self, i: int) -> str:
+        return self._vcat_text if i == self.VCAT else self.tabText(i)
+
+    def _t_icon(self, i: int):
+        return self._vcat_icon if i == self.VCAT else self._tab_icons.get(i)
 
 
 
@@ -732,8 +808,8 @@ class WrapTabBar(QTabBar):
     def _tab_width(self, i: int) -> int:
         """太字フォントで計算したタブ幅（選択時に見切れないよう太字基準）"""
         # キャッシュ: テキスト・アイコン有無・ピンが変わったときだけ再計算
-        text = self.tabText(i)
-        has_icon = bool(self._tab_icons.get(i))
+        text = self._t_text(i)
+        has_icon = bool(self._t_icon(i))
         is_pinned = self._is_pinned_tab(i)
         cache_key = (text, has_icon, is_pinned)
         cached = self._tab_width_cache.get(i)
@@ -771,10 +847,11 @@ class WrapTabBar(QTabBar):
         pw = self.parentWidget().width() if self.parentWidget() else 0
         if pw > avail:
             avail = pw
+        seq = self._seq()   # 左右分割中はカタログタブも並びに入る
         if avail <= 0:
-            return [list(range(self.count()))] if self.count() else [[]]
+            return [seq] if seq else [[]]
         rows, row_w = [[]], 0
-        for i in range(self.count()):
+        for i in seq:
             tw = self._tab_width(i)
             if row_w + tw > avail and rows[-1]:
                 rows.append([]); row_w = 0
@@ -807,8 +884,8 @@ class WrapTabBar(QTabBar):
         perm = self._row_perm
         if sorted(perm) != list(range(n)):
             perm = list(range(n))        # 段数が変わった → いったん番号順に戻す
-        cur = self.currentIndex()
-        if cur >= 0 and not self._row_hold:
+        cur = self._shown_current()      # カタログ側を操作中ならカタログタブの段
+        if cur != -1 and not self._row_hold:
             _nr = -1
             for ri, row in enumerate(rows):
                 if cur in row:
@@ -823,10 +900,12 @@ class WrapTabBar(QTabBar):
         # キャッシュ: サイズ・タブ数・テキスト・アイコン・ピンが
         # 変わらない限り再計算しない。ピンを鍵に入れておかないと、
         # 留めた直後に前の配置のまま描かれる（手で捨てないと直らない）。
-        key = (self.width(), self.count(), self.currentIndex(), self._row_hold,
-               tuple(self.tabText(i) for i in range(self.count())),
-               tuple(bool(self._tab_icons.get(i)) for i in range(self.count())),
-               tuple(self._is_pinned_tab(i) for i in range(self.count())))
+        seq = self._seq()
+        key = (self.width(), self.count(), self._shown_current(), self._row_hold,
+               tuple(seq),
+               tuple(self._t_text(i) for i in seq),
+               tuple(bool(self._t_icon(i)) for i in seq),
+               tuple(self._is_pinned_tab(i) for i in seq))
         if getattr(self, '_tab_rects_cache_key', None) == key:
             return self._tab_rects_cache_val
         rects = {}
@@ -855,12 +934,15 @@ class WrapTabBar(QTabBar):
         リリース時（_sync_stacked_to_tabbar）まで変わらない。そのため
         parent_tw.widget(i) を使うとピンや×が移動前の位置に残ってしまう。
         ドラッグ中は並べ替え済みの _drag_widget_order を優先する。
+        左右分割中のカタログタブ（VCAT）は、横に出しているカタログを返す。
 
         見るのは「ドラッグ中だけ」。控えはタブを押した時点で取るので、
         動かさずに離せばそのまま残る。それを枚数が合うだけで信じていたため、
         「最後尾をピン留め→前のタブを閉じる→Ctrl+Shift+Tで戻す」のように
         枚数が元へ戻ると、ピンや×が閉じる前の位置に描かれていた
         （中身は正しくピン留めされたままの、描画だけの食い違い）。"""
+        if i == self.VCAT:
+            return self._vcat_widget
         if self._drag_active:
             _wo = self._drag_widget_order
             if _wo and len(_wo) == self.count() and 0 <= i < len(_wo):
@@ -1007,6 +1089,8 @@ class WrapTabBar(QTabBar):
         super().tabRemoved(idx)
         self._clear_drag_snapshot()   # タブが増減した控えはもう当てにならない
         self._row_hold = True         # 閉じた拍子に段を入れ替えない
+        if 0 <= idx < self._vcat_pos:
+            self._vcat_pos -= 1       # カタログタブより前のタブが減った
         for d in (self._tab_colors, self._tab_bg_colors, self._tab_icons, self._tab_width_cache):
             new_d = {}
             for k, v in d.items():
@@ -1025,6 +1109,10 @@ class WrapTabBar(QTabBar):
         super().tabInserted(idx)
         self._clear_drag_snapshot()   # タブが増減した控えはもう当てにならない
         self._row_hold = False        # 増えた分で組み直す
+        # カタログタブより前に入った時だけ後ろへずらす（同じ番号＝カタログタブの
+        # 直後に入る。最後尾に足すタブは、分けていない時と同じくカタログより後）
+        if 0 <= idx < self._vcat_pos:
+            self._vcat_pos += 1
         # 挿入位置以降のキャッシュをシフト
         for d in (self._tab_colors, self._tab_bg_colors, self._tab_icons, self._tab_width_cache):
             new_d = {}
@@ -1061,7 +1149,7 @@ class WrapTabBar(QTabBar):
     def paintEvent(self, _event):
         from PySide6.QtGui import QPainter, QFont, QPen
         rects  = self._tab_rects()
-        ci     = self.currentIndex()
+        ci     = self._shown_current()   # カタログ側を操作中ならカタログタブを選んだ見た目に
         p      = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(self._C_BG))
@@ -1091,7 +1179,7 @@ class WrapTabBar(QTabBar):
             icon_rect = QRect(rect.x()+3, rect.y()+(self._ROW_H-16)//2, 16, 16)
             # ── ピン留め用アイコン領域（20x20、中央揃え）──
             pin_rect  = QRect(rect.x()+1, rect.y()+(self._ROW_H-20)//2, 20, 20)
-            pix = self._tab_icons.get(i)
+            pix = self._t_icon(i)
             has_icon = pix and not pix.isNull()
             if has_icon:
                 p.drawPixmap(icon_rect, pix)
@@ -1151,9 +1239,10 @@ class WrapTabBar(QTabBar):
             p.setFont(fnt)
             p.setPen(txt_color)
             p.drawText(tr, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                       self.tabText(i))
+                       self._t_text(i))
             cr = self._close_rect(rect)
             # カタログタブ・2BPタブは閉じられない → × を描画しない
+            # （左右分割中のカタログタブは、横に出しているカタログで判定される）
             try:
                 _no_close = (isinstance(w_i, CatalogView)
                              or (w_i is not None and w_i in self._no_close_widgets))
@@ -1183,29 +1272,44 @@ class WrapTabBar(QTabBar):
         # （1回目の押下で setCurrentIndex → アクティブ行が最下段へ移動し、2回目の
         #   位置からは別タブに解決されてしまうのを防ぐ）
         self._press_idx = i
+        if i == self.VCAT:
+            # 左右分割中のカタログタブ: 右側（タブのページ）は切り替えず、
+            # カタログ側を操作先にする。ドラッグで位置も動かせる
+            self._row_hold = False
+            self.vcatClicked.emit()
+            self._begin_drag(i, pos)
+            return
         if i >= 0 and not self._close_rect(self._tab_rects().get(i, QRect())).contains(pos):
             # 自分で選んだ → 段を送ってよい。位置を決めた後に外す
             # （先に外すと押した瞬間に段が動き、狙ったタブから外れる）
             self._row_hold = False
+            # カタログ側を操作中に、右側に出ているタブを押した＝選び直し
+            # （同じタブなので切り替えは起きない。知らせて選んだ扱いにしてもらう）
+            _reclick = (i == self.currentIndex() and self._vcat_active)
             self.setCurrentIndex(i)              # × 以外の左クリック→選択
-            # D&D 開始準備
-            self._drag_idx = i
-            self._drag_start_pos = pos
-            self._drag_active = False
-            # widget順・テキスト順のスナップショットを取得
-            tw2 = self.parent()
-            if tw2 is not None:
-                self._drag_widget_order = [tw2.widget(j) for j in range(tw2.count())]
-            else:
-                self._drag_widget_order = []
-            self._drag_text_order = []
-            self._drag_tip_order  = []
+            if _reclick:
+                self.currentReclicked.emit(i)
+            self._begin_drag(i, pos)
+
+    def _begin_drag(self, i: int, pos):
+        """D&D 開始準備（widget順・テキスト順のスナップショットを取得）"""
+        self._drag_idx = i
+        self._drag_start_pos = pos
+        self._drag_active = False
+        self._drag_is_vcat = (i == self.VCAT)
+        tw2 = self.parent()
+        if tw2 is not None:
+            self._drag_widget_order = [tw2.widget(j) for j in range(tw2.count())]
+        else:
+            self._drag_widget_order = []
+        self._drag_text_order = []
+        self._drag_tip_order  = []
 
     def mouseMoveEvent(self, e):
         from PySide6.QtCore import Qt as _Qt
         if not (e.buttons() & _Qt.MouseButton.LeftButton):
             return
-        if self._drag_idx < 0 or self._drag_start_pos is None:
+        if self._drag_idx == -1 or self._drag_start_pos is None:
             return
         pos = e.position().toPoint()
         if not self._drag_active:
@@ -1217,32 +1321,52 @@ class WrapTabBar(QTabBar):
         my_rect = rects.get(self._drag_idx)
         if my_rect is None:
             return
-        # ポインタが乗っているタブを検索
-        hover_idx = -1
+        # ポインタが乗っているタブを検索（カタログタブ VCAT も含む）
+        hover_idx = None
         for ti, r in rects.items():
             if r.contains(pos):
                 hover_idx = ti
                 break
-        if hover_idx < 0 or hover_idx == self._drag_idx:
+        if hover_idx is None or hover_idx == self._drag_idx:
+            return
+        # 左右は画面の並び（カタログタブを挟んだ並び）で比べる
+        seq = self._seq()
+        try:
+            p, q = seq.index(self._drag_idx), seq.index(hover_idx)
+        except ValueError:
             return
         hover_rect = rects[hover_idx]
         cx, cy = hover_rect.center().x(), hover_rect.center().y()
-        moving_left  = hover_idx < self._drag_idx
-        moving_right = hover_idx > self._drag_idx
+        moving_left  = q < p
+        moving_right = q > p
         if my_rect.top() == hover_rect.top():
-            if moving_left  and pos.x() < cx:
-                self._move_tab(self._drag_idx, hover_idx)
-                self._drag_idx = hover_idx
-            elif moving_right and pos.x() > cx:
-                self._move_tab(self._drag_idx, hover_idx)
-                self._drag_idx = hover_idx
+            go = (moving_left and pos.x() < cx) or (moving_right and pos.x() > cx)
         else:
-            if moving_left  and pos.y() < cy:
-                self._move_tab(self._drag_idx, hover_idx)
-                self._drag_idx = hover_idx
-            elif moving_right and pos.y() > cy:
-                self._move_tab(self._drag_idx, hover_idx)
-                self._drag_idx = hover_idx
+            go = (moving_left and pos.y() < cy) or (moving_right and pos.y() > cy)
+        if go:
+            self._drag_idx = self._drag_move(p, q)
+
+    def _drag_move(self, p: int, q: int) -> int:
+        """画面の並びの p 番目を q 番目へ動かす（ドラッグ中）。動かした物の新しい番号を返す。
+        カタログタブ（VCAT）は位置が変わるだけ（ページが無いので並べ替えは要らない）。
+        本物のタブは _move_tab で動かし、カタログタブを飛び越えた時は、
+        その分だけカタログタブの位置もずらす。"""
+        seq = self._seq()
+        item = seq.pop(p)
+        seq.insert(q, item)
+        if self._vcat_pos >= 0:
+            self._vcat_pos = seq.index(self.VCAT)   # 前にある本物のタブの数
+        if item == self.VCAT:
+            self._tab_rects_cache_key = None
+            self.update()
+            return self.VCAT
+        dst = [x for x in seq if x != self.VCAT].index(item)
+        if dst != item:
+            self._move_tab(item, dst)
+        else:
+            self._tab_rects_cache_key = None      # カタログタブだけ飛び越えた
+            self.update()
+        return dst
 
     def _move_tab(self, src: int, dst: int):
         """タブを src から dst へ移動。
@@ -1306,11 +1430,18 @@ class WrapTabBar(QTabBar):
         from PySide6.QtCore import Qt as _Qt
         if e.button() != _Qt.MouseButton.LeftButton:
             self._drag_idx = -1; self._drag_active = False
+            self._drag_is_vcat = False
             self._clear_drag_snapshot()
             return
         pos = e.position().toPoint()
         if self._drag_active:
             self._drag_idx = -1; self._drag_active = False
+            if self._drag_is_vcat:
+                # カタログタブを動かしただけ。ページの並びは変わっていないので、
+                # 揃え直しも「タブを選んだ」扱いの呼び直しもしない
+                self._drag_is_vcat = False
+                self._clear_drag_snapshot()
+                return
             tw = self.parent()
             if tw is not None:
                 # stacked を TabBar 順に合わせる（リリース時に一括同期）
@@ -1326,8 +1457,11 @@ class WrapTabBar(QTabBar):
             return
         # 動かさずに離した（ただのクリック）→ 控えは用済み。持ち越さない
         self._drag_idx = -1; self._drag_active = False
+        self._drag_is_vcat = False
         self._clear_drag_snapshot()
         for i, rect in self._tab_rects().items():
+            if i == self.VCAT:
+                continue      # カタログタブは閉じられない（× も描いていない）
             if self._close_rect(rect).contains(pos):
                 self.tabCloseRequested.emit(i)
                 return
@@ -1438,14 +1572,15 @@ class WrapTabBar(QTabBar):
         # このイベント（2回目）の位置からは別タブに解決されてしまう。
         # reflow 前に mousePressEvent で確定した _press_idx を優先して使う。
         i = getattr(self, '_press_idx', -1)
-        if i < 0:
+        if i == -1:
             i = self._idx_at(e.position().toPoint())
-        if i >= 0: self.tabBarDoubleClicked.emit(i)
+        # 左右分割中のカタログタブ（VCAT）も知らせる（分けていない時のカタログタブと同じ扱い）
+        if i != -1: self.tabBarDoubleClicked.emit(i)
 
     def contextMenuEvent(self, e):
         # _ctx_idx は mousePressEvent で設定済み。ここでは伝播を止めてシグナルを送出するだけ
         e.accept()   # 親ウィジェットへの伝播を防ぐ
-        if getattr(self, '_ctx_idx', -1) >= 0:
+        if getattr(self, '_ctx_idx', -1) != -1:   # カタログタブ（VCAT）も含む
             self.customContextMenuRequested.emit(e.pos())
 
     def wheelEvent(self, event):
@@ -3882,6 +4017,10 @@ class BoardPane(QWidget):
         self._del_result.connect(self._on_ctx_del_result)   # 削除依頼(BG→UI)
         self._pinned: set = set()  # ピン留め中のウィジェット
         self._wrap_bar._pinned_widgets = self._pinned  # 描画用に参照を共有
+        # 左右分割中のカタログタブ（ページを持たず、タブバーが描くだけのタブ）
+        self._wrap_bar.vcatClicked.connect(self._on_split_catalog_tab_clicked)
+        self._wrap_bar.currentReclicked.connect(self._on_current_tab_reclicked)
+        self._last_cur_widget = None   # 右側に出していたタブ（選び直したかの判定用）
 
         # ── タブ0枚時のプレースホルダ ──
         self._no_tab_widget = QWidget()
@@ -4093,7 +4232,7 @@ class BoardPane(QWidget):
         cat = self._split_cat
         if cat is None:
             return False
-        self._cat_focused = True
+        self._set_cat_active(True)
         try:
             cat.show()
             _v = getattr(cat, "_view", None)
@@ -4104,16 +4243,81 @@ class BoardPane(QWidget):
         return True
 
     def _on_focus_changed(self, _old, new):
-        """カタログ側とタブ側、どちらを最後に触ったかを覚える（操作先の判定用）"""
+        """カタログ側とタブ側、どちらを最後に触ったかを覚える（操作先の判定用）。
+        カタログ側からタブ側へ戻った時（スレの中を押した等）は、そのタブを
+        選び直した扱いにする（タブを切り替えた時と同じく、たまった新着を出す等）。"""
         if self._split_cat is None or new is None:
             return
         try:
             if self._cat_host.isAncestorOf(new):
-                self._cat_focused = True
+                self._set_cat_active(True)
             elif self._tab_stack.isAncestorOf(new):
-                self._cat_focused = False
+                if self._cat_focused:
+                    self._set_cat_active(False)
+                    self._on_tab_side_reselected()
         except RuntimeError:
             pass
+
+    def _set_cat_active(self, on: bool):
+        """左右に分けている時、どちらの側を操作中かを覚えてタブの見た目に出す
+        （カタログ側ならカタログタブを選んだ見た目にし、右側のタブは外す）"""
+        self._cat_focused = bool(on)
+        try:
+            self._wrap_bar.set_split_catalog_active(self._cat_focused)
+        except (RuntimeError, AttributeError):
+            pass
+
+    def _on_split_catalog_tab_clicked(self):
+        """左右分割中のカタログタブを押した: 右側はそのまま、カタログ側を操作先にする"""
+        self.focus_catalog()
+
+    def _on_current_tab_reclicked(self, _idx: int):
+        """カタログ側を操作中に、右側に出ているタブを押した＝そのタブを選び直した。
+        同じタブなので切り替えは起きない。ここで選んだ扱いにする。"""
+        if not self._cat_focused:
+            return
+        self._set_cat_active(False)       # 先に外す（下の入力先の移動で二重にしない）
+        self._focus_tab_page()
+        self._on_tab_side_reselected()
+
+    def _focus_tab_page(self):
+        """右側（タブ側）に出ているページへキーボードの入力先を移す。
+        左右に分けているとカタログも見えたままなので、入力先がカタログに
+        残ったままになる（スレを選んだのにキーでカタログが動く）ため。"""
+        w = self._tabs.currentWidget()
+        if w is None:
+            return
+        v = getattr(w, "_view", None)
+        try:
+            (v if isinstance(v, QWidget) else w).setFocus()
+        except RuntimeError:
+            pass
+
+    def _on_tab_side_reselected(self):
+        """右側のタブを選び直した時の処理（タブを切り替えた時と同じ扱いの分）。
+        裏にいる間にたまった新着の反映と、設定による「水色のタブを選んだら更新」"""
+        w = self._tabs.currentWidget()
+        if isinstance(w, ThreadView):
+            self.consume_pending_for(w)
+
+    def show_tab_side(self):
+        """右側（タブ側）を操作先にする。選び直しの扱い（更新など）はしない。
+        開いているスレをカタログから開き直した時など、呼んだ側が自分で読み直す時に使う。"""
+        if self._split_cat is None or not self._cat_focused:
+            return
+        self._set_cat_active(False)
+        self._focus_tab_page()
+
+    def split_catalog_pos(self) -> int:
+        """左右分割中のカタログタブの位置（このタブ番号の前）。分けていなければ -1"""
+        if self._split_cat is None:
+            return -1
+        return self._wrap_bar._vcat_pos
+
+    def set_split_catalog_pos(self, pos: int):
+        """左右分割中のカタログタブの位置を変える（前回の並びの復元用）"""
+        if self._split_cat is not None:
+            self._wrap_bar.set_split_catalog(self._split_cat, pos)
 
     def _update_tab_stack_page(self):
         """タブが1枚も無い時に何を出すか。
@@ -4240,14 +4444,20 @@ class BoardPane(QWidget):
         mode = mode if mode in ("cat_left", "cat_right") else ""
         if not mode:
             cat, self._split_cat = self._split_cat, None
+            # タブバーのカタログタブを消し、その位置へ本物のタブとして戻す
+            # （分けている間にドラッグで動かした位置もそのまま使う）
+            _pos = self._wrap_bar.clear_split_catalog()
             if cat is not None:
                 try:
                     self._cat_host.layout().removeWidget(cat)
-                    self._tabs.insertTab(0, cat, "カタログ")
+                    _at = _pos if 0 <= _pos <= self._tabs.count() else 0
+                    self._tabs.insertTab(_at, cat, "カタログ")
                     if self._main is not None:
                         _ico = self._main._catalog_icon()
                         if _ico is not None and not _ico.isNull():
-                            self._tabs.setTabIcon(0, _ico)
+                            # タブバーは自前で描くので、アイコンもタブバーへ渡す
+                            # （QTabWidget.setTabIcon だとタブバーの控えに入らず描かれない）
+                            self._wrap_bar.setTabIcon(_at, _ico)
                     # 描き直しの隠して出すは、カタログが今見えているタブの時だけ。
                     # 裏のタブで show() すると、今見ているスレの上に重なって出る
                     # （カタログのツールバーがスレの上に残って見えた）
@@ -4265,7 +4475,7 @@ class BoardPane(QWidget):
             except (RuntimeError, AttributeError):
                 pass
             self._split_mode = ""
-            self._cat_focused = False
+            self._set_cat_active(False)
             self._move_tab_bar(False)
             self._update_tab_stack_page()
             return
@@ -4275,10 +4485,17 @@ class BoardPane(QWidget):
         if cat is not None and self._split_cat is None:
             # カタログをタブから外して横の枠へ移す
             _idx = self._tabs.indexOf(cat)
+            _was_cur = (_idx >= 0 and self._tabs.currentIndex() == _idx)
             if _idx >= 0:
                 self._tabs.removeTab(_idx)
             self._cat_host.layout().addWidget(cat)
             self._split_cat = cat
+            # タブバーには「カタログ」タブを残す（外した所に出す。中身は横の枠）
+            self._wrap_bar.set_split_catalog(
+                cat, _idx if _idx >= 0 else 0,
+                self._main._catalog_icon() if self._main is not None else None)
+            # カタログを見ていた時に分けたなら、カタログ側を操作中のままにする
+            self._set_cat_active(_was_cur)
             self._cat_host.show()
             self._repaint_split_cat()
         # 左右の並び
@@ -4329,23 +4546,31 @@ class BoardPane(QWidget):
                     target = h if h < idx else h - 1
                     break
 
-        self._tabs.removeTab(idx)
-        if not isinstance(w, CatalogView):
-            _dispose_tab_view_later(w)
+        # 閉じた拍子のタブの移動は「選んだ」のではない。外したとたんに Qt が隣を
+        # 選び、続けて下で戻り先を選び直すので、2回目は前のタブが残っていて
+        # 選んだように見える。その間は印を立てておく（左右分割中にカタログ側を
+        # 操作中なら、そのままにするため。_on_tab_changed が見る）
+        self._closing_tab = True
+        try:
+            self._tabs.removeTab(idx)
+            if not isinstance(w, CatalogView):
+                _dispose_tab_view_later(w)
 
-        # 履歴内の残りインデックスを補正（閉じたタブ以降をデクリメント）
-        self._tab_history = [
-            (h if h < idx else h - 1)
-            for h in self._tab_history if h != idx
-        ]
+            # 履歴内の残りインデックスを補正（閉じたタブ以降をデクリメント）
+            self._tab_history = [
+                (h if h < idx else h - 1)
+                for h in self._tab_history if h != idx
+            ]
 
-        if self._tabs.count() == 0:
-            self._update_tab_stack_page()   # 「カタログを開く」/ 分割中の案内
-            self._title_lbl.setFullText("")
-            return
+            if self._tabs.count() == 0:
+                self._update_tab_stack_page()   # 「カタログを開く」/ 分割中の案内
+                self._title_lbl.setFullText("")
+                return
 
-        if target >= 0 and target < self._tabs.count():
-            self._tabs.setCurrentIndex(target)
+            if target >= 0 and target < self._tabs.count():
+                self._tabs.setCurrentIndex(target)
+        finally:
+            self._closing_tab = False
 
 
     def _get_webview(self, widget) -> "QWebEngineView | None":
@@ -4452,6 +4677,26 @@ class BoardPane(QWidget):
         bar = self._tabs.tabBar()
         if getattr(bar, '_drag_active', False):
             return
+
+        # 左右に分けている時、右側で別のタブを選んだら右側を操作先にする
+        # （カタログタブの選んだ見た目も外す）。閉じた拍子に隣へ移った時
+        # （前のタブがもう無い）と、ドラッグ後の呼び直し（同じタブのまま）は
+        # 選んだのではないので触らない（カタログを使っている最中に、裏で
+        # 落ちたスレが閉じて操作先がスレ側へ飛ばないように）
+        _w_now = self._tabs.currentWidget()
+        _w_prev = self._last_cur_widget
+        self._last_cur_widget = _w_now
+        if (self._split_cat is not None and self._cat_focused
+                and not getattr(self, "_closing_tab", False)
+                and _w_now is not None and _w_now is not _w_prev
+                and _w_prev is not None and self.indexOf(_w_prev) >= 0):
+            self._set_cat_active(False)
+            try:
+                _fw = QApplication.focusWidget()
+                if _fw is not None and self._cat_host.isAncestorOf(_fw):
+                    self._focus_tab_page()
+            except RuntimeError:
+                pass
 
         if self._main: self._main._update_url_from_active()
 
@@ -4758,6 +5003,18 @@ class BoardPane(QWidget):
     # ── タブ ダブルクリック ────────────────────────────────────────────────
     def _on_inner_dbl_click(self, idx: int):
         """タブのダブルクリック。動作は設定で選べる（0=閉じる 1=更新 2=何もしない）"""
+        if idx == WrapTabBar.VCAT:
+            # 左右分割中のカタログタブ。分けていない時のカタログタブと同じく、
+            # 更新なら取り直し、閉じるならピンを外すだけ（カタログは閉じない）
+            w = self._split_cat
+            if w is None:
+                return
+            act = int(getattr(self._settings, "tab_dblclick_action", 0) or 0)
+            if act == 1 and self._board:
+                w.load(self._board)
+            elif act == 0 and w in self._pinned:
+                self._unpin_tab(w)
+            return
         if idx < 0:
             return
         act = int(getattr(self._settings, "tab_dblclick_action", 0) or 0)
@@ -4782,10 +5039,15 @@ class BoardPane(QWidget):
         bar = self._tabs.tabBar()
         # WrapTabBar が _ctx_idx を設定している場合はそちらを優先
         self._ctx_tab_idx = getattr(bar, "_ctx_idx", -1)
-        if self._ctx_tab_idx < 0:
+        if self._ctx_tab_idx == -1:
             self._ctx_tab_idx = bar.tabAt(pos)  # fallback
-        if self._ctx_tab_idx < 0: return
-        w   = self._tabs.widget(self._ctx_tab_idx)
+        if self._ctx_tab_idx == -1: return
+        # 左右分割中のカタログタブ（VCAT）は横に出しているカタログを相手にする。
+        # タブ番号を使う項目（ログ保存・再取得など）は、分けていない時の
+        # カタログタブと同じく使えない表示になる
+        w   = (self._split_cat if self._ctx_tab_idx == WrapTabBar.VCAT
+               else self._tabs.widget(self._ctx_tab_idx))
+        if w is None: return
         # インデックスより先にウィジェット参照を保持（_toggle_pin でインデックスがズレても確実に正しいウィジェットを使う）
         self._ctx_tab_widget = w
         is_cat = isinstance(w, CatalogView)
@@ -4810,7 +5072,7 @@ class BoardPane(QWidget):
         menu.addAction("アドレスをクリップボードにコピー (T)", self._ctx_copy_url)
         menu.addAction("外部ブラウザにアドレスを送る (W)  F11", self._ctx_open_browser)
         menu.addSeparator()
-        _pin_lbl = "ピンを外す (H)" if self._tabs.widget(self._ctx_tab_idx) in self._pinned else "タブのピン留め (H)"
+        _pin_lbl = "ピンを外す (H)" if w in self._pinned else "タブのピン留め (H)"
         menu.addAction(_pin_lbl, self._toggle_pin)
         menu.addSeparator()
         _w_ctx = self._tabs.widget(self._ctx_tab_idx)
@@ -4902,7 +5164,7 @@ class BoardPane(QWidget):
         return None
 
     def _get_tab_url(self, idx: int) -> str:
-        w = self._tabs.widget(idx)
+        w = self._split_cat if idx == WrapTabBar.VCAT else self._tabs.widget(idx)
         if isinstance(w, ThreadView) and w._thread:
             return w._thread.url or ""
         if isinstance(w, CatalogView) and w._board:
@@ -4955,9 +5217,16 @@ class BoardPane(QWidget):
                 _n += 1
                 if i < keep: keep -= 1
 
+    def _ctx_split_pos(self) -> int:
+        """右クリックしたタブの並びの位置（左右を閉じる時の境）。
+        左右分割中のカタログタブは、カタログタブのすぐ後ろのタブ番号で数える"""
+        if self._ctx_tab_idx == WrapTabBar.VCAT:
+            return max(0, min(self._wrap_bar._vcat_pos, self._tabs.count()))
+        return self._ctx_tab_idx
+
     def _ctx_close_left(self):
         _n = 0
-        for i in range(self._ctx_tab_idx - 1, -1, -1):
+        for i in range(self._ctx_split_pos() - 1, -1, -1):
             _w = self._tabs.widget(i)
             if not isinstance(_w, CatalogView) and _w not in self._pinned:
                 self.tab_closing.emit(_w)
@@ -4967,7 +5236,10 @@ class BoardPane(QWidget):
 
     def _ctx_close_right(self):
         _n = 0
-        for i in range(self._tabs.count() - 1, self._ctx_tab_idx, -1):
+        # カタログタブの右＝カタログタブのすぐ後ろのタブから（その番号も閉じる）
+        _end = (self._ctx_split_pos() - 1 if self._ctx_tab_idx == WrapTabBar.VCAT
+                else self._ctx_tab_idx)
+        for i in range(self._tabs.count() - 1, _end, -1):
             _w = self._tabs.widget(i)
             if not isinstance(_w, CatalogView) and _w not in self._pinned:
                 self.tab_closing.emit(_w)
@@ -4977,7 +5249,8 @@ class BoardPane(QWidget):
 
     def _ctx_add_fav(self):
         url = self._get_tab_url(self._ctx_tab_idx)
-        lbl = self._tabs.tabText(self._ctx_tab_idx)
+        lbl = (self._wrap_bar._vcat_text if self._ctx_tab_idx == WrapTabBar.VCAT
+               else self._tabs.tabText(self._ctx_tab_idx))
         if url and self._main:
             self._main._settings.add_favorite(lbl, url)
             self._main._settings.save()
