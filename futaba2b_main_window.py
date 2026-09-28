@@ -1014,9 +1014,7 @@ class MainWindow(QMainWindow):
                 inner.setCurrentIndex(_prev_cur)   # 見ていたタブに戻す
 
         # カタログを開いたとき自動更新に自動追加（板設定から判断）
-        _bs_cat = get_board_settings(board.base_url)
-        if getattr(_bs_cat, 'auto_add_catalog_to_ar', False):
-            self._auto_add_catalog_to_ar(cat_view, board)
+        self._auto_add_catalog_to_ar(cat_view, board)
 
         # まず即座にカタログ取得を開始（白画面を防ぐ）
         # catset POST は fetch 完了後に直列実行（同時HTTP接続によるウィンドウ消え防止）
@@ -1762,8 +1760,13 @@ class MainWindow(QMainWindow):
             f"自動更新に追加: No.{th.no}  間隔 {_disp}")
 
     def _auto_add_catalog_to_ar(self, cat_view, board: "BoardInfo"):
-        """カタログを開いたとき自動的に自動更新に追加する"""
+        """カタログを開いたとき自動的に自動更新に追加する。
+        板設定「カタログを開いたとき自動的に自動更新に追加する」が OFF なら何もしない。
+        カタログを作る所（_show_board_catalog / _ensure_catalog_exists）は両方ここを呼ぶ
+        （履歴から開いた時・「カタログを開く」の時だけ設定が効いていなかった）。"""
         if not board:
+            return
+        if not getattr(get_board_settings(board.base_url), 'auto_add_catalog_to_ar', False):
             return
         cat_url = board.base_url + "futaba.php?mode=cat"
         if self._ar_mgr.has_url(cat_url):
@@ -2116,6 +2119,8 @@ class MainWindow(QMainWindow):
         _split = getattr(self._settings, "board_split_mode", "")
         if _split:
             pane.apply_split_mode(_split)
+        # カタログを開いたとき自動更新に自動追加（板設定から判断。_show_board_catalog と同じ）
+        self._auto_add_catalog_to_ar(cat, board)
         if True:  # 板を開いたとき常に自動取得
             cat.load(board)
 
