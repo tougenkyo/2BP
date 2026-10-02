@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.517"
+APP_VER = "0.9.518"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11544,6 +11544,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
         設定の待ち時間ぶん置いてから表示する（0=即時＝従来の動作）。
         カーソルが通り過ぎただけのセルで出ないようにするため、別のセルへ移ったり
         離脱した時点で予約は取り消す。"""
+        if not self.isVisible():
+            # スレや別の板へ切り替えた後に遅れて届いた知らせ（遅い PC で起きる）。
+            # 隠れたカタログからは「離れた」が来ないので、出すと残り続ける。
+            self._on_cat_hover_leave()
+            return
         s = self._settings
         self._hovering = True
         # 前のセルの表示予約を取り消す
@@ -11585,6 +11590,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
         comment_on = getattr(s, "catalog_hover_comment", False)
         if not self._hovering:
             return          # 待っている間にカタログから離れた
+        if not self.isVisible():
+            return          # 待っている間にスレや別の板へ切り替わった
         if not zoom_on and not comment_on:
             return
         from PySide6.QtGui import QCursor
@@ -11651,6 +11658,8 @@ class CatalogView(_MouseGestureMixin, QWidget):
                          Qt.TransformationMode.SmoothTransformation)
         if not self._hovering:
             return  # マウスが既に離れていたら表示しない
+        if not self.isVisible():
+            return  # 画像を取っている間にスレや別の板へ切り替わった
         self._hover_img_lbl.setPixmap(pix)
         # テキストは _on_cat_hover_enter で既にセット済み（_hover_txt_lbl）
         self._hover_img_popup.adjustSize()
@@ -11801,8 +11810,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
             1)
 
     def hideEvent(self, event):
-        """裏へ回った直後は、描いた絵を手放させない（切替のちらつき対策）"""
+        """裏へ回った直後は、描いた絵を手放させない（切替のちらつき対策）。
+        オンマウスのポップアップもここで閉じる。隠れたカタログからは「離れた」の
+        知らせが来ないので、閉じないとスレの上に残る（キーでタブを替えた時など）。"""
         super().hideEvent(event)
+        try:
+            self._on_cat_hover_leave()
+        except (RuntimeError, AttributeError):
+            pass                # 終了の途中でポップアップが先に消えている
         keep_page_awake(self, getattr(self, "_page", None))
         snap_view_later(self)   # 戻ってきた時に被せる絵を控える
 
