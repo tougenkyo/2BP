@@ -413,6 +413,66 @@ def _log_post_failure(e: BaseException, t_send: float) -> None:
     print("  ".join(p for p in parts if p))
 
 
+# ── 通信が切れた投稿が載ったかの判断 ──────────────────────────────────────────
+# 本文はそのままでは比べられない。ふたばは空白・改行の扱いが送った時と少し違う
+# （行末の空白・最後の改行など）ので、空白類は全部取り除いて比べる。
+# CP932 に無い字は、ふたばの側で近い字に置き換わる（〜→～ など）ので揃える。
+_POST_TEXT_FOLD = str.maketrans({
+    "〜": "～",   # 〜 → ～
+    "−": "－",   # − → －
+    "‖": "∥",   # ‖ → ∥
+    "—": "―",   # — → ―
+    "¢": "￠", "£": "￡", "¬": "￢",
+})
+
+
+def _norm_post_text(s: str) -> str:
+    import html as _html
+    s = _html.unescape(s or "").translate(_POST_TEXT_FOLD)
+    return re.sub(r"\s+", "", s)
+
+
+def judge_posted_res(res_list, after_no: int, comment: str, email: str,
+                     has_image: bool, image_bytes: int) -> tuple[str, int]:
+    """通信が切れた投稿が載ったかを、読み直したレスから判断する。
+
+    after_no（投稿の直前に見えていた、いちばん新しいレス番号）より後ろだけを見る。
+      found   : 自分の投稿と言える。画像つきは画像の大きさ（ふたばは送ったファイルを
+                そのまま置き、バイト数を出す）と本文、本文だけの投稿は本文と
+                メール欄が合うもの。合うのが1件だけの時
+      similar : 似たレスがある（自分のものか言い切れない）
+      absent  : それらしいレスが無い
+    absent の時は「再投稿して大丈夫」と知らせるので、少しでも似ていれば similar に倒す。"""
+    from difflib import SequenceMatcher
+    a = _norm_post_text(comment)
+    strong: list[int] = []
+    weak: list[int] = []
+    for r in res_list:
+        if r.no <= after_no or r.is_op:
+            continue
+        b = re.sub(r"^\[[^\]]*\]", "", _norm_post_text(r.comment_text))   # 先頭の [IP] 等
+        r_img = bool(r.image_url or r.image_name or r.file_size_bytes)
+        size_eq = bool(has_image and image_bytes and r.file_size_bytes == image_bytes)
+        text_eq = (a == b)
+        ratio = SequenceMatcher(None, a, b).ratio() if (a and b) else 0.0
+        if has_image:
+            if size_eq and (not a or text_eq or ratio >= 0.9):
+                strong.append(r.no)
+                continue
+        elif (a and text_eq and not r_img
+              and _norm_post_text(r.email) == _norm_post_text(email)):
+            strong.append(r.no)
+            continue
+        contains = len(a) >= 4 and len(b) >= 4 and (a in b or b in a)
+        if size_eq or text_eq or contains or (len(a) >= 6 and ratio >= 0.6):
+            weak.append(r.no)
+    if len(strong) == 1:
+        return "found", strong[0]
+    if strong or weak:
+        return "similar", (strong or weak)[0]
+    return "absent", 0
+
+
 class FutabaFetcher:
     """
     ふたばへのHTTP通信とHTML解析を一手に担う。
@@ -1351,7 +1411,8 @@ class FutabaFetcher:
 
     # ── Phase 2: 投稿完全対応 ──────────────────────────────────────────────────
 
-    def fetch_post_form(self, board: BoardInfo, thread_no: int = 0) -> dict:
+    def fetch_post_form(self, board: BoardInfo, thread_no: int = 0,
+                        info: dict | None = None) -> dict:
         """
         投稿フォームの hidden フィールドを取得する。
 
@@ -1361,6 +1422,9 @@ class FutabaFetcher:
           js                              → HTML では "off"。JS が "on" に変更
 
         手順: GET → HTML パース → JS フィールドを補完
+
+        info を渡すと、このページで見えたいちばん新しいレス番号を info["max_no"] に
+        入れる（通信が切れた投稿が、これより後ろに載ったかを探すため）。
         """
         # GET でページを取得 → ptmt 等の認証クッキーをセッションに取得
         page_url = (board.base_url + f"res/{thread_no}.htm"
@@ -1385,6 +1449,13 @@ class FutabaFetcher:
                         fields[n] = v
             else:
                 print("[PostForm] 投稿フォームが見つかりませんでした")
+            if info is not None and thread_no:
+                # 拾えなかった時は入れない（スレの番号を基準にするとスレ全体が
+                # 対象になり、前に書かれた似たレスまで拾ってしまう）
+                _nos = [int(m.group(1)) for _sp in soup.find_all("span", class_="cno")
+                        for m in [_RES_NO_RE.search(_sp.get_text())] if m]
+                if _nos:
+                    info["max_no"] = max(_nos)
 
         # JS が空フィールドを埋める処理を Python で代替
         ts_ms = str(int(time.time() * 1000))
@@ -1633,9 +1704,14 @@ class FutabaFetcher:
         image_path: str = "",
         delete_key: str = "",
         oekaki_b64: str = "",
+        info: dict | None = None,
     ) -> tuple[bool, str, int]:
         """
         レス / スレ立て投稿。
+
+        info を渡すと、通信が切れた時に載ったかを確かめるための材料を入れる
+        （max_no: 投稿の直前に見えていたいちばん新しいレス番号 / has_image /
+          image_bytes: 送ったファイルのバイト数 / oekaki / disconnected: 切れた）。
 
         fetch_post_form() でサーバー発行の hash/ptua 等を取得してから
         multipart/form-data で送信する。
@@ -1660,7 +1736,10 @@ class FutabaFetcher:
                     "画像を貼り付け直してから投稿してください。", 0)
 
         # ── hidden フィールドを取得 (ptmt クッキーも同時にセット) ──
-        hidden = self.fetch_post_form(board, thread_no=resto)
+        hidden = self.fetch_post_form(board, thread_no=resto, info=info)
+        if info is not None:
+            info["has_image"] = bool(image_path or oekaki_b64)
+            info["oekaki"] = bool(oekaki_b64)
 
         # ── POST データを組み立て ──
         # サーバー由来の hidden フィールド全体を展開し、
@@ -1702,8 +1781,11 @@ class FutabaFetcher:
                 mime = self._guess_mime(image_path)
                 with open(image_path, "rb") as fp:
                     files = {"upfile": (Path(image_path).name, fp, mime)}
+                    _size = Path(image_path).stat().st_size
                     print(f"[POST] 添付あり name={Path(image_path).name} "
-                          f"mime={mime} size={Path(image_path).stat().st_size}B")
+                          f"mime={mime} size={_size}B")
+                    if info is not None:
+                        info["image_bytes"] = _size
                     _t_send[0] = time.perf_counter()
                     return self.session.post(
                         board.post_url, data=data, files=files,
@@ -1815,6 +1897,8 @@ class FutabaFetcher:
             _s = str(e)
             if ("RemoteDisconnected" in _s or "Connection aborted" in _s
                     or "without response" in _s):
+                if info is not None:
+                    info["disconnected"] = True
                 return (False, "通信が切断されました。投稿が反映されている場合があります。"
                         "スレを再読み込みして確認してから、必要なら再投稿してください。", 0)
             return False, _s, 0
@@ -1831,6 +1915,29 @@ class FutabaFetcher:
                     f"{image_path}\n{e}", 0)
         except Exception as e:
             return False, str(e), 0
+
+    def check_post_reflected(self, board: BoardInfo, resto: int, after_no: int,
+                             comment: str, email: str, has_image: bool,
+                             image_bytes: int, timeout: float = 10) -> tuple[str, int, str]:
+        """通信が切れた返信が、スレに載ったかを確かめる。
+        新着分だけを返す差分（mode=json）で after_no より後ろを1回だけ読む
+        （スレ全体を読み直すより通信がずっと少ない）。
+        戻り値: (結果, No., エラー)  結果は judge_posted_res の found / similar /
+        absent、読めなかった時は error。"""
+        try:
+            diff = self.fetch_thread_diff(board, resto, int(after_no) + 1, timeout=timeout)
+        except Exception as e:
+            diff = {"error": str(e)}
+        if diff.get("error") or diff.get("is_dead"):
+            err = diff.get("error") or "スレが落ちています"
+            print(f"[POST] 載ったかの確認  読めなかった: {err}")
+            return "error", 0, err
+        new_res = diff.get("new_res") or []
+        status, no = judge_posted_res(new_res, int(after_no), comment, email,
+                                      has_image, image_bytes)
+        print(f"[POST] 載ったかの確認  No.{after_no}より後ろ {len(new_res)}件"
+              f" → {status}" + (f" No.{no}" if no else ""))
+        return status, no, ""
 
     @staticmethod
     def _guess_mime(path: str) -> str:
@@ -2645,10 +2752,12 @@ class FutabaFetcher:
 
 
 
-    def fetch_thread_diff(self, board: "BoardInfo", no: int, start_no: int) -> dict:
+    def fetch_thread_diff(self, board: "BoardInfo", no: int, start_no: int,
+                          timeout: float | None = None) -> dict:
         """
         JSON差分APIでスレの新着レスのみ取得する。
         GET /futaba.php?mode=json&res={no}&start={start_no}&{乱数}
+        timeout: 待つ秒数（省略時は self.timeout）
 
         戻り値 dict:
           "new_res"   : list[ResData]  新着レスのリスト（なければ空リスト）
@@ -2672,7 +2781,7 @@ class FutabaFetcher:
                 "Accept": "application/json, */*",
                 "Cache-Control": "no-cache", "Pragma": "no-cache",
             }
-            r = self.session.get(url, headers=hdr, timeout=self.timeout)
+            r = self.session.get(url, headers=hdr, timeout=timeout or self.timeout)
             if not r.ok:
                 result["error"] = f"{r.status_code} {r.reason}"
                 return result

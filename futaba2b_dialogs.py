@@ -1335,6 +1335,9 @@ class UploaderHistoryDialog(QDialog):
 
 class PostDialog(QDialog):
     _result_signal = Signal(bool, str, int)  # 投稿結果 thread-safe (ok, msg, new_thread_no)
+    _post_checking = Signal()                # 通信が切れた → 載ったか確かめ始めた
+    # 通信が切れてから、スレを読み直すまで待つ秒数（ふたばが書き終えるのを待つ）
+    _CUT_CHECK_WAIT = 3.0
     _upload_done     = Signal(object)        # うｐろだ結果 thread-safe (結果dictのlist)
     _upload_progress = Signal(int, int)      # うｐろだ進捗 (完了数, 総数)
     _url_attach_done = Signal(str, str, str) # URLから添付した結果 (url, 一時ファイル, エラー)
@@ -1392,6 +1395,8 @@ class PostDialog(QDialog):
         self._url_attach_done.connect(self._on_url_attach_done)
         self._on_success = on_success
         self._result_signal.connect(self._on_result)
+        self._post_checking.connect(self._on_post_checking)
+        self._check_popup = None     # 「確かめています…」の表示
         self.setAcceptDrops(True)  # D&Dを有効化
 
         lay = QVBoxLayout(self)
@@ -1470,6 +1475,7 @@ class PostDialog(QDialog):
         self._sub.setFixedWidth(240)
         sub_lay.addWidget(self._sub)
         _post_label = "スレッドを作成" if is_new_thread else "返信する(SHIFT+ENTER)"
+        self._post_label = _post_label   # 確かめている間に書き換えるので控える
         self._btn_post = QPushButton(_post_label)
         self._btn_post.setFixedWidth(160)
         self._btn_post.setDefault(False)
@@ -2998,13 +3004,14 @@ document.addEventListener('keydown',function(e){{
                 return
         self._btn_post.setEnabled(False)
         self._post_inflight = True
+        _info: dict = {}     # 通信が切れた時に載ったかを確かめる材料（post_res が入れる）
         def _do():
             try:
                 ok, msg, new_no = self._fetcher.post_res(
                     self._board, self._resto,
                     name=name, email=mail, subject=sub,
                     comment=text, image_path=img, delete_key=key,
-                    oekaki_b64=_oekaki)
+                    oekaki_b64=_oekaki, info=_info)
             except Exception as _e:
                 ok, msg, new_no = False, str(_e), 0
             finally:
@@ -3013,8 +3020,47 @@ document.addEventListener('keydown',function(e){{
                         import os as _os2; _os2.unlink(_strip_tmp)
                     except Exception:
                         pass
+            if not ok and _info.get("disconnected"):
+                ok, msg, new_no = self._check_cut_post(_info, text, mail, msg)
             self._result_signal.emit(ok, msg, new_no)
         threading.Thread(target=_do, daemon=True).start()
+
+    def _check_cut_post(self, info: dict, text: str, mail: str, msg: str):
+        """通信が切れた返信が載ったかを、スレを1回読み直して確かめる（送信スレッドで動く）。
+
+        載っていれば投稿成功と同じ扱いにする（自分のレスとして控え・履歴・スレの
+        読み直しも普段の成功と同じ）。載っていなければ、再投稿してよいと知らせる。
+        自動で送り直すことはしない（二重投稿の恐れ）。
+        確かめられない時（スレ立て・手書き・読み直しの失敗）は今まで通りの文言。"""
+        after = int(info.get("max_no") or 0)
+        if not self._resto or not after or info.get("oekaki"):
+            return False, msg, 0
+        try:
+            self._post_checking.emit()
+        except RuntimeError:
+            return False, msg, 0         # ウインドウがもう無い
+        import time as _t
+        _t.sleep(self._CUT_CHECK_WAIT)
+        status, no, err = self._fetcher.check_post_reflected(
+            self._board, self._resto, after, text, mail,
+            bool(info.get("has_image")), int(info.get("image_bytes") or 0))
+        if status == "found":
+            return True, f"通信は切れましたが、投稿は載っていました（No.{no}）。", no
+        if status == "similar":
+            return False, (f"通信が切れました。スレを読み直したところ、似たレス（No.{no}）が"
+                           "あります。自分の投稿か確かめてから、必要なら再投稿してください。"), 0
+        if status == "absent":
+            return False, ("通信が切れました。スレを読み直しましたが、この投稿は"
+                           "載っていません。再投稿して大丈夫です。"), 0
+        return False, (msg + "\n（スレを読み直せなかったので、載ったかは"
+                       f"確かめられませんでした: {err}）"), 0
+
+    def _on_post_checking(self):
+        """通信が切れた → 載ったか確かめている間の表示。終わるまで投稿ボタンは押せない
+        （Shift+Enter も、ボタンが押せない間は _post が弾く）"""
+        self._btn_post.setText("確かめています…")
+        self._check_popup = self._show_post_error(
+            "通信が切れました。スレを読み直して、投稿が載ったか確かめています…")
 
     # これ以下の高さは「タイトルバーだけ（＝畳んだ状態）」とみなす
     _ROLLED_H = 8
@@ -3127,6 +3173,14 @@ document.addEventListener('keydown',function(e){{
     def _on_result(self, ok: bool, msg: str, new_thread_no: int = 0):
         self._post_inflight = False
         self._btn_post.setEnabled(True)
+        # 通信が切れて確かめていた時の表示を戻す
+        self._btn_post.setText(self._post_label)
+        _cp, self._check_popup = self._check_popup, None
+        if _cp is not None:
+            try:
+                _cp.close()
+            except RuntimeError:
+                pass
         if ok:
             # プレビュー（サンプル）ウインドウが開いていれば一緒に閉じる
             _sw = getattr(self, "_sample_win", None)
@@ -3159,6 +3213,10 @@ document.addEventListener('keydown',function(e){{
                 self._settings.save()
                 if _scroll:
                     self.scroll_after_post.emit()
+            if msg:
+                # 通信は切れたが、読み直したら載っていた
+                print(f"[PostDialog] {msg}")
+                self._show_post_error(msg, notice=True)
         else:
             print(f"[PostDialog] 投稿失敗: {msg}")
             self._show_post_error(msg)
@@ -3195,10 +3253,16 @@ document.addEventListener('keydown',function(e){{
         except Exception:
             return defaults
 
-    def _show_post_error(self, msg: str):
+    def _show_post_error(self, msg: str, notice: bool = False):
         """投稿エラーを赤く2回点滅するポップアップで表示する。
-        色はユーザーCSSの .post-error-popup セレクタから読み取る。"""
-        c = self._parse_post_error_popup_css(self._settings, getattr(self, "_board", None))
+        色はユーザーCSSの .post-error-popup セレクタから読み取る。
+        notice=True は失敗ではない知らせ（通信は切れたが載っていた）。点滅させず
+        落ち着いた色で出す。投稿できた後は返信ウインドウが閉じることがあるので、
+        本体の窓に付けて出す。出したポップアップを返す。"""
+        if notice:
+            c = {"background": "#E6F2E6", "border-color": "#2E6B2E", "color": "#1E4D1E"}
+        else:
+            c = self._parse_post_error_popup_css(self._settings, getattr(self, "_board", None))
 
         def _make_style(bg: str, border: str, fg: str) -> str:
             return (
@@ -3206,10 +3270,12 @@ document.addEventListener('keydown',function(e){{
                 f"QLabel  {{ color: {fg}; font-size: 13px; font-weight: bold; }}"
             )
 
-        _NORMAL_STYLE = _make_style(c["background"],       c["border-color"],       c["color"])
-        _BLINK_STYLE  = _make_style(c["blink-background"], c["blink-border-color"], c["color"])
+        _NORMAL_STYLE = _make_style(c["background"], c["border-color"], c["color"])
+        _BLINK_STYLE  = (_NORMAL_STYLE if notice else
+                         _make_style(c["blink-background"], c["blink-border-color"], c["color"]))
 
-        dlg = QDialog(self, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        dlg = QDialog((self.parentWidget() or self) if notice else self,
+                      Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         dlg.setModal(False)
 
@@ -3241,12 +3307,14 @@ document.addEventListener('keydown',function(e){{
             if n < 4:
                 QTimer.singleShot(300, _blink)
 
-        QTimer.singleShot(200, _blink)
+        if not notice:
+            QTimer.singleShot(200, _blink)
 
         # クリックで閉じる
         dlg.mousePressEvent = lambda _e: dlg.close()
-        # 5秒後に自動クローズ
-        QTimer.singleShot(5000, dlg.close)
+        # 5秒後に自動クローズ（知らせは読む間を少し長めに）
+        QTimer.singleShot(7000 if notice else 5000, dlg.close)
+        return dlg
 
     def append_quote(self, quote_text: str):
         """外部から引用テキストを追記する（ピンON中に別レスを引用した場合）"""
