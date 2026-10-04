@@ -349,6 +349,70 @@ def get_cache_size() -> tuple[int, int]:
     return total_files, total_bytes
 
 
+# ── 投稿の通信エラーをログで切り分けるための補助 ──────────────────────────────
+# 投稿が「通信が切断されました」になった時、相手（ふたばのサーバーや途中の回線）に
+# どう切られたのかを後から見られるようにする。requests の例外は
+#   ConnectionError → urllib3 の ProtocolError('Connection aborted.', 元の例外)
+# のように何重にも包まれているので、元の例外まで降りて種類を見る。
+
+def _post_error_cause(e: BaseException) -> BaseException:
+    """包まれた例外から元の原因を取り出す（取り出せなければ e 自身）"""
+    cur = e
+    seen: set = set()
+    while id(cur) not in seen:
+        seen.add(id(cur))
+        nxt = getattr(cur, "reason", None)          # urllib3 の MaxRetryError
+        if not isinstance(nxt, BaseException):
+            nxt = next((a for a in reversed(getattr(cur, "args", ()) or ())
+                        if isinstance(a, BaseException)), None)
+        if nxt is None:
+            nxt = cur.__cause__
+        if not isinstance(nxt, BaseException):
+            break
+        cur = nxt
+    return cur
+
+
+def _post_error_gloss(cause: BaseException) -> str:
+    """元の原因を「どちらがどう切ったか」の言葉にする"""
+    import http.client as _hc, ssl as _ssl
+    if isinstance(cause, _hc.RemoteDisconnected):   # ConnectionResetError の子なので先に見る
+        return "相手が返事をせずに接続を閉じた"
+    if isinstance(cause, ConnectionResetError):
+        return "相手から強制的に切られた"
+    if isinstance(cause, ConnectionAbortedError):
+        return "このPCの側で接続が中止された"
+    if isinstance(cause, BrokenPipeError):
+        return "送っている途中で相手に閉じられた"
+    if isinstance(cause, TimeoutError) or "timed out" in str(cause).lower():
+        return "時間切れ（返事が来ない）"
+    if isinstance(cause, _ssl.SSLError):
+        return "暗号化の途中で切れた"
+    if isinstance(cause, OSError):
+        return "つなげなかった"
+    return ""
+
+
+def _post_req_size(req) -> str:
+    """送った量（multipart の本体）。分からなければ空"""
+    body = getattr(req, "body", None)
+    if isinstance(body, (bytes, bytearray)):
+        n = len(body)
+        return f"送信量={n / 1024:.1f}KB" if n >= 1024 else f"送信量={n}B"
+    return ""
+
+
+def _log_post_failure(e: BaseException, t_send: float) -> None:
+    """投稿の通信エラーを1行でログに出す（送り始めて何秒後に・どう切れたか・送った量）"""
+    cause = _post_error_cause(e)
+    code = getattr(cause, "winerror", None) or getattr(cause, "errno", None)
+    kind = type(cause).__name__ + (f"({code})" if code else "")
+    when = (f"送り始めて{time.perf_counter() - t_send:.1f}秒後" if t_send else "送る前")
+    parts = ("[POST] 通信エラー", when, kind, _post_error_gloss(cause),
+             _post_req_size(getattr(e, "request", None)), f"詳細={str(e)[:300]}")
+    print("  ".join(p for p in parts if p))
+
+
 class FutabaFetcher:
     """
     ふたばへのHTTP通信とHTML解析を一手に担う。
@@ -1623,6 +1687,9 @@ class FutabaFetcher:
 
         headers = self._build_post_headers(board, thread_no=resto)
 
+        # 送り始めた時刻。返事・切断までの秒数をログに出す（切れ方の切り分け用）
+        _t_send = [0.0]
+
         # multipart/form-data で送信する。再送時にファイルポインタが消費済みに
         # ならないよう、送信のたびにファイルを開き直す。
         def _send():
@@ -1637,6 +1704,7 @@ class FutabaFetcher:
                     files = {"upfile": (Path(image_path).name, fp, mime)}
                     print(f"[POST] 添付あり name={Path(image_path).name} "
                           f"mime={mime} size={Path(image_path).stat().st_size}B")
+                    _t_send[0] = time.perf_counter()
                     return self.session.post(
                         board.post_url, data=data, files=files,
                         headers=headers, timeout=60,
@@ -1644,6 +1712,7 @@ class FutabaFetcher:
             # ファイルなしでも multipart を強制 (空の upfile フィールドを付加)
             print("[POST] 添付なし（本文のみ）")
             files = {"upfile": ("", b"", "application/octet-stream")}
+            _t_send[0] = time.perf_counter()
             return self.session.post(
                 board.post_url, data=data, files=files,
                 headers=headers, timeout=60,
@@ -1653,6 +1722,12 @@ class FutabaFetcher:
             # POSTは非冪等。接続切断(RemoteDisconnected)時、サーバーが投稿を受理済み
             # でも応答が返らないことがあるため、自動再送はしない（二重投稿防止）。
             resp = _send()
+            # 切れた時と比べられるよう、返事が来た時も何秒かかったかを残す
+            print("  ".join(p for p in (
+                "[POST] 返事あり",
+                f"送り始めて{time.perf_counter() - _t_send[0]:.1f}秒",
+                f"status={resp.status_code}",
+                _post_req_size(resp.request)) if p))
 
             # ── レスポンス解析 ──
             # responsemode=ajax を送った場合はサーバーが JSON を返す:
@@ -1736,6 +1811,7 @@ class FutabaFetcher:
             # 送受信中に接続が切れた（RemoteDisconnected 等）。投稿がサーバーに
             # 反映されている可能性があり、自動再送すると二重投稿になり得るため
             # 再送しない。スレを確認してから再投稿するよう促す。
+            _log_post_failure(e, _t_send[0])
             _s = str(e)
             if ("RemoteDisconnected" in _s or "Connection aborted" in _s
                     or "without response" in _s):
@@ -1744,6 +1820,7 @@ class FutabaFetcher:
             return False, _s, 0
         except requests.exceptions.RequestException as e:
             # requests系の例外は OSError を継承するため、下の OSError より先に捕まえる
+            _log_post_failure(e, _t_send[0])
             return False, str(e), 0
         except OSError as e:
             # 添付ファイルを開けなかった（送信直前に消えた等）。本文だけ投稿
