@@ -748,6 +748,7 @@ class AppSettings:
         self.video_volume: int             = 80      # 動画音量 (0-100)
         self.video_save_panel_open: bool   = False   # 動画プレーヤーの保存先パネルを開いておく
         self.update_skip_css: bool         = True    # アップデート時にCSSを上書きしない
+        self.update_skip_theme: bool       = True    # アップデート時に書き換えたtheme.jsonを上書きしない
         # [表示]
         self.image_resize_use: bool     = True
         self.image_resize_size: int     = 200
@@ -1275,7 +1276,7 @@ class AppSettings:
                 ("img_overlay_res", False), ("img_overlay_info", False),
                 ("image_window_on_top", False), ("video_window_on_top", False),
                 ("video_volume", 80), ("video_save_panel_open", False),
-                ("update_skip_css", True),
+                ("update_skip_css", True), ("update_skip_theme", True),
                 ("image_resize_use", True), ("image_resize_size", 200),
                 ("show_image_external", False), ("disp_ikioi", False),
                 ("show_self_res_mark", True), ("delete_key", None),
@@ -1588,6 +1589,7 @@ class AppSettings:
             "img_overlay_res", "img_overlay_info",
             "image_window_on_top", "video_window_on_top",
             "video_volume", "video_save_panel_open", "update_skip_css",
+            "update_skip_theme",
             "image_resize_use", "image_resize_size", "show_image_external",
             "disp_ikioi", "show_self_res_mark", "delete_key", "board_start_action", "url_count",
             "cat_cols", "cat_rows", "cat_chars", "cat_text_pos", "cat_img_size_str",

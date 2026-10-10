@@ -6077,6 +6077,14 @@ class AppSettingsDialog(QDialog):
             "アップデート確認ダイアログのチェックと同じ設定です。\n"
             "（チェックを外しても、更新前のCSSは old/ に退避されます）")
         udf.addWidget(self._update_skip_css)
+        self._update_skip_theme = QCheckBox("自分で書き換えたテーマ（theme.json）は更新しない")
+        self._update_skip_theme.setToolTip(
+            "書き換えた theme.json をそのまま残してバージョンアップします。\n"
+            "書き換えていないテーマは、いつも通り新しいものになります。\n"
+            "新しい版で増えた色は、配られたままの写し（同じフォルダの\n"
+            "theme_original.json）から補います。\n"
+            "（チェックを外しても、更新前の theme.json は old/ に退避されます）")
+        udf.addWidget(self._update_skip_theme)
         _upd_hint = QLabel(
             "本体の表示が変わった版では、古い user.css が新しい既定値を上書きして\n"
             "見た目が崩れることがあります。おかしいと感じたら一度外して更新してください。")
@@ -6811,6 +6819,7 @@ class AppSettingsDialog(QDialog):
         self._scroll_bottom_count.setValue(getattr(s, "scroll_bottom_count", 30))
         self._scroll_top_count.setValue(getattr(s, "scroll_top_count", 0))
         self._update_skip_css.setChecked(getattr(s, "update_skip_css", True))
+        self._update_skip_theme.setChecked(getattr(s, "update_skip_theme", True))
         self._parse_sem_kb.setValue(getattr(s, "parse_sem_kb", 50))
         self._log_window_chk.setChecked(getattr(s, "log_window", False))
         self._log_file_chk.setChecked(getattr(s, "log_to_file", False))
@@ -7015,6 +7024,7 @@ class AppSettingsDialog(QDialog):
         s.scroll_bottom_count     = self._scroll_bottom_count.value()
         s.scroll_top_count        = self._scroll_top_count.value()
         s.update_skip_css         = self._update_skip_css.isChecked()
+        s.update_skip_theme       = self._update_skip_theme.isChecked()
         s.parse_sem_kb            = self._parse_sem_kb.value()
         s.log_window              = self._log_window_chk.isChecked()
         s.log_to_file             = self._log_file_chk.isChecked()

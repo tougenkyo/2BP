@@ -16,6 +16,7 @@ futaba2b_boards.json
 futaba2b_board_*.json
 futaba2b_cache.json
 futaba2b_cookies.json
+theme/*/theme_original.json
 logs/
 *.log
 Log*.txt

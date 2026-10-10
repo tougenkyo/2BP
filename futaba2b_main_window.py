@@ -30,7 +30,8 @@ from futaba2b_network  import FutabaFetcher, is_temporary_server_error
 from futaba2b_settings import AppSettings, NgFilter, get_board_settings
 from futaba2b_html     import thread_to_html, catalog_to_html, render_res, THREAD_CSS, WEBCHANNEL_JS
 from futaba2b_bridge   import ThreadBridge, CatalogBridge
-from futaba2b_const    import UA, ThemeManager
+from futaba2b_const    import (UA, ThemeManager, THEME_ORIGINAL,
+                                is_theme_json, same_theme_json)
 
 # ── 同パッケージからインポート ──────────────────────────────────────────────
 from futaba2b_app_qt import (
@@ -83,7 +84,8 @@ def _update_rel(info, prefix: str) -> str:
 
 def _update_backup(src, prefix: str, base: Path, bak: Path):
     """更新前の状態を bak(zip) に退避する。
-    現行の futaba2b_* に加え、上書き対象のCSSも入れる（元へ戻せるように）。"""
+    現行の futaba2b_* に加え、上書き対象のCSSとテーマ（theme.json）も入れる
+    （元へ戻せるように）。"""
     import zipfile
     with zipfile.ZipFile(bak, "w", zipfile.ZIP_DEFLATED) as bz:
         for f in sorted(base.glob("futaba2b_*")):
@@ -91,13 +93,28 @@ def _update_backup(src, prefix: str, base: Path, bak: Path):
                 bz.write(f, f.name)
         for info in src.infolist():
             rel = _update_rel(info, prefix)
-            if rel.lower().endswith(".css") and (base / rel).is_file():
+            if ((rel.lower().endswith(".css") or is_theme_json(rel))
+                    and (base / rel).is_file()):
                 bz.write(base / rel, rel)
 
 
-def _update_extract(src, prefix: str, base: Path, skip_css: bool) -> list:
+def _theme_json_edited(target: Path) -> bool:
+    """theme.json を自分で書き換えたか（配られたままの写しと違うか）。
+    写しが無くて分からない時は、書き換えたものとして残す方に倒す。"""
+    orig = target.with_name(THEME_ORIGINAL)
+    try:
+        return not same_theme_json(target.read_bytes(), orig.read_bytes())
+    except OSError:
+        return True
+
+
+def _update_extract(src, prefix: str, base: Path, skip_css: bool,
+                    skip_theme: bool = True) -> list:
     """zipの中身を base 直下へ展開する。書き出した相対パスの一覧を返す。
-    skip_css=True のときは、既にある .css を残す（無ければ配置する）。"""
+    skip_css=True のときは、既にある .css を残す（無ければ配置する）。
+    skip_theme=True のときは、自分で書き換えた theme.json を残す。
+    書き換えていない theme.json は新しいものにする。どちらの場合も、
+    配られたままの写し（theme_original.json）は新しいものにする。"""
     written = []
     for info in src.infolist():
         rel = _update_rel(info, prefix)
@@ -106,6 +123,18 @@ def _update_extract(src, prefix: str, base: Path, skip_css: bool) -> list:
         target = base / rel
         # 「CSSは更新しない」: 手を入れた .css を残す
         if skip_css and rel.lower().endswith(".css") and target.exists():
+            continue
+        if is_theme_json(rel):
+            data = src.read(info.filename)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # 「書き換えたテーマは更新しない」: 写しと比べるので、写しより先に見る
+            if not (skip_theme and target.exists() and _theme_json_edited(target)):
+                with open(target, "wb") as wf:
+                    wf.write(data)
+                written.append(rel)
+            with open(target.with_name(THEME_ORIGINAL), "wb") as wf:
+                wf.write(data)
+            written.append(rel[:-len("theme.json")] + THEME_ORIGINAL)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "wb") as wf:
@@ -6134,6 +6163,7 @@ class MainWindow(QMainWindow):
         ① 現行 futaba2b_* と上書き対象のCSSを old/{日時}.zip にバックアップ
         ② リポジトリの全ファイルを base 直下に展開・上書き
            skip_css=True のときは、既にある .css を残す（無ければ配置する）
+           設定 update_skip_theme のときは、自分で書き換えた theme.json を残す
         ③ 旧プロセスの終了を待って新プロセスを起動する一時ランチャを起動し、自分は終了"""
         import zipfile, io, datetime, sys, subprocess, tempfile, os as _os
         base = Path(__file__).resolve().parent
@@ -6152,7 +6182,8 @@ class MainWindow(QMainWindow):
             _update_backup(src, prefix, base, old_dir / f"{ts}.zip")
 
             # ② 展開・上書き（プレフィックス除去・サブフォルダ作成）
-            _update_extract(src, prefix, base, skip_css)
+            _update_extract(src, prefix, base, skip_css,
+                            bool(getattr(self._settings, "update_skip_theme", True)))
         except Exception as e:
             self._st_log.setText("アップデートの適用に失敗しました")
             QMessageBox.warning(self, "アップデート",
@@ -7120,6 +7151,9 @@ def main():
             _theme_name = _sd.get("theme", "dark")
     except Exception:
         pass
+    # 配られたままの theme.json の写しを作っておく（アップデートで、自分で
+    # 書き換えた theme.json を見分けて残すため）。無いテーマにだけ作る
+    ThemeManager.save_originals()
     ThemeManager.load(_theme_name)
     app.setStyleSheet(ThemeManager.qt_stylesheet())
     # ─────────────────────────────────────────────────────────────────────

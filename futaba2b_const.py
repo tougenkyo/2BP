@@ -33,6 +33,10 @@ SETTINGS_FILE_NAME = "futaba2b_settings.json"
 
 # テーマフォルダ
 THEME_DIR      = "theme"
+# 配られたままの theme.json の写し（theme/{名前}/ に置く。アップデートが書く）。
+# 自分で theme.json を書き換えたかを見分けるのと、残した theme.json に無い
+# 新しい項目を補うのに使う。
+THEME_ORIGINAL = "theme_original.json"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -40,6 +44,36 @@ THEME_DIR      = "theme"
 # ══════════════════════════════════════════════════════════════════════════════
 import json as _json
 from pathlib import Path as _Path
+
+
+def merge_theme(base: dict, over: dict) -> dict:
+    """base に over を重ねる（over の値が勝つ）。ui / thread などの節は
+    中の項目ごとに重ねるので、over の節に無い項目は base から残る。"""
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = {**out[k], **v}
+        else:
+            out[k] = v
+    return out
+
+
+def is_theme_json(rel: str) -> bool:
+    """アップデートの zip の中の相対パスが theme/{名前}/theme.json か"""
+    parts = rel.replace("\\", "/").split("/")
+    return (len(parts) == 3 and parts[0].lower() == THEME_DIR
+            and parts[2].lower() == "theme.json")
+
+
+def same_theme_json(a: bytes, b: bytes) -> bool:
+    """2つの theme.json が同じ中身か。改行や空白の違いは見ない。
+    JSON として読めない方があれば、改行だけそろえてバイトで比べる。"""
+    try:
+        return (_json.loads(a.decode("utf-8-sig"))
+                == _json.loads(b.decode("utf-8-sig")))
+    except Exception:
+        return a.replace(b"\r\n", b"\n") == b.replace(b"\r\n", b"\n")
+
 
 class ThemeManager:
     """
@@ -76,15 +110,43 @@ class ThemeManager:
 
     @classmethod
     def load(cls, name: str = "dark") -> None:
-        """テーマJSONを読み込む。theme/{name}/theme.json を参照。失敗時はデフォルト値を使う。"""
+        """テーマJSONを読み込む。theme/{name}/theme.json を参照。失敗時はデフォルト値を使う。
+
+        theme_original.json（配られたままの写し）があれば、theme.json に無い
+        項目をそこから補う。自分で書き換えた theme.json はアップデートで
+        残すので、後の版で増えた色が無いまま（決め打ちの色）にならないように。"""
         cls._name = name
-        theme_path = cls.theme_dir(name) / "theme.json"
+        d = cls.theme_dir(name)
         try:
-            with open(theme_path, encoding="utf-8") as f:
-                cls._data = _json.load(f)
+            with open(d / "theme.json", encoding="utf-8") as f:
+                data = _json.load(f)
         except Exception as e:
             print(f"[Theme] {name}/theme.json 読み込み失敗: {e}")
-            cls._data = {}
+            data = {}
+        try:
+            with open(d / THEME_ORIGINAL, encoding="utf-8") as f:
+                orig = _json.load(f)
+        except Exception:
+            orig = None
+        if isinstance(orig, dict) and isinstance(data, dict):
+            data = merge_theme(orig, data)
+        cls._data = data if isinstance(data, dict) else {}
+
+    @classmethod
+    def save_originals(cls) -> None:
+        """theme_original.json が無いテーマに、今の theme.json を写しておく。
+
+        起動の最初に呼ぶ。この版より前のアップデートは写しを作らないが、
+        theme.json をすべて配られたままに上書きしてから起動し直すので、
+        初めて起動した時の theme.json は配られたままのものと見てよい。"""
+        base = _Path(__file__).parent / THEME_DIR
+        try:
+            for d in base.iterdir():
+                tj, oj = d / "theme.json", d / THEME_ORIGINAL
+                if d.is_dir() and tj.is_file() and not oj.exists():
+                    oj.write_bytes(tj.read_bytes())
+        except Exception as e:
+            print(f"[Theme] {THEME_ORIGINAL} を作れませんでした: {e}")
 
     @classmethod
     def color(cls, section: str, key: str, fallback: str = "#888") -> str:
