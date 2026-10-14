@@ -3,7 +3,7 @@ futaba2b_main_window.py ─ メインウィンドウ + エントリポイント
 v0.6.011
 """
 from __future__ import annotations
-import sys, os, re, threading, webbrowser
+import sys, os, re, threading, types, webbrowser
 from futaba2b_app_qt import _open_url
 from pathlib import Path
 
@@ -2446,42 +2446,61 @@ class MainWindow(QMainWindow):
                     if getattr(s, "log_auto_save_mht",  True): fmts.append("mht")
                     if getattr(s, "log_auto_save_zip",  True): fmts.append("zip")
                     if fmts:
-                        save_html = self._build_log_html(view, thread)
-                        save_dir  = self._log_save_dir()
+                        save_dir = self._log_save_dir()
+                        # 保存済みの形式は、原本の取り直しも組み立てもしない。
+                        # 全部保存済みなら何もしない（落ちたスレを開き直すたびに
+                        # 取りに行っていた）
+                        todo = []; skipped = []
+                        for fmt in fmts:
+                            path = os.path.join(save_dir, self._log_filename(thread, fmt))
+                            if os.path.exists(path):
+                                skipped.append(os.path.basename(path))
+                            else:
+                                todo.append((fmt, path))
+                        if not todo:
+                            self._st_log.setText(
+                                f"{reason}自動保存: スキップ（保存済み: {', '.join(skipped)}）")
+                        else:
+                            # 原本htmの取り直し（ふたばへの通信）と組み立ては裏で行う。
+                            # 以前は画面の側で取り直していたため、ふたばの返事が遅いと
+                            # 返事が来るまで（最大60秒・やり直し込みでその数倍）2BP
+                            # 全体が固まっていた。スレ落ちは自動更新の時に見つかるので、
+                            # ちょうどタブを切り替えた時などに固まって見えた。
+                            # ビューは裏から触らない。NG判定だけ先に控えて渡す
+                            _cur = types.SimpleNamespace(_ng=getattr(view, "_ng", None))
 
-                        def _do_save(_reason=reason, _thread=thread, _fmts=fmts,
-                                     _html=save_html, _dir=save_dir):
-                            try:
-                                saved = []; skipped = []
-                                for fmt in _fmts:
-                                    rel   = self._log_filename(_thread, fmt)
-                                    path  = os.path.join(_dir, rel)
-                                    os.makedirs(os.path.dirname(path), exist_ok=True)
-                                    fname = os.path.basename(path)
-                                    if os.path.exists(path):
-                                        skipped.append(fname); continue
-                                    if fmt == "html":
-                                        self._do_save_html(path, _html, _thread, show_progress=False)
-                                    elif fmt == "mht":
-                                        self._do_save_mht(path, _html, _thread, show_progress=False)
+                            def _do_save(_reason=reason, _thread=thread, _todo=todo,
+                                         _skipped=skipped, _cur=_cur):
+                                try:
+                                    _html = self._build_log_html(_cur, _thread)
+                                    saved = []
+                                    for fmt, path in _todo:
+                                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                                        fname = os.path.basename(path)
+                                        if os.path.exists(path):
+                                            _skipped.append(fname); continue
+                                        if fmt == "html":
+                                            self._do_save_html(path, _html, _thread, show_progress=False)
+                                        elif fmt == "mht":
+                                            self._do_save_mht(path, _html, _thread, show_progress=False)
+                                        else:
+                                            self._do_save_zip(path, _html, _thread, show_progress=False)
+                                        saved.append(fname)
+                                    if saved:
+                                        msg = f"{_reason}自動保存: {', '.join(saved)}"
+                                        if _skipped: msg += f"  (スキップ: {', '.join(_skipped)})"
+                                    elif _skipped:
+                                        msg = f"{_reason}自動保存: スキップ（保存済み: {', '.join(_skipped)}）"
                                     else:
-                                        self._do_save_zip(path, _html, _thread, show_progress=False)
-                                    saved.append(fname)
-                                if saved:
-                                    msg = f"{_reason}自動保存: {', '.join(saved)}"
-                                    if skipped: msg += f"  (スキップ: {', '.join(skipped)})"
-                                elif skipped:
-                                    msg = f"{_reason}自動保存: スキップ（保存済み: {', '.join(skipped)}）"
-                                else:
-                                    msg = f"{_reason}自動保存: 保存なし"
-                                self._main_thread_call.emit(lambda _m=msg: self._st_log.setText(_m))
-                            except Exception as e:
-                                self._main_thread_call.emit(lambda _r=_reason, _e=e:
-                                    self._st_log.setText(f"{_r}自動保存エラー: {_e}"))
+                                        msg = f"{_reason}自動保存: 保存なし"
+                                    self._main_thread_call.emit(lambda _m=msg: self._st_log.setText(_m))
+                                except Exception as e:
+                                    self._main_thread_call.emit(lambda _r=_reason, _e=e:
+                                        self._st_log.setText(f"{_r}自動保存エラー: {_e}"))
 
-                        import threading as _threading
-                        _threading.Thread(target=_do_save, daemon=True).start()
-                        self._st_log.setText(f"{reason}自動保存中...")
+                            import threading as _threading
+                            _threading.Thread(target=_do_save, daemon=True).start()
+                            self._st_log.setText(f"{reason}自動保存中...")
 
         # ── タブ自動クローズ ──────────────────────────────────────────────
         _close_dead = getattr(s, "auto_close_dead_tab", False)
