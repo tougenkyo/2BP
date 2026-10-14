@@ -2325,6 +2325,35 @@ class MainWindow(QMainWindow):
         w = self._outer_tabs.currentWidget()
         return w if isinstance(w, BoardPane) else None
 
+    def _freeze_watch_pages(self) -> list:
+        """固まった時の記録用: いま見えているスレ・カタログの表示 [(名前, page)]。
+        左右に分けている時は横のカタログも"""
+        out = []
+        pane = self._active_inner()
+        if pane is None:
+            return out
+        try:
+            ws = [pane._tabs.currentWidget(), getattr(pane, "_split_cat", None)]
+        except RuntimeError:
+            return out
+        for w in ws:
+            try:
+                if isinstance(w, ThreadView):
+                    label = f"スレ No.{w._thread_no}"
+                elif isinstance(w, CatalogView):
+                    label = f"カタログ {getattr(getattr(w, '_board', None), 'name', '')}"
+                else:
+                    continue
+                if not w.isVisible():
+                    continue
+                v = getattr(w, "_view", None)
+                page = v.page() if v is not None else None
+                if page is not None:
+                    out.append((label, page))
+            except RuntimeError:
+                continue
+        return out
+
     def _close_outer_tab(self, idx: int):
         w = self._outer_tabs.widget(idx)
         # 2BPタブ（板が1枚も無い時の案内）は閉じさせない。閉じられると
@@ -6902,6 +6931,13 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         # 普通に閉じた事をログに残す（無いまま途切れていれば、落ちたか強制終了）
         print("[LOG] 終了処理を始めます", flush=True)
+        # 固まった時の記録を止める（後片付けで画面の処理が長く止まるのは普通の事）
+        try:
+            _fw = getattr(self, "_freeze_watch", None)
+            if _fw is not None:
+                _fw.stop()
+        except Exception:
+            pass
         # ── 終了処理の最初にバックグラウンド更新を全停止する ──────────────────
         # 1日運用でタブ（＝WebEngineプロファイル）が多いと破棄に時間がかかり、
         # その間も自動更新スレッドが破棄途中のビューを触ってクラッシュ
@@ -7243,6 +7279,14 @@ def main():
     if getattr(win._settings, "log_window", False):
         win._show_log_window(activate=False)
     win.show()
+    # 固まった時の記録（画面の処理が止まったら、その時の処理場所をログへ）。
+    # 終了処理の最初（closeEvent）で止める
+    try:
+        from futaba2b_freeze import FreezeWatch
+        win._freeze_watch = FreezeWatch(pages_fn=win._freeze_watch_pages, parent=win)
+        win._freeze_watch.start()
+    except Exception as e:
+        print(f"[固まり] 見張りを始められませんでした: {e}", flush=True)
     _rc = app.exec()
     # Qt の警告の受け口を外してから後片付けに入る（Python が先に片付いた後で
     # Qt が警告を出すと、受け口の呼び出しで落ちるため）

@@ -87,6 +87,11 @@ class LogHub:
         """書いているテキストファイル（書いていなければ None）"""
         return self._path
 
+    def fileno(self) -> int:
+        """テキストファイルの書き口（書いていなければ -1）。
+        固まった時の記録（futaba2b_freeze.py）が faulthandler に渡す"""
+        return self._fd
+
     # ── 受け取る ─────────────────────────────────────────────────────────────
     def _stamp(self, lines) -> list:
         """時刻を付ける。日付が変わった所には区切りの行を入れる（ロックの中で呼ぶ）"""
@@ -273,6 +278,9 @@ def _fault_off() -> None:
     try:
         import faulthandler
         faulthandler.disable()
+        # 固まった時の記録が頼んだ分も取り消す。閉じた後で同じ番号の書き口が
+        # 別のファイルに使われると、そこへ書き込まれてしまう
+        faulthandler.cancel_dump_traceback_later()
     except Exception:
         pass
 
