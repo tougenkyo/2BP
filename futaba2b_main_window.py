@@ -4,7 +4,7 @@ v0.6.011
 """
 from __future__ import annotations
 import sys, os, re, threading, webbrowser
-from futaba2b_app_qt import _open_url
+from futaba2b_app_qt import _open_url, set_lens_handler
 from pathlib import Path
 
 from PySide6.QtCore    import Qt, QUrl, QTimer, QObject, Signal, Slot, QSize, QRect, QPoint, QEvent
@@ -283,6 +283,10 @@ class MainWindow(QMainWindow):
         self._settings     = AppSettings()
         self._fetcher      = FutabaFetcher(self._settings)
         self._image_window = None   # 画像表示モード=ウインドウ の単一インスタンス
+        # Google 画像検索の窓（初めて使う時に作る）。スレの [google] と画像表示の
+        # Google ボタンは _open_url を通るので、そこで受け取る
+        self._lens_window  = None
+        set_lens_handler(self._lens_search)
         # ログウインドウ（開いた時に作る）。設定の「表示する」を切り替えた時だけ
         # 開け閉めするため、今の設定の値を覚えておく
         self._log_window   = None
@@ -6005,6 +6009,22 @@ class MainWindow(QMainWindow):
         if r["failed"]:
             _msg += "\n\n作れなかった場所:\n" + "\n".join("　" + p for p in r["failed"])
         QMessageBox.information(self, "ショートカットを作る", _msg)
+
+    def _lens_search(self, img_url: str) -> bool:
+        """Google 画像検索を 2BP の窓で行う（画像そのものを送る）。
+        設定で外部ブラウザにしている時・動画の時は False（外部ブラウザで開く）"""
+        if not getattr(self._settings, "lens_in_app", True):
+            return False
+        if not img_url.lower().startswith(("http://", "https://")):
+            return False
+        if img_url.lower().split("?", 1)[0].endswith((".mp4", ".webm")):
+            return False
+        w = self._lens_window
+        if w is None:
+            from futaba2b_lens import LensSearchWindow
+            w = self._lens_window = LensSearchWindow(self._fetcher, self)
+        w.search(img_url)
+        return True
 
     def _show_about(self):
         QMessageBox.information(self, "バージョン情報",

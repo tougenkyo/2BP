@@ -6092,6 +6092,19 @@ class AppSettingsDialog(QDialog):
         _upd_hint.setWordWrap(True)
         udf.addWidget(_upd_hint)
 
+        # 画像検索
+        g_lens = QGroupBox("画像検索"); f_ap.addWidget(g_lens)
+        lnf = QVBoxLayout(g_lens)
+        self._lens_in_app = QCheckBox("Google 画像検索は 2BP の窓で行う（画像そのものを送る）")
+        self._lens_in_app.setToolTip(
+            "スレの [google] と画像表示の Google ボタンの動きです。\n"
+            "外部ブラウザに画像の URL を渡すと、Google がふたばから画像を\n"
+            "取れずに「この URL には画像がありません」になる事が多いため、\n"
+            "2BP が画像を Google へ送り、結果を 2BP の窓に出します。\n"
+            "結果の中のリンクは外部ブラウザで開きます。\n"
+            "外すと、今まで通り外部ブラウザで開きます（URL を渡す）。")
+        lnf.addWidget(self._lens_in_app)
+
         f_ap.addStretch()
         _w_ap = _scroll(w_ap)   # 棒読みちゃんタブの後で addTab する
 
@@ -6820,6 +6833,7 @@ class AppSettingsDialog(QDialog):
         self._scroll_top_count.setValue(getattr(s, "scroll_top_count", 0))
         self._update_skip_css.setChecked(getattr(s, "update_skip_css", True))
         self._update_skip_theme.setChecked(getattr(s, "update_skip_theme", True))
+        self._lens_in_app.setChecked(getattr(s, "lens_in_app", True))
         self._parse_sem_kb.setValue(getattr(s, "parse_sem_kb", 50))
         self._log_window_chk.setChecked(getattr(s, "log_window", False))
         self._log_file_chk.setChecked(getattr(s, "log_to_file", False))
@@ -7025,6 +7039,7 @@ class AppSettingsDialog(QDialog):
         s.scroll_top_count        = self._scroll_top_count.value()
         s.update_skip_css         = self._update_skip_css.isChecked()
         s.update_skip_theme       = self._update_skip_theme.isChecked()
+        s.lens_in_app             = self._lens_in_app.isChecked()
         s.parse_sem_kb            = self._parse_sem_kb.value()
         s.log_window              = self._log_window_chk.isChecked()
         s.log_to_file             = self._log_file_chk.isChecked()

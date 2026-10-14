@@ -5,6 +5,20 @@ v0.6.011
 from __future__ import annotations
 import sys, re, time, threading, webbrowser, urllib.parse
 
+# Google 画像検索（レンズ）の「URL を渡す」形。スレの [google] と画像表示の
+# Google ボタンがこれを開く。受け手（本体の窓）があれば、外部ブラウザでは
+# なく 2BP の窓で画像そのものを送って検索する（futaba2b_lens.py）。
+LENS_BY_URL = "https://lens.google.com/uploadbyurl?url="
+_lens_handler = None
+
+
+def set_lens_handler(fn) -> None:
+    """Google 画像検索の受け手を登録する。fn(画像URL) が True を返せば
+    外部ブラウザでは開かない。None で外す"""
+    global _lens_handler
+    _lens_handler = fn
+
+
 def _open_url(url: str) -> None:
     """URLを外部ブラウザで確実に開く。
     QDesktopServices.openUrl が正攻法（GUIスレッドからShellExecuteを正しく呼ぶ）。
@@ -18,6 +32,14 @@ def _open_url(url: str) -> None:
     # ふたばの外部リンクラッパー「…bin/jump.php?実URL」を除去
     if "jump.php?" in url:
         url = url.split("jump.php?", 1)[1]
+    # Google 画像検索: URL を渡すと、Google がふたばから画像を取れずに
+    # 「この URL には画像がありません」になることが多い。受け手に任せる
+    if _lens_handler is not None and url.startswith(LENS_BY_URL):
+        try:
+            if _lens_handler(urllib.parse.unquote(url[len(LENS_BY_URL):])):
+                return
+        except Exception as e:
+            print(f"[Lens] 2BP の窓で開けませんでした: {e}")
     # ① Qt標準（最も確実）
     try:
         from PySide6.QtGui import QDesktopServices
@@ -124,7 +146,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.521"
+APP_VER = "0.9.522"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
