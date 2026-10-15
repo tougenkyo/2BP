@@ -2950,6 +2950,10 @@ def _make_scroll_bottom_js(n: int = 5, top_n: int = 0) -> str:
         f'  }};'
         f'  window.addEventListener("wheel",function(e){{'
         f'    if(cooling)return;'
+        # 引用・ID・del のポップアップや抽出パネルの上のホイールは、その中を
+        # 読むためのもの。ページが下端（上端）でも更新の回数に数えない
+        f'    var t=e.target;'
+        f'    if(t&&t.closest&&t.closest("._rp,.id-popup,.extract-panel,#del-pop,.ctx-menu"))return;'
         f'    var fromBottom=document.documentElement.scrollHeight-window.scrollY-window.innerHeight;'
         f'    if(NEED>0&&fromBottom<=THRESHOLD&&e.deltaY>0){{'
         f'      topCount=0;count++;'
