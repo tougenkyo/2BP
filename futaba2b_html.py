@@ -276,6 +276,8 @@ a.nm:hover { text-decoration: underline; }
 /* ─ 削除レスの削除理由ラベル ─ */
 .del-reason { color: var(--del-reason-color); font-size: 8pt; font-style: italic; }
 .del-content { color: var(--del-content-color); font-size: 8pt; margin-top: 2px; white-space: pre-wrap; }
+/* 削除レスの引用行（▼の集計用に span.qt にしてある）。色は削除レスの本文のまま */
+.comment .del-content .qt { color: inherit; }
 .del-imgnote { color: var(--del-content-color); font-size: 8pt; opacity: 0.8; margin-top: 2px; }
 .comment a    { color: var(--link-color); }
 .comment a:hover { color: var(--link-hover); text-decoration: underline; }
@@ -2045,6 +2047,40 @@ def _wrap_op_refs(escaped: str) -> str:
     return escaped
 
 
+def _deleted_body_html(bq) -> str:
+    """削除レスの本文（del-content の中身）を返す。改行は文字のまま
+    （del-content は pre-wrap で出す）。
+
+    引用行（緑の font）は span.qt にする。以前は本文を全部ただの文字にして
+    いたため、引用行が「このレスが自分で書いた文」に見え、後のレスがその
+    文を引用すると、元のレスではなくこの削除レスへの引用と取り違えて
+    いた（元のレスの ▼ が消える）。"""
+    out = []
+    for child in getattr(bq, "children", []):
+        tag = getattr(child, "name", None)
+        if tag == "br":
+            out.append("\n")
+        elif tag == "font" and "789922" in (child.get("color") or "").lower():
+            spans = []
+            for line in child.get_text().split("\n"):
+                s = line.strip()
+                m_img = _IMG_QUOTE_RE.match(s)
+                m_id = _QT_ID_RE.match(s)
+                if m_img:
+                    attr = f' data-img-ref="{_e(m_img.group(1).lower())}"'
+                elif m_id:
+                    attr = f' data-id-ref="{_e(m_id.group(1))}"'
+                else:
+                    attr = ""
+                spans.append(f'<span class="qt"{attr}>{_e(line)}</span>')
+            out.append("\n".join(spans))
+        elif hasattr(child, "get_text"):
+            out.append(_e(child.get_text()))
+        else:
+            out.append(_e(str(child)))
+    return "".join(out).strip()
+
+
 def _comment_html(raw_html: str, _uploaders: list = None,
                   _img_list: list = None, _res_no: int = 0) -> str:
     from bs4 import BeautifulSoup
@@ -2571,15 +2607,15 @@ def render_res(res, is_op: bool, img_list: list, uploaders: list = None,
                 for _br in _bq.find_all("br", limit=1):
                     _br.extract()
                     break
-                _body_txt = _bq.get_text(separator="\n").strip()
             else:
                 _reason_txt = ""
-                _body_txt = _bq.get_text(separator="\n").strip()
+            # 引用行は span.qt にする（▼の引用先の取り違えを防ぐ）
+            _body_html = _deleted_body_html(_bq)
         except Exception:
             _reason_txt = ""
-            _body_txt = (res.comment_text or "").strip()
+            _body_html = _e((res.comment_text or "").strip())
         _reason_part = f'<span class="del-reason">{_e(_reason_txt) if _reason_txt else "削除済み"}</span>'
-        _body_part   = f'<span class="del-content">{_e(_body_txt)}</span>' if _body_txt else ""
+        _body_part   = f'<span class="del-content">{_body_html}</span>' if _body_html else ""
         com = _reason_part + (f'<br>{_body_part}' if _body_part else "")
     else:
         com_html = res.comment_html or ""
