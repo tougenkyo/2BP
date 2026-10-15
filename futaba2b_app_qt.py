@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.526"
+APP_VER = "0.9.527"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -9060,24 +9060,57 @@ class ThreadView(_MouseGestureMixin, QWidget):
         全レスを render_res でフルレンダリングするのは重い（1000レスで切替毎に
         1000回）ため、per-res キャッシュ(_respool_cache)で変化のないレスの再実行を
         避ける。署名(sig)は render_res の出力に影響する可変フィールドのみで構成し、
-        変化時だけ再生成する。NG状態は respool では描画に影響しない（ng_filterを
-        渡さない＝CSSクラスで制御）ためキャッシュ無効化は不要。"""
+        変化時だけ再生成する。
+
+        NG・手動非表示は返信モードと同じに描く（隠すレスは理由だけ）。以前は
+        NG を渡さず全レスを中身ありで描いていたため、隠したレスの本文まで
+        ▼の集計に加わり、返信モードと▼の数・付く先が食い違っていた
+        （隠した削除レスの引用行が、元のレスへの引用を横取りする等）。"""
         # スレッド同一性ガード: ビューが別スレに切り替わった場合は res_no が衝突
         # しうるためキャッシュを破棄する（通常タブは1スレ固定なので発生しない保険）。
         _tno = self._thread.no if self._thread else None
         if getattr(self, '_respool_cache_no', None) != _tno:
             self._respool_cache.clear()
             self._respool_cache_no = _tno
+        # 返信モード（_show_impl）と同じ NG の渡し方
+        _ng = self._settings.ng_filter
+        _ng_reveal = not getattr(self, '_ng_enabled', True)
+        _turl = (self._thread.url if self._thread else "") or ""
+        _hidden = set(self._settings.ng_hidden_res_nos.get(_turl, []))
+        _del = set(self._settings.del_res_nos.get(_turl, []))
+        # NGワード・置換を変えた時は作り直す（NgFilter は変更のたびに
+        # フラット表を作り直すので、その表が別物になったかで見る）
+        try:
+            _ng._ensure_flat()
+            _ngkey = (id(_ng._flat_words), id(_ng._flat_replaces))
+        except Exception:
+            _ngkey = None
+        if getattr(self, '_respool_ngkey', None) != _ngkey:
+            self._respool_cache.clear()
+            self._respool_ngkey = _ngkey
         cache = self._respool_cache
+
+        def _img_ng(r):
+            """NG画像の状態（NG画像の登録を変えた時に描き直すため）"""
+            if not r.image_url or r.is_deleted or r.is_op:
+                return None
+            try:
+                _c = _ng.classify_image(r)
+                return (_c, _ng.get_ng_image_hide_mode(r) if _c == "ng" else "")
+            except Exception:
+                return None
         parts = []
         for r in res_list:
             idc = id_counts.get(r.id_str, 0) if (id_counts and r.id_str) else 0
-            sig = (idc, id_warn, r.sodane, r.is_new, r.is_deleted, r.expiry_str)
+            sig = (idc, id_warn, r.sodane, r.is_new, r.is_deleted, r.expiry_str,
+                   r.no in _hidden, r.no in _del, _ng_reveal, _img_ng(r))
             ent = cache.get(r.no)
             if ent is not None and ent[0] == sig:
                 parts.append(ent[1])
             else:
-                frag = render_res(r, r.is_op, [], id_counts=id_counts, id_warn_count=id_warn)
+                frag = render_res(r, r.is_op, [], id_counts=id_counts, id_warn_count=id_warn,
+                                  ng_filter=_ng, ng_settings=self._settings,
+                                  hidden_nos=_hidden, del_nos=_del, ng_reveal=_ng_reveal)
                 cache[r.no] = (sig, frag)
                 parts.append(frag)
         return ''.join(parts)
