@@ -1759,7 +1759,13 @@ class NgFilter:
         self._compiled: dict[str, re.Pattern | None] = {}  # コンパイル済みパターンキャッシュ
         self._flat_words:   list | None = None
         self._flat_replaces: list | None = None
-        self._cat_cls_cache: dict[tuple, tuple[bool, bool]] = {}  # (title,title_chars) → (is_ng,is_rev) カタログ分類メモ
+        # カタログ判定に使うワード: (元にした _flat_words, NGワード, 逆NGワード)。
+        # NG・逆NGはどちらも [(rxp, pat)]。_flat_words が作り直されたら作り直す
+        self._cat_words: tuple | None = None
+        # カタログ分類メモ。NG と逆NG を別々に覚えて、要る方だけ調べる
+        # （板の全スレに使う「NGか」の判定で、逆NGワードまで当てずに済む）
+        self._cat_ng_memo:  dict[str, bool] = {}   # タイトル → NGワードに当たるか
+        self._cat_rev_memo: dict[str, bool] = {}   # 判定する文字列 → 逆NGワードに当たるか
         # NG画像判定用: ディスクキャッシュ画像の URL→MD5 メモ。画像は不変のため
         # invalidate_cache() では消さない（NG設定変更に依存しない事実キャッシュ）。
         self._file_md5_memo: dict[str, str] = {}
@@ -1785,7 +1791,9 @@ class NgFilter:
         self._compiled.clear()
         self._flat_words    = None
         self._flat_replaces = None
-        self._cat_cls_cache.clear()
+        self._cat_words     = None
+        self._cat_ng_memo.clear()
+        self._cat_rev_memo.clear()
 
     # ── ヘルパー: 有効期限チェック ───────────────────────────────────────────
     @staticmethod
@@ -1817,7 +1825,9 @@ class NgFilter:
     def _ensure_flat(self) -> None:
         if self._flat_words is not None:
             return
-        self._cat_cls_cache.clear()   # フラット再構築時は分類メモも無効
+        # フラット再構築時は分類メモも無効
+        self._cat_ng_memo.clear()
+        self._cat_rev_memo.clear()
         import datetime
         today = datetime.date.today()
         flat_words:   list = []
@@ -1943,39 +1953,74 @@ class NgFilter:
 
 
     # ── NGワード: カタログエントリ判定（フラット化キャッシュ使用） ────────────
-    def _classify_ng_catalog_1pass(self, entry, title_chars: int = -1) -> tuple[bool, bool]:
+    # 板の全スレ（大取得で数千件）に毎回使うので、NG と逆NG を分けて、当たった
+    # 所で止め、要る方だけ調べる。以前は1件ごとに全ワード（利用者の環境で
+    # 1400 個近く。大半が逆NG）を当てていて、カタログを描くたびに画面が止まっていた。
+    # 結果（'ng' / 'reverse_ng' / 'none'）は以前と同じ。
+    _CAT_MEMO_MAX = 50000   # 分類メモの上限（板をいくつ開いていても足りる数）
+
+    def _cat_word_lists(self) -> tuple:
+        """カタログ判定に使う (NGワード, 逆NGワード)。どちらも [(rxp, pat)]。
+        _flat_words のうち本文かカタログに効くもの（以前の1件ずつの判定と同じ範囲）"""
         self._ensure_flat()
+        flat = self._flat_words or []
+        cw = self._cat_words
+        if cw is None or cw[0] is not flat:
+            ng_w, rev_w = [], []
+            for rxp, pat, ng_type, scope in flat:
+                if not scope[0] and not scope[6]:
+                    continue
+                if ng_type == "ng":
+                    ng_w.append((rxp, pat))
+                elif ng_type == "reverse_ng":
+                    rev_w.append((rxp, pat))
+            cw = (flat, ng_w, rev_w)
+            self._cat_words = cw
+        return cw[1], cw[2]
+
+    @staticmethod
+    def _cat_any_hit(words, text: str) -> bool:
+        for rxp, pat in words:
+            if (rxp.search(text) if rxp else pat.lower() in text.lower()):
+                return True
+        return False
+
+    def _cat_is_ng(self, title: str) -> bool:
+        """タイトル（全文）が NG ワードに当たるか。NG(非表示)は title_chars に依らない"""
+        hit = self._cat_ng_memo.get(title)
+        if hit is None:
+            hit = self._cat_any_hit(self._cat_word_lists()[0], title)
+            if len(self._cat_ng_memo) > self._CAT_MEMO_MAX:
+                self._cat_ng_memo.clear()
+            self._cat_ng_memo[title] = hit
+        return hit
+
+    def _cat_is_rev(self, title: str, title_chars: int = -1) -> bool:
+        """逆NGワードに当たるか。逆NGは板のカタログ表示文字数(cat_chars)までに
+        切り詰めたタイトルで判定する（カタログに表示されない文字での逆NG＝
+        自動オープンを防ぐ）。
+          title_chars <  0 … 制限なし（全文）。判定不能時のフォールバック等。
+          title_chars == 0 … 空（カタログがタイトル非表示の板＝逆NG判定対象なし）。
+          title_chars >  0 … 先頭 title_chars 文字。"""
+        rev_title = title if title_chars < 0 else title[:title_chars]
+        hit = self._cat_rev_memo.get(rev_title)
+        if hit is None:
+            hit = self._cat_any_hit(self._cat_word_lists()[1], rev_title)
+            if len(self._cat_rev_memo) > self._CAT_MEMO_MAX:
+                self._cat_rev_memo.clear()
+            self._cat_rev_memo[rev_title] = hit
+        return hit
+
+    def _classify_ng_catalog_1pass(self, entry, title_chars: int = -1) -> tuple[bool, bool]:
+        """(NGワードに当たるか, 逆NGワードに当たるか)"""
         title = entry.title or ""
         if not title:
             return False, False
-        # 逆NGは板のカタログ表示文字数(cat_chars)までに切り詰めたタイトルで判定する
-        # （カタログに表示されない文字での逆NG＝自動オープンを防ぐ）。
-        #   title_chars <  0 … 制限なし（全文）。判定不能時のフォールバック等。
-        #   title_chars == 0 … 空（カタログがタイトル非表示の板＝逆NG判定対象なし）。
-        #   title_chars >  0 … 先頭 title_chars 文字。
-        # NG(非表示)はタイトル全文のまま（title_chars 非依存）。
-        rev_title = title if title_chars < 0 else title[:title_chars]
-        # タイトル＋判定文字数でメモ化（同一レンダリング内の多重判定・再計算を排除）
-        cache_key = (title, title_chars)
-        cached = self._cat_cls_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        is_ng = is_rev = False
-        for rxp, pat, ng_type, scope in self._flat_words:
-            if not scope[0] and not scope[6]:
-                continue
-            _t = rev_title if ng_type == "reverse_ng" else title
-            hit = bool(rxp.search(_t)) if rxp else pat.lower() in _t.lower()
-            if not hit:
-                continue
-            if ng_type == "ng":           is_ng  = True
-            elif ng_type == "reverse_ng": is_rev = True
-            if is_ng and is_rev:
-                break
-        if len(self._cat_cls_cache) > 5000:   # 肥大防止
-            self._cat_cls_cache.clear()
-        self._cat_cls_cache[cache_key] = (is_ng, is_rev)
-        return is_ng, is_rev
+        return self._cat_is_ng(title), self._cat_is_rev(title, title_chars)
+
+    def _ng_word_first(self) -> bool:
+        """NGと逆NGの両方に当たった時に NG を優先するか（設定「優先するワード」）"""
+        return getattr(self._settings, "ng_priority_word_idx", 0) == 0
 
     def classify_catalog(self, entry, title_chars: int = -1) -> str:
         """カタログエントリのNG分類を返す: 'ng' / 'reverse_ng' / 'none'
@@ -1983,19 +2028,39 @@ class NgFilter:
         url = getattr(entry, "thread_url", "")
         if url and url in self._settings.ng_thread_urls:
             return "ng"
-        is_ng, is_rev_ng = self._classify_ng_catalog_1pass(entry, title_chars)
-        if is_ng and is_rev_ng:
-            priority = getattr(self._settings, "ng_priority_word_idx", 0)
-            return "ng" if priority == 0 else "reverse_ng"
-        if is_ng:      return "ng"
-        if is_rev_ng:  return "reverse_ng"
-        return "none"
+        title = entry.title or ""
+        if not title:
+            return "none"
+        if self._cat_is_ng(title):
+            if self._ng_word_first():
+                return "ng"
+            return "reverse_ng" if self._cat_is_rev(title, title_chars) else "ng"
+        return "reverse_ng" if self._cat_is_rev(title, title_chars) else "none"
 
     def is_ng_catalog(self, entry, title_chars: int = -1) -> bool:
-        return self.classify_catalog(entry, title_chars) == "ng"
+        """classify_catalog(...) == 'ng' と同じ。逆NGは要る時（逆NG優先で NG に
+        当たった時）だけ調べる"""
+        url = getattr(entry, "thread_url", "")
+        if url and url in self._settings.ng_thread_urls:
+            return True
+        title = entry.title or ""
+        if not title or not self._cat_is_ng(title):
+            return False
+        if self._ng_word_first():
+            return True
+        return not self._cat_is_rev(title, title_chars)
 
     def is_reverse_ng_catalog(self, entry, title_chars: int = -1) -> bool:
-        return self.classify_catalog(entry, title_chars) == "reverse_ng"
+        """classify_catalog(...) == 'reverse_ng' と同じ"""
+        url = getattr(entry, "thread_url", "")
+        if url and url in self._settings.ng_thread_urls:
+            return False
+        title = entry.title or ""
+        if not title or not self._cat_is_rev(title, title_chars):
+            return False
+        if not self._cat_is_ng(title):
+            return True
+        return not self._ng_word_first()
 
 
     def get_ng_reason_catalog(self, entry, title_chars: int = -1,
