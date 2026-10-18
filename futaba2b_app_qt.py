@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.531"
+APP_VER = "0.9.532"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2167,6 +2167,68 @@ def _has_subdir(path: str) -> bool:
     except OSError:
         pass
     return False
+
+
+# ── 保存先「▼」の判定を裏で行う ──────────────────────────────────────────────
+# 画像モードを描くたびに、登録した保存先を画面の処理で1つずつ覗いていた。
+# 眠っているハードディスクや書き込み中のディスクだと、起きるまで画面が止まって
+# いた（利用者の環境で 15.9 秒）。描く時は前に調べた結果を使い、調べ直しは裏で行う。
+_subdir_cache: dict = {}      # フォルダ → 直下にサブフォルダがあるか（前に調べた結果）
+_subdir_waiters: dict = {}    # 調べている最中のフォルダ → 結果を待つ人 [notify(path, has)]
+_subdir_lock = threading.Lock()
+
+
+def request_subdir_check(paths, notify) -> None:
+    """paths を裏で調べ直し、調べ終わったフォルダごとに notify(path, has) を呼ぶ
+    （裏のスレッドから呼ぶので、notify はシグナルの emit にする）。
+    同じフォルダを調べている最中なら、重ねて調べずにその結果を待つ。"""
+    start = []
+    with _subdir_lock:
+        for p in paths:
+            w = _subdir_waiters.get(p)
+            if w is None:
+                _subdir_waiters[p] = [notify]
+                start.append(p)
+            else:
+                w.append(notify)
+    if start:
+        threading.Thread(target=_subdir_worker, args=(start,), daemon=True,
+                         name="2BP-subdir").start()
+
+
+def _subdir_worker(paths) -> None:
+    for p in paths:
+        has = _has_subdir(p)
+        with _subdir_lock:
+            _subdir_cache[p] = has
+            waiters = _subdir_waiters.pop(p, [])
+        for fn in waiters:
+            try:
+                fn(p, has)
+            except RuntimeError:
+                pass        # 待っていたタブがもう閉じられた
+
+
+def _subdir_buttons_js(states: dict) -> str:
+    """選択バーの保存先グループの「▼」を states {フォルダ: サブフォルダがあるか} に
+    合わせて出し入れするJS（_gal_sel_ui_html が作るボタンと同じ形・同じ位置）"""
+    import json as _json
+    return (
+        "(function(m){"
+        "var gs=document.querySelectorAll('#_selbar ._selgrp[data-f]');"
+        "for(var i=0;i<gs.length;i++){"
+        " var g=gs[i],f=g.getAttribute('data-f');"
+        " if(!Object.prototype.hasOwnProperty.call(m,f))continue;"
+        " var b=g.querySelector('button._selsub');"
+        " if(m[f]&&!b){"
+        "  b=document.createElement('button');b.className='_selsub';"
+        "  b.title='サブフォルダを選んで保存';b.textContent='▼';"
+        "  (function(ff){b.onclick=function(){_selSub(ff);};})(f);"
+        "  g.appendChild(b);"
+        " }else if(!m[f]&&b){b.parentNode.removeChild(b);}"
+        "}"
+        "})(" + _json.dumps(states, ensure_ascii=False) + ");"
+    )
 
 
 def _populate_subfolder_menu(menu, folder: str, on_pick) -> None:
@@ -6117,6 +6179,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
     _thread_ready     = Signal(object)  # スレッド→UI の安全な橋渡し
     _reload_again     = Signal()        # 実行中フェッチ完了後の保留再取得（BG→UI）
     _read_counts_changed = Signal()     # 既読の数を覚えた → 少し待って保存（BG→UI）
+    _subdir_checked   = Signal(str, bool)  # 保存先にサブフォルダがあるかを調べ終えた（BG→UI）
     _sodane_signal    = Signal(int, int) # (no, count) そうだね更新
     status_info       = Signal(object)  # ステータスバー更新用
     _del_result       = Signal(bool, str)  # 削除結果
@@ -6170,6 +6233,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._thread_ready.connect(self._show)
         self._reload_again.connect(self._on_reload_again)
         self._read_counts_changed.connect(self._save_read_counts_soon)
+        self._subdir_checked.connect(self._on_subdir_checked)
         self._sodane_signal.connect(self._apply_sodane_js)
         self._del_result.connect(self._on_del_result)
         self._pending_scroll  = 0
@@ -6400,6 +6464,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         # マウスジェスチャー認識JSを読込完了ごとに注入（設定OFFなら待機のみ）
         self._view.loadFinished.connect(lambda _: self.inject_mouse_gesture_js())
         self._view.loadFinished.connect(lambda _: QTimer.singleShot(50, self._inject_popup_js))
+        # 画像モードの選択バーの「▼」を、読み込み中に調べ終えた結果にも合わせる
+        self._view.loadFinished.connect(lambda _: self._reapply_subdir_buttons())
         # 再描画でHTMLに焼き込まれる TOPNEED/NEED が既定(0)に戻り「先頭/末尾スクロール
         # で更新」が効かなくなる経路（そ順トグル→_rebuild_last_html、自動更新の
         # エラー/全体再描画フォールバック等が scroll_top_count を渡さない）があるため、
@@ -7125,6 +7191,22 @@ class ThreadView(_MouseGestureMixin, QWidget):
     def _save_read_counts_soon(self):
         """読み込みで覚えた既読の数を、少し待ってまとめて保存する（メインスレッド）"""
         save_settings_soon(self._settings)
+
+    def _on_subdir_checked(self, path: str, has: bool):
+        """保存先を裏で調べ終えた → 画像モードの選択バーの「▼」を合わせる"""
+        _safe_run_js(getattr(self, "_view", None), _subdir_buttons_js({path: bool(has)}))
+
+    def _reapply_subdir_buttons(self):
+        """読み込みが終わったページに、調べ終えている保存先の「▼」を合わせる
+        （ページを読み込んでいる間に調べ終えた分を取りこぼさないように）"""
+        if getattr(self, "_loaded_page_mode", None) != 'image':
+            return
+        states = {}
+        for f in getattr(self._settings, 'image_save_folders', []) or []:
+            if (f or '').strip() and f in _subdir_cache:
+                states[f] = bool(_subdir_cache[f])
+        if states:
+            _safe_run_js(getattr(self, "_view", None), _subdir_buttons_js(states))
 
     def needs_first_load(self) -> bool:
         """最初の取得が失敗したまま、まだ一度も表示できていないか。
@@ -9212,13 +9294,17 @@ class ThreadView(_MouseGestureMixin, QWidget):
             # JS文字列は json.dumps でエスケープし、シングルクォートはHTML属性の
             # 区切りと衝突するため文字参照化する
             _fj = _json.dumps(f).replace("'", "&#39;")
-            g = (f"<span class='_selgrp'>"
+            g = (f"<span class='_selgrp' data-f='{_esc(f)}'>"
                  f"<button onclick='_selSave({_fj})' title='{_esc(f)} に保存'>{_esc(name)}</button>"
                  f"<button onclick='_selBrowse({_fj})' title='保存先フォルダを選択して保存'>…</button>")
-            if _has_subdir(f):
-                g += f"<button onclick='_selSub({_fj})' title='サブフォルダを選んで保存'>▼</button>"
+            # ▼ は前に調べた結果で出す（ここではディスクを見ない）。調べ直しは下で
+            # 裏に頼み、変わっていたら出し入れする（_on_subdir_checked）
+            if _subdir_cache.get(f):
+                g += f"<button class='_selsub' onclick='_selSub({_fj})' title='サブフォルダを選んで保存'>▼</button>"
             g += "</span>"
             btns.append(g)
+        if folders:
+            request_subdir_check(folders, self._subdir_checked.emit)
         if not btns:
             btns.append('<span style="opacity:.7">保存先フォルダ未登録'
                         '（画像タブの⚙または設定→画像保存で登録）</span>')
