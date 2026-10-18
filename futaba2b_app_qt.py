@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.532"
+APP_VER = "0.9.533"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5611,6 +5611,7 @@ class VideoPlayerWindow(QWidget):
     _sig_url      = Signal(str)       # フォールバック   → URL 直接再生
     _sig_progress = Signal(str)       # 進捗テキスト（スレッドセーフ）
     _sig_toast    = Signal(str)       # 保存結果の一時表示（BGスレッド→UI）
+    _subdir_checked = Signal(str, bool)  # 保存先にサブフォルダがあるかを調べ終えた（BG→UI）
 
     @staticmethod
     def _cache_path(url: str) -> Path:
@@ -5724,6 +5725,8 @@ class VideoPlayerWindow(QWidget):
         self._save_src_url = url
         self._fetcher_ref  = fetcher
         self._folder_btns: list = []
+        self._folder_rows: dict = {}     # フォルダ → [名前のボタン, ▼ボタン or None]
+        self._subdir_checked.connect(self._on_subdir_checked)
         self._folder_panel = QWidget(self)
         self._folder_panel.setFixedHeight(28)
         self._folder_panel.setStyleSheet(
@@ -5847,6 +5850,7 @@ class VideoPlayerWindow(QWidget):
             if _w is not None:
                 _w.deleteLater()
         self._folder_btns = []
+        self._folder_rows = {}
         folders = [f for f in (getattr(self._settings, "image_save_folders", []) or [])
                    if (f or "").strip()] if self._settings else []
         _len = int(getattr(self._settings, "image_save_label_len", 0) or 0) \
@@ -5868,16 +5872,50 @@ class VideoPlayerWindow(QWidget):
             btn = QPushButton(base[:_len] if _len > 0 else base)
             btn.clicked.connect(lambda _=None, f=folder: self._save_video_to(f))
             _add(btn, f"ここへ保存: {folder}")
-            if _has_subdir(folder):
-                dd = QPushButton("▼")
-                dd.clicked.connect(
-                    lambda _=None, f=folder, b=dd: self._folder_dd_menu(f, b))
+            dd = None
+            # ▼ は前に調べた結果で出す（ここではディスクを見ない）。調べ直しは下で
+            # 裏に頼み、変わっていたら出し入れする（_on_subdir_checked）
+            if _subdir_cache.get(folder):
+                dd = self._make_folder_dd(folder)
                 _add(dd, "サブフォルダを選んで保存", w=20)
+            self._folder_rows[folder] = [btn, dd]
         self._folder_lay.addStretch()
         dots = QPushButton("…")
         dots.clicked.connect(self._save_video_browse)
         _add(dots, "保存先フォルダを選んで保存", w=24)
         self._update_save_enabled()
+        if folders:
+            request_subdir_check(folders, self._subdir_checked.emit)
+
+    def _make_folder_dd(self, folder: str):
+        """保存先の「▼」ボタン（サブフォルダを選んで保存）"""
+        dd = QPushButton("▼")
+        dd.clicked.connect(lambda _=None, f=folder, b=dd: self._folder_dd_menu(f, b))
+        return dd
+
+    def _on_subdir_checked(self, folder: str, has: bool):
+        """保存先を裏で調べ終えた → 「▼」を出し入れする（名前のボタンのすぐ右）"""
+        row = self._folder_rows.get(folder)
+        if row is None:
+            return
+        btn, dd = row
+        try:
+            if has and dd is None:
+                dd = self._make_folder_dd(folder)
+                dd.setFixedHeight(22)
+                dd.setFixedWidth(20)
+                self._folder_lay.insertWidget(self._folder_lay.indexOf(btn) + 1, dd)
+                self._folder_btns.append((dd, "サブフォルダを選んで保存"))
+                row[1] = dd
+                self._update_save_enabled()
+            elif not has and dd is not None:
+                self._folder_lay.removeWidget(dd)
+                self._folder_btns = [(b, t) for b, t in self._folder_btns if b is not dd]
+                dd.hide()
+                dd.deleteLater()
+                row[1] = None
+        except RuntimeError:
+            pass        # 窓を閉じている途中
 
     def _update_save_enabled(self):
         """ダウンロードが終わるまで保存できないのでボタンを無効にしておく。
@@ -15773,6 +15811,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
     _media_dl_done    = Signal(int, str, str, bool, str)  # (seq,url,kind,ok,prev_zoom) 優先DL完了
     _media_dl_progress = Signal(int, int, int)            # (seq, downloaded, total) 優先DL進捗
     _sig_clip_image    = Signal(QImage)   # BGで取得した画像をメインスレッドでクリップボードへ反映
+    _subdir_checked    = Signal(str, bool)  # 保存先にサブフォルダがあるかを調べ終えた（BG→UI）
     open_settings         = Signal()             # 設定ボタン → MainWindowが接続
     image_navigated       = Signal(str, list, int)  # 前へ/次へ → MainWindowがrecord_recent_imageに接続
     open_image_tab_bg     = Signal(str, list, int)  # 中クリック → 非アクティブで画像タブを開く
@@ -15801,6 +15840,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._folder_bar_lay.setContentsMargins(4, 2, 4, 2)
         self._folder_bar_lay.setSpacing(3)
         self._folder_bar_lay.addStretch()
+        self._folder_groups: dict = {}   # フォルダ → [グループの並び(QHBoxLayout), ▼ボタン or None]
+        self._subdir_checked.connect(self._on_subdir_checked)
         self._fetcher_ref = fetcher  # _save_to_folder用
         # 設定は set_settings でも渡されるが、初期倍率の決定は最初の表示より前に
         # 必要なのでコンストラクタでも受け取る（省略時は従来どおり後からセット）。
@@ -17767,6 +17808,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         folders = [f for f in getattr(self._settings_ref, "image_save_folders", [])
                    if (f or '').strip()] if self._settings_ref else []
         label_len = getattr(self._settings_ref, "image_save_label_len", 0)
+        self._folder_groups = {}
         for folder in folders:
             base = os.path.basename(folder.rstrip('\\/')) or folder
             lbl  = (base[:label_len] if label_len > 0 else base)
@@ -17786,16 +17828,47 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             dots.setStyleSheet(_btn_css)
             dots.clicked.connect(lambda _=None, f=folder: self._save_to_folder_browse(f))
             gl.addWidget(dots)
-            if _has_subdir(folder):
-                dd = QPushButton("▼")
-                dd.setToolTip("サブフォルダを選んで保存")
-                dd.setFixedHeight(22); dd.setFixedWidth(20)
-                dd.setStyleSheet(_btn_css)
-                dd.clicked.connect(lambda _=None, f=folder, b=dd: self._folder_dd_menu(f, b))
+            dd = None
+            # ▼ は前に調べた結果で出す（ここではディスクを見ない）。画像タブを開く
+            # たびに全部の保存先を覗いていた。調べ直しは下で裏に頼み、変わって
+            # いたら出し入れする（_on_subdir_checked）
+            if _subdir_cache.get(folder):
+                dd = self._make_folder_dd(folder)
                 gl.addWidget(dd)
+            self._folder_groups[folder] = [gl, dd]
             self._folder_bar_lay.addWidget(grp)
         self._folder_bar_lay.addStretch()
         self._folder_bar_lay.addWidget(self._cfg_btn)
+        if folders:
+            request_subdir_check(folders, self._subdir_checked.emit)
+
+    def _make_folder_dd(self, folder: str):
+        """保存先グループの「▼」ボタン（サブフォルダを選んで保存）"""
+        dd = QPushButton("▼")
+        dd.setToolTip("サブフォルダを選んで保存")
+        dd.setFixedHeight(22); dd.setFixedWidth(20)
+        dd.setStyleSheet("QPushButton{font-size:8pt;padding:0 6px;}")
+        dd.clicked.connect(lambda _=None, f=folder, b=dd: self._folder_dd_menu(f, b))
+        return dd
+
+    def _on_subdir_checked(self, folder: str, has: bool):
+        """保存先を裏で調べ終えた → そのグループの「▼」を出し入れする（右端）"""
+        grp = self._folder_groups.get(folder)
+        if grp is None:
+            return
+        gl, dd = grp
+        try:
+            if has and dd is None:
+                dd = self._make_folder_dd(folder)
+                gl.addWidget(dd)
+                grp[1] = dd
+            elif not has and dd is not None:
+                gl.removeWidget(dd)
+                dd.hide()
+                dd.deleteLater()
+                grp[1] = None
+        except RuntimeError:
+            pass        # タブを閉じている途中
 
     def _save_to_folder_browse(self, folder: str):
         """「…」: フォルダ選択ダイアログで保存先を指定して現在画像を保存"""
