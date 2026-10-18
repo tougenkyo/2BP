@@ -25,6 +25,12 @@
 3. スレ・カタログの表示（Chromium）が反応しているか
    見えているスレ・カタログに数秒ごとに小さな JS を送り、8 秒以上返事が
    無ければ書く。返事が来たら何秒かかったかを書く。
+   返事はあるのに描画（画面への描き出し）だけが止まっている時も書く。GPU の
+   処理は 2BP の中で動いていて、そこが止まると画面の処理も中身も動いたまま
+   表示だけが止まる（スクロールしても動かない）。送る JS で描画の合図
+   （requestAnimationFrame）を1回だけ頼み、次に送った時に、それが来たかを見る
+   （描き続ける仕掛けは置かない）。窓が最小化されている時・2BP 以外の窓を
+   使っている時・ページが見えていない時は、描かないのが普通なので数えない。
 
 ほかに、メモリの掃除（gc.collect）にかかった時間も測る（gc_collect_timed）。
 掃除の仕方・時機は変えない。1 回で 1 秒以上かかった時はその場で、ほかは
@@ -154,6 +160,7 @@ class FreezeWatch(QObject):
     BLOCK_SEC = 10.0         # 確認窓・つかみっぱなしを書くまでの長さ
     PAGE_EVERY_SEC = 4.0     # 表示の反応を見る間隔
     PAGE_SEC = 8.0           # 表示の返事をこれだけ待ったら書く
+    DRAW_SEC = 8.0           # 返事はあるのに描画がこれだけ止まっていたら書く
 
     def __init__(self, pages_fn=None, parent=None):
         super().__init__(parent)
@@ -169,6 +176,8 @@ class FreezeWatch(QObject):
         self._thread = None
         self._blocks = {}                  # 種類 → [部品, 出た時刻, 書いたか]
         self._pings = {}                   # id(page) → [page, ラベル, 送った時刻, 書いたか, 最後に見た時刻]
+        # id(page) → [page, ラベル, 描画の合図の回数, 見えていたか, 止まり始め, 書いたか, 返事の時刻]
+        self._draws = {}
         self._page_at = 0.0
         self.records = 0                   # 書いた回数（確認用）
 
@@ -344,7 +353,7 @@ class FreezeWatch(QObject):
                                f"（画面の処理は動いています）"])
                 continue
             try:
-                page.runJavaScript("0", 0, lambda _r, k=key: self._pong(k))
+                page.runJavaScript(_PING_JS, 0, lambda r, k=key: self._pong(k, r))
             except RuntimeError:
                 continue
             except Exception:
@@ -354,11 +363,86 @@ class FreezeWatch(QObject):
         for key in [k for k, r in self._pings.items()
                     if k not in seen and now - r[4] >= 15.0]:
             del self._pings[key]
+        for key, d in list(self._draws.items()):
+            if key in seen:
+                continue
+            if now - d[6] >= 15.0:
+                del self._draws[key]
+            else:
+                d[3] = "unseen"     # 見えていない間は描かないのが普通。戻ったら数え直す
 
-    def _pong(self, key) -> None:
+    def _pong(self, key, r=None) -> None:
         rec = self._pings.pop(key, None)
         if rec is not None and rec[3]:
             self._say([f"{TAG} 表示（{rec[1]}）が戻りました（{time.monotonic() - rec[2]:.0f} 秒）"])
+        if rec is not None:
+            self._check_draw(key, rec[0], rec[1], r)
+
+    def _check_draw(self, key, page, label: str, r) -> None:
+        """返事（"描画の合図の回数,見えているか"）から、描画が止まっていないかを見る。
+        前に送った時に頼んだ描画の合図が、今になっても来ていなければ止まっている"""
+        now = time.monotonic()
+        try:
+            _c, _v = str(r).split(",", 1)
+            cnt, vis = int(_c), _v.strip()
+        except Exception:
+            self._draws.pop(key, None)   # 返事の形が違う（読み込み中など）
+            return
+        if vis == "visible":
+            if not _app_active():
+                vis = "inactive"        # 2BP 以外を使っている（画面のロック中も）
+            elif _page_minimized(page):
+                vis = "minimized"
+        d = self._draws.get(key)
+        if d is None or d[0] is not page or now - d[6] > self.PAGE_EVERY_SEC * 2.5:
+            # 初めて・別のページ・前の返事から間が空いた → ここから数える
+            self._draws[key] = [page, label, cnt, vis, None, False, now]
+            return
+        stalled = (vis == "visible" and d[3] == "visible" and cnt == d[2])
+        if stalled:
+            if d[4] is None:
+                d[4] = d[6]             # 前に頼んだ時から一度も描かれていない
+            if not d[5] and now - d[4] >= self.DRAW_SEC:
+                d[5] = True
+                self._say([f"{TAG} 描画（{label}）が {now - d[4]:.0f} 秒止まっています"
+                           f"（中身と画面の処理は動いています。GPU の処理が止まっている"
+                           f"疑いがあります）"])
+        else:
+            if d[5]:
+                self._say([f"{TAG} 描画（{label}）が戻りました（{now - d[4]:.0f} 秒）"])
+            d[4] = None
+            d[5] = False
+        d[1], d[2], d[3], d[6] = label, cnt, vis, now
+
+
+# 表示の反応を見る JS。返事は "描画の合図の回数,見えているか"（配列で返すと
+# Python 側に届かない事があるので文字列にする）。描画の合図
+# （requestAnimationFrame）は、まだ来ていない分が無い時だけ1回頼む（描き続けない）
+_PING_JS = (
+    "(function(){var w=window,c=w.__2bpRaf||0;"
+    "if(!w.__2bpRafReq){w.__2bpRafReq=1;"
+    "requestAnimationFrame(function(){w.__2bpRafReq=0;w.__2bpRaf=(w.__2bpRaf||0)+1;});}"
+    "return c+','+document.visibilityState;})()"
+)
+
+
+def _app_active() -> bool:
+    """2BP の窓を使っているか（2BP 以外を使っている・画面のロック中は False）"""
+    try:
+        from PySide6.QtCore import Qt
+        return QGuiApplication.applicationState() == Qt.ApplicationState.ApplicationActive
+    except Exception:
+        return True
+
+
+def _page_minimized(page) -> bool:
+    """そのページを出している窓が最小化されているか"""
+    try:
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+        v = QWebEngineView.forPage(page)
+        return v is not None and v.window().isMinimized()
+    except Exception:
+        return False
 
 
 # ── メモリの掃除にかかった時間 ───────────────────────────────────────────────
