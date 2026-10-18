@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.535"
+APP_VER = "0.9.536"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -413,6 +413,88 @@ def _save_js_error_source(src: str, line, msg: str) -> None:
         print(f"[JSERR] 原因HTMLを保存しました: {dst}", flush=True)
     except Exception as e:
         print(f"[JSERR] 保存失敗: {e}", flush=True)
+
+
+class _RendererWatch(QObject):
+    """ページの表示を作る部分（レンダラー。QtWebEngineProcess）が落ちたら、ログに書いて
+    読み直す。今まではページが白くなるだけで、ログにも何も残らなかった。
+
+    owner（タブなど）の子として作る。recover_fn() で読み直す（何も描く物が無ければ
+    False を返す）。on_crash_fn() は落ちたその場で呼ぶ（読み直す前に今の位置を控える等）。
+    recover_fn が無ければログに書くだけ。続けて落ちる時は、読み直しを繰り返さない
+    よう止める（同じ内容で落ち続けると、落ちる→読み直すを延々と繰り返すため）。"""
+    RETRY_MAX = 2        # RETRY_SEC の間に読み直すのはこの回数まで
+    RETRY_SEC = 120.0
+    DELAY_MS = 1000      # 落ちてから読み直すまで（後片付けが済むのを待つ）
+
+    def __init__(self, owner, page, label_fn, recover_fn=None, on_crash_fn=None):
+        super().__init__(owner)
+        self._label_fn = label_fn
+        self._recover_fn = recover_fn
+        self._on_crash_fn = on_crash_fn
+        self._times: list = []
+        # 最後に見えていた位置。落ちたと知らせが来た時には page.scrollPosition() は
+        # もう 0 に戻っているので、動くたびに控えておく（落ちた時は 0 が来ない）
+        self.last_scroll_y = 0.0
+        page.scrollPositionChanged.connect(self._on_scroll)
+        page.renderProcessTerminated.connect(self._on_terminated)
+
+    def _on_scroll(self, pos):
+        try:
+            self.last_scroll_y = float(pos.y())
+        except Exception:
+            pass
+
+    def _name(self) -> str:
+        try:
+            return str(self._label_fn())
+        except Exception:
+            return "表示"
+
+    def _on_terminated(self, status, code):
+        if app_is_shutting_down():
+            return
+        S = QWebEnginePage.RenderProcessTerminationStatus
+        if status == S.NormalTerminationStatus:
+            return              # 閉じた時などの普通の終わり方
+        how = {S.AbnormalTerminationStatus: "異常終了しました",
+               S.CrashedTerminationStatus: "落ちました",
+               S.KilledTerminationStatus: "止められました"}.get(status, f"終わりました（{status}）")
+        try:
+            _code = f"0x{int(code) & 0xFFFFFFFF:08X}"
+        except Exception:
+            _code = str(code)
+        head = f"[表示] {self._name()} の表示を作る部分（レンダラー）が{how}（終了コード {_code}）"
+        if self._on_crash_fn is not None:
+            try:
+                self._on_crash_fn()
+            except Exception:
+                pass
+        if self._recover_fn is None:
+            print(head, flush=True)
+            return
+        now = time.monotonic()
+        self._times = [t for t in self._times if now - t < self.RETRY_SEC] + [now]
+        if len(self._times) > self.RETRY_MAX:
+            print(head + "。続けて落ちるので、読み直しを止めました"
+                         "（更新するか、タブを開き直してください）", flush=True)
+            return
+        print(head + "。読み直します", flush=True)
+        QTimer.singleShot(self.DELAY_MS, self._recover)
+
+    def _recover(self):
+        if app_is_shutting_down():
+            return
+        try:
+            done = self._recover_fn()
+        except RuntimeError:
+            return              # 待っている間に閉じられた
+        except Exception as e:
+            print(f"[表示] {self._name()} を読み直せませんでした: {e}", flush=True)
+            return
+        if done is False:
+            print(f"[表示] {self._name()} はまだ表示できていないので、次の更新で表示します",
+                  flush=True)
 
 
 class _DebugPage(QWebEnginePage):
@@ -6435,6 +6517,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._channel.registerObject("bridge", self._bridge)
         self._page.setWebChannel(self._channel)
         self._view = QWebEngineView(self._page, self)
+        # 表示を作る部分（レンダラー）が落ちたら、ログに書いて手元のスレから描き直す
+        self._renderer_watch = _RendererWatch(
+            self, self._page, lambda: f"スレ No.{self._thread_no}",
+            self._recover_after_renderer_crash, self._note_scroll_for_recover)
         # 読み込み直す間に白が出ないよう、ページの地の色をテーマに合わせる
         apply_page_bg(self._view, self._page, self._settings)
         self._view.setZoomFactor(_default_zoom())  # テキストを標準サイズに
@@ -7230,6 +7316,30 @@ class ThreadView(_MouseGestureMixin, QWidget):
     def _save_read_counts_soon(self):
         """読み込みで覚えた既読の数を、少し待ってまとめて保存する（メインスレッド）"""
         save_settings_soon(self._settings)
+
+    def _note_scroll_for_recover(self):
+        """レンダラーが落ちたその場で、最後に見えていた位置を控える（落ちた後は JS で聞けない）"""
+        try:
+            self._crash_scroll_y = max(0, int(self._renderer_watch.last_scroll_y))
+        except Exception:
+            self._crash_scroll_y = 0
+
+    def _recover_after_renderer_crash(self):
+        """レンダラーが落ちた後に、手元のスレから描き直す（取り直さない）。
+        ページが生きている前提の省略（中身だけ入れ替える・出来上がりが同じなら
+        読み込まない）を通らないよう、ページを丸ごと読み込み直す。
+        まだ一度も表示できていなければ False（次の更新で表示される）"""
+        if not self._is_alive() or self._thread is None:
+            return False
+        self._thread_page_live = False
+        checked = self._mode_grp.checkedButton()
+        cur_mode = checked.property("mode") if checked else ""
+        if cur_mode in ("image", "quote"):
+            self._set_view_mode(cur_mode)
+        else:
+            self._redraw_why = 'レンダラーが落ちたので読み直し'
+            self._redraw_ng_impl(getattr(self, "_crash_scroll_y", 0))
+        return True
 
     def _on_subdir_checked(self, path: str, has: bool):
         """保存先を裏で調べ終えた → 画像モードの選択バーの「▼」を合わせる"""
@@ -11640,6 +11750,11 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._channel.registerObject("bridge", self._bridge)
         self._page.setWebChannel(self._channel)
         self._view = _CatalogWebView(self._page, self)
+        # 表示を作る部分（レンダラー）が落ちたら、ログに書いて手元の一覧から描き直す
+        self._renderer_watch = _RendererWatch(
+            self, self._page,
+            lambda: f"カタログ {getattr(getattr(self, '_board', None), 'name', '') or ''}".strip(),
+            self._recover_after_renderer_crash, self._note_scroll_for_recover)
         apply_page_bg(self._view, self._page, self._settings)  # 切替時の白を防ぐ
         self._view.setZoomFactor(_default_zoom())
         self._view._source_callback = self._show_catalog_source
@@ -12054,6 +12169,24 @@ class CatalogView(_MouseGestureMixin, QWidget):
         self._pending_light_body = None
         if ok and _body is not None:
             self._apply_catalog_body_swap(_body)
+
+    def _note_scroll_for_recover(self):
+        """レンダラーが落ちたその場で、最後に見えていた位置を控える（落ちた後は JS で聞けない）"""
+        try:
+            self._pending_scroll = max(0, int(self._renderer_watch.last_scroll_y))
+        except Exception:
+            pass
+
+    def _recover_after_renderer_crash(self):
+        """レンダラーが落ちた後に、手元の一覧から描き直す（取り直さない）。
+        中身だけ入れ替える描き方は生きたページが要るので、丸ごと読み込み直させる。
+        まだ一覧が無ければ False（次の更新で表示される）"""
+        if not getattr(self, "_all_entries", None):
+            return False
+        self._cat_page_live = False
+        self._pending_light_body = None
+        self._re_render()
+        return True
 
     def _apply_catalog_body_swap(self, body_inner: str, to_top: bool = False):
         """カタログの body だけを差し替える（ページナビゲーションなし・スクロール位置維持）。
@@ -13605,6 +13738,11 @@ class BoardSearchView(QWidget):
         self._channel.registerObject("bridge", self._bridge)
         self._page.setWebChannel(self._channel)
         self._view = _CatalogWebView(self._page, self)
+        # 表示を作る部分（レンダラー）が落ちたら、ログに書いて手元の結果から描き直す
+        self._renderer_watch = _RendererWatch(
+            self, self._page,
+            lambda: f"板内検索「{getattr(getattr(self, '_result', None), 'keyword', '') or ''}」",
+            self._recover_after_renderer_crash)
         apply_page_bg(self._view, self._page, self._settings)  # 切替時の白を防ぐ
         self._view.setZoomFactor(_default_zoom())
         lay.addWidget(self._view)
@@ -13746,6 +13884,13 @@ class BoardSearchView(QWidget):
             'view': self,
             'log': (f"板内検索「{result.keyword}」: {result.count}件"
                     if not result.error else f"板内検索: {result.error}")})
+
+    def _recover_after_renderer_crash(self):
+        """レンダラーが落ちた後に、手元の検索結果から描き直す（検索し直さない）"""
+        if self._result is None:
+            return False
+        self._render()
+        return True
 
     def _render(self):
         if self._result is None:
@@ -15949,6 +16094,11 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         profile.settings().setAttribute(
             QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         self._view = _ImageWebView(_DebugPage(profile, profile), self)
+        # 表示を作る部分（レンダラー）が落ちたら、ログに書いて今の画像を出し直す
+        self._renderer_watch = _RendererWatch(
+            self, self._view.page(),
+            lambda: f"画像タブ {self._img_list[self._idx].get('name', '')}",
+            self._recover_after_renderer_crash)
         self._view.setZoomFactor(_default_zoom())
         self._view.loadFinished.connect(self._inject_fit_bridge)
         self._media_dl_done.connect(self._on_media_dl_done)
@@ -15997,6 +16147,9 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         res_ov_profile.settings().setAttribute(
             QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         self._res_overlay_view = QWebEngineView(_DebugPage(res_ov_profile, res_ov_profile), self._res_overlay_widget)
+        # レス表示のレンダラーが落ちた時はログにだけ書く（次の画像で出し直される）
+        self._res_ov_renderer_watch = _RendererWatch(
+            self, self._res_overlay_view.page(), lambda: "画像タブのレス表示")
         self._res_overlay_view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._res_overlay_view.page().setBackgroundColor(Qt.GlobalColor.transparent)
         res_ov_lay.addWidget(self._res_overlay_view)
@@ -16639,6 +16792,13 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             name = info.get("name", info.get("url", "").split("/")[-1])
             self._info.setText(
                 f"{self._idx+1}/{len(new_img_list)}  No.{info.get('res_no','')}  {name}")
+
+    def _recover_after_renderer_crash(self):
+        """レンダラーが落ちた後に、今の画像を出し直す"""
+        if not self._img_list or not (0 <= self._idx < len(self._img_list)):
+            return False
+        self._show_current()
+        return True
 
     def _show_current(self):
         if not self._img_list:

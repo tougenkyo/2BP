@@ -2224,6 +2224,13 @@ document.addEventListener('keydown',function(e){{
         self._tegaki_channel = QWebChannel(page)
         self._tegaki_channel.registerObject("tegaki", self._tegaki_bridge)
         page.setWebChannel(self._tegaki_channel)
+        # 手書きのレンダラーが落ちた時はログにだけ書く（描きかけは戻せないので、
+        # 勝手に読み直さない）
+        try:
+            from futaba2b_app_qt import _RendererWatch
+            self._tegaki_renderer_watch = _RendererWatch(self, page, lambda: "手書き")
+        except Exception:
+            pass
         w = QWebEngineView(page, self)
         w.setHtml(_html)
         return w

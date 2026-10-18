@@ -5543,6 +5543,11 @@ class MainWindow(QMainWindow):
         page.createWindow = _create_window
 
         view = QWebEngineView(page, self)
+        # 表示を作る部分（レンダラー）が落ちたら、ログに書いて同じログを開き直す
+        from futaba2b_app_qt import _RendererWatch
+        view._renderer_watch = _RendererWatch(
+            view, page, lambda _l=tab_label[:20]: f"ログ {_l}",
+            lambda _v=view: (_v.reload(), True)[1])
         view.load(url)
         # まずファイル名でタブを追加
         short = tab_label[:20]
