@@ -44,6 +44,7 @@ from futaba2b_app_qt import (
     _default_zoom, _load_user_css, _theme_icon, _dispose_tab_view,
     _dispose_tab_view_later, _safe_run_js,
     _schedule_gc,
+    save_settings_soon, cancel_settings_save_soon,
     _JapaneseLineEdit,
     suppress_context_menu as _suppress_ctx_menu,
     clear_context_menu_suppress as _clear_ctx_suppress,
@@ -1266,7 +1267,7 @@ class MainWindow(QMainWindow):
             view._pending_anchor = (str(int(target_res)), 0)
         view.load_thread(board, no, open_mode=_open_mode)
         self._settings.add_history(board.name, no, f"No.{no}", board.url)
-        self._settings.save(); self._hist_pane.refresh()
+        self._save_settings_soon(); self._hist_pane.refresh()
         self._st_log.setText(f"スレッド読み込み中: No.{no}")
 
         # スレ読込完了 → 即タイトル更新 (thread_loaded シグナルで駆動)
@@ -1289,7 +1290,7 @@ class MainWindow(QMainWindow):
                 new_title = t[:20] + ("…" if len(t) > 20 else "")
                 _pin_safe_set(inner, view, new_title)
                 self._settings.add_history(board.name, no, self._history_title(view._thread), board.url)
-                self._settings.save(); self._hist_pane.refresh()
+                self._save_settings_soon(); self._hist_pane.refresh()
                 self._st_log.setText(
                     f"スレッド読込完了: {len(view._thread.res_list)} レス  No.{no}")
                 if inner.currentWidget() is view:
@@ -1953,7 +1954,7 @@ class MainWindow(QMainWindow):
                 new_title = t[:20] + ("…" if len(t) > 20 else "")
                 _pin_safe_set(inner, view, new_title)
                 self._settings.add_history(board.name, no, self._history_title(view._thread), board.url)
-                self._settings.save(); self._hist_pane.refresh()
+                self._save_settings_soon(); self._hist_pane.refresh()
             if view._thread:
                 op_thumb = (view._thread.res_list[0].thumb_url
                             if view._thread.res_list else "")
@@ -2077,7 +2078,7 @@ class MainWindow(QMainWindow):
                 new_title = t[:20] + ("…" if len(t) > 20 else "")
                 _pin_safe_set(pane, view, new_title)
                 self._settings.add_history(board.name, no, self._history_title(view._thread), board.url)
-                self._settings.save(); self._hist_pane.refresh()
+                self._save_settings_soon(); self._hist_pane.refresh()
             if view._thread:
                 op_thumb = (view._thread.res_list[0].thumb_url
                             if view._thread.res_list else "")
@@ -3388,6 +3389,13 @@ class MainWindow(QMainWindow):
             return
         self._tab_pane_refresh_pending = True
         QTimer.singleShot(0, self._do_refresh_tab_pane)
+
+    def _save_settings_soon(self):
+        """スレを開いた・読み込んだ時の設定の保存を、少し待って1回にまとめる
+        （スレの読み込みで既読の数を保存する分とも同じ1回にまとまる）。
+        起動時に何十枚も読み込むと、そのたびに設定ファイル（1MB を超える）を
+        丸ごと書いて画面が止まっていた"""
+        save_settings_soon(self._settings)
 
     def _do_refresh_tab_pane(self):
         # 予約の印は描き直す前に下ろす（描き直しの途中で来た分は、次の予約で拾う）
@@ -6956,6 +6964,8 @@ class MainWindow(QMainWindow):
         # 止めて、以後のバックグラウンド由来のビュー操作を黙らせる。
         from futaba2b_app_qt import set_app_shutting_down
         set_app_shutting_down()
+        # 少し待ってまとめる保存の予約は取り消す（この後でまとめて保存する）
+        cancel_settings_save_soon()
         try:
             # 破棄中のビューを触らせない。計算済みハッシュは書き出しておく
             _nf = self._settings.ng_filter

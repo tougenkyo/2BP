@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.529"
+APP_VER = "0.9.530"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -141,6 +141,50 @@ def app_is_shutting_down() -> bool:
 def set_app_shutting_down(flag: bool = True) -> None:
     global _APP_SHUTTING_DOWN
     _APP_SHUTTING_DOWN = flag
+
+
+# ── 設定の保存を少し待って1回にまとめる ──────────────────────────────────────
+# 保存は設定ファイル（1MB を超える）を丸ごと書いて、ディスクへ書き終わるまで待つ。
+# スレを開く・読み込むたびにこれをしていたので、起動時に何十枚も読み込むと
+# そのたびに画面が止まり、裏で保存している間も画面の処理が待たされていた。
+_save_soon_timer = None
+_save_soon_target = None
+
+
+def save_settings_soon(settings) -> None:
+    """設定の保存を、少し待って1回にまとめる（待つのは最初の1回から1秒だけで、
+    続けて来ても延ばさない）。覚えた事はすぐに設定に入っているので、待つ間に
+    別の所で保存されればそれにも入り、終了する時は closeEvent がまとめて保存する。
+    画面の処理以外から呼ばれた時は、今まで通りその場で保存する。"""
+    global _save_soon_timer, _save_soon_target
+    if threading.current_thread() is not threading.main_thread():
+        settings.save()
+        return
+    _save_soon_target = settings
+    if _save_soon_timer is None:
+        from PySide6.QtCore import QCoreApplication
+        _save_soon_timer = QTimer(QCoreApplication.instance())
+        _save_soon_timer.setSingleShot(True)
+        _save_soon_timer.setInterval(1000)
+        _save_soon_timer.timeout.connect(_save_settings_now)
+    if not _save_soon_timer.isActive():
+        _save_soon_timer.start()
+
+
+def _save_settings_now() -> None:
+    s = _save_soon_target
+    if s is not None:
+        s.save()
+
+
+def cancel_settings_save_soon() -> None:
+    """待っている保存を取り消す（終了する時。この後でまとめて保存する）"""
+    t = _save_soon_timer
+    if t is not None:
+        try:
+            t.stop()
+        except RuntimeError:
+            pass
 
 
 # ── グローバルfetchスレッドプール（ThreadView・AR共用、同時実行数を制限） ──
@@ -6072,6 +6116,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
     ng_added          = Signal(str)
     _thread_ready     = Signal(object)  # スレッド→UI の安全な橋渡し
     _reload_again     = Signal()        # 実行中フェッチ完了後の保留再取得（BG→UI）
+    _read_counts_changed = Signal()     # 既読の数を覚えた → 少し待って保存（BG→UI）
     _sodane_signal    = Signal(int, int) # (no, count) そうだね更新
     status_info       = Signal(object)  # ステータスバー更新用
     _del_result       = Signal(bool, str)  # 削除結果
@@ -6124,6 +6169,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._tmp_html_path: str = ""  # 大容量HTML用の一時ファイルパス
         self._thread_ready.connect(self._show)
         self._reload_again.connect(self._on_reload_again)
+        self._read_counts_changed.connect(self._save_read_counts_soon)
         self._sodane_signal.connect(self._apply_sodane_js)
         self._del_result.connect(self._on_del_result)
         self._pending_scroll  = 0
@@ -7076,6 +7122,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return
         self.reload_thread()
 
+    def _save_read_counts_soon(self):
+        """読み込みで覚えた既読の数を、少し待ってまとめて保存する（メインスレッド）"""
+        save_settings_soon(self._settings)
+
     def needs_first_load(self) -> bool:
         """最初の取得が失敗したまま、まだ一度も表示できていないか。
 
@@ -7295,7 +7345,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 # カタログの res_count はOPを含まない返信数なので、res_list（OP含む）
                 # から1引いて単位を揃える（揃えないと+Nが1レス分遅れて表示される）
                 self._settings.catalog_read_counts[thread.url] = max(0, len(thread.res_list) - 1)
-                self._settings.save()
+                # 保存は画面の処理の側で、少し待ってまとめて行う（ここは裏のスレッド。
+                # 読み込むたびに設定ファイルを丸ごと書くと、その間画面の処理が待たされる）
+                self._read_counts_changed.emit()
             self._thread_ready.emit(thread)
         else:
             pass
