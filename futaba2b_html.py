@@ -1565,7 +1565,14 @@ function extractPostsPopup(query) {
     } else {
         panel.innerHTML = '<div class="extract-header"><span>「' + query + '」の抽出 (' + posts.length + '件)</span><button onclick="closeExtraction()">×</button></div>'
             + posts.join('');
-        // 引用ホバーポップアップを有効化
+        // 引用ホバーポップアップを有効化。
+        // レスの中身を写すと「仕掛け済み」の印(data-hooked)まで写り、下の hookC /
+        // hookQuoteInd がそれを飛ばして、パネル内の ▼ と引用（>〜）にカーソルを
+        // 合わせてもポップアップが出なかった（本体の ▼ は自動更新で新着を足すと
+        // 印が付く）。引用ポップアップ（mkPop）と同じく、印を消してから付け直す
+        panel.querySelectorAll('[data-hooked]').forEach(function(n) {
+            n.removeAttribute('data-hooked');
+        });
         if (typeof window._hookPopupC === 'function') {
             window._hookPopupC(panel);
         }
