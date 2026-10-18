@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.528"
+APP_VER = "0.9.529"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2438,6 +2438,15 @@ def _carry_over_deleted_content(old_thread, new_thread):
 # TabManagePane ─ 「タブ」ペイン
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _restyle(w, ss: str) -> None:
+    """スタイルシートが変わる時だけ設定し直す。
+    setStyleSheet は同じ文字列でも、その部品と中身を毎回丸ごと整え直す（重い）。
+    タブ一覧はスレを読み込むたびに全部の行を描き直すので、変わらない行で
+    これを繰り返すと、タブが多いほど画面が止まっていた。"""
+    if w.styleSheet() != ss:
+        w.setStyleSheet(ss)
+
+
 class _TabItemWidget(QWidget):
     """タブリストの1アイテム（板名・スレ番号・タイトル・レス数・更新ボタン・閉じるボタン）"""
     update_clicked = Signal(str)   # thread_url
@@ -2507,8 +2516,8 @@ class _TabItemWidget(QWidget):
             title_bold  = ""
         if self._lbl_title:
             self._lbl_title.setText(display_title)
-            self._lbl_title.setStyleSheet(
-                f"font-size:8pt; background:transparent; color:{title_color};{title_bold}")
+            _restyle(self._lbl_title,
+                     f"font-size:8pt; background:transparent; color:{title_color};{title_bold}")
 
         # レス数・最終更新
         info_parts = []
@@ -2744,10 +2753,10 @@ class TabManagePane(QWidget):
             even = not even
 
             if url in self._items and not order_changed:
-                # 既存Widget: データのみ更新
+                # 既存Widget: データのみ更新（色が変わらない行は設定し直さない）
                 w, _ti, _ii = self._items[url]
                 w.update_data(title, res_count, new_count, last_update, is_expiring)
-                w.setStyleSheet(
+                _restyle(w,
                     f"background:{bg}; border-bottom:1px solid {_TM.ui('panel_border','#525252')}; color:{_TM.ui('text_primary','#ddd')};")
                 self._items[url] = (w, ti, ii)
             else:
@@ -2904,7 +2913,7 @@ class FavManagePane(QWidget):
             if url in self._items and not order_changed:
                 w, _ti, _ii = self._items[url]
                 w.update_data(title, res_count, new_count, last_update, is_expiring)
-                w.setStyleSheet(
+                _restyle(w,
                     f"background:{bg}; border-bottom:1px solid {_TM.ui('panel_border','#525252')}; color:{_TM.ui('text_primary','#ddd')};")
                 self._items[url] = (w, ti, ii)
             else:

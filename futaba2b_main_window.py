@@ -3377,10 +3377,21 @@ class MainWindow(QMainWindow):
             cur_pane.consume_pending_for(cur_pane._tabs.currentWidget())
 
     def _refresh_tab_pane(self):
-        """タブペインを現在のタブ構成で更新（メインスレッド保証）"""
+        """タブペインを現在のタブ構成で更新（メインスレッド保証）。
+        まだ動いていない描き直しの予約があれば、重ねて予約しない。描き直しは
+        動いた時のタブの様子を読むので、1回にまとめても結果は同じ
+        （タブを足す・選ぶ・読み込むが続くと、同じ描き直しを何度も繰り返していた）"""
+        if threading.current_thread() is not threading.main_thread():
+            QTimer.singleShot(0, self._do_refresh_tab_pane)   # 今まで通り（印は使わない）
+            return
+        if getattr(self, "_tab_pane_refresh_pending", False):
+            return
+        self._tab_pane_refresh_pending = True
         QTimer.singleShot(0, self._do_refresh_tab_pane)
 
     def _do_refresh_tab_pane(self):
+        # 予約の印は描き直す前に下ろす（描き直しの途中で来た分は、次の予約で拾う）
+        self._tab_pane_refresh_pending = False
         try:
             self._tree_pane._tab_pane.refresh(self._outer_tabs)
             self._tree_pane._fav_pane.refresh(self._outer_tabs)
