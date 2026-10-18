@@ -25,6 +25,10 @@
 3. スレ・カタログの表示（Chromium）が反応しているか
    見えているスレ・カタログに数秒ごとに小さな JS を送り、8 秒以上返事が
    無ければ書く。返事が来たら何秒かかったかを書く。
+
+ほかに、メモリの掃除（gc.collect）にかかった時間も測る（gc_collect_timed）。
+掃除の仕方・時機は変えない。1 回で 1 秒以上かかった時はその場で、ほかは
+30 分ごとにまとめて書く。行の頭は「[GC]」。
 """
 from __future__ import annotations
 
@@ -355,3 +359,61 @@ class FreezeWatch(QObject):
         rec = self._pings.pop(key, None)
         if rec is not None and rec[3]:
             self._say([f"{TAG} 表示（{rec[1]}）が戻りました（{time.monotonic() - rec[2]:.0f} 秒）"])
+
+
+# ── メモリの掃除にかかった時間 ───────────────────────────────────────────────
+# 2BP は Python の自動の掃除を止め、画面の処理で 10 秒ごとに全体を掃除している
+# （Qt の部品を画面以外のスレッドで壊さないため）。全体の掃除は使っている量が
+# 多いほど長くなり、その間は画面が止まる（利用者のサブPCで 3.4 秒の記録）。
+# 掃除の仕方を変える前に、実際に何秒かかっているかを見る。
+GC_TAG = "[GC]"
+GC_SLOW_SEC = 1.0           # 1 回でこれ以上かかったら、その場で書く
+GC_SUMMARY_SEC = 30 * 60    # まとめを書く間隔
+GC_NOTE_SEC = 0.2           # まとめで「長め」と数える長さ
+_gc_lock = threading.Lock()
+_gc_stats: dict = {}        # どこでの掃除か → [回数, 合計秒, 最長秒, 長めの回数]
+_gc_since = time.monotonic()
+
+
+def _rss_mb():
+    try:
+        import psutil
+        return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
+    except Exception:
+        return None
+
+
+def gc_collect_timed(where: str) -> int:
+    """gc.collect() をして、かかった時間を測る（掃除の中身は gc.collect() と同じ）。
+    where は「定期」など、どこでの掃除か（ログに出す）。戻り値も gc.collect() と同じ"""
+    import gc
+    t0 = time.perf_counter()
+    n = gc.collect()
+    dt = time.perf_counter() - t0
+    lines = []
+    global _gc_since
+    with _gc_lock:
+        st = _gc_stats.setdefault(where, [0, 0.0, 0.0, 0])
+        st[0] += 1
+        st[1] += dt
+        st[2] = max(st[2], dt)
+        if dt >= GC_NOTE_SEC:
+            st[3] += 1
+        now = time.monotonic()
+        if now - _gc_since >= GC_SUMMARY_SEC:
+            parts = [f"{w} {c} 回・平均 {tot / c:.2f} 秒・最長 {mx:.2f} 秒"
+                     f"（{GC_NOTE_SEC:g} 秒以上 {nl} 回）"
+                     for w, (c, tot, mx, nl) in _gc_stats.items() if c]
+            if parts:
+                lines.append(f"{GC_TAG} この {int((now - _gc_since) // 60)} 分のメモリの掃除: "
+                             + "／".join(parts))
+            _gc_stats.clear()
+            _gc_since = now
+    if dt >= GC_SLOW_SEC:
+        mb = _rss_mb()
+        mem = f"・使っているメモリ {mb:.0f}MB" if mb is not None else ""
+        lines.insert(0, f"{GC_TAG} メモリの掃除に {dt:.1f} 秒かかりました"
+                        f"（{where}・片付けた数 {n}{mem}）")
+    for ln in lines:
+        print(ln, flush=True)
+    return n

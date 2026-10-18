@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.533"
+APP_VER = "0.9.534"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -328,8 +328,9 @@ def _schedule_gc(delay_ms: int = 4000):
             _gc_debounce_timer = QTimer()
             _gc_debounce_timer.setSingleShot(True)
             def _do_gc():
-                import gc as _gc
-                _gc.collect()
+                # 掃除にかかった時間を測る（掃除は gc.collect() と同じ）
+                from futaba2b_freeze import gc_collect_timed
+                gc_collect_timed("タブを閉じた後")
             _gc_debounce_timer.timeout.connect(_do_gc)
         _gc_debounce_timer.start(delay_ms)
     except Exception:

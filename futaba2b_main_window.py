@@ -7208,9 +7208,11 @@ def main():
     # Qtオブジェクトの破棄を常にGUIスレッドで行う。
     import gc as _gc
     _gc.disable()
+    # 掃除にかかった時間を測る（長い時・30 分ごとのまとめをログへ。掃除は同じ）
+    from futaba2b_freeze import gc_collect_timed as _gc_timed
     _gc_timer = QTimer()
     _gc_timer.setInterval(10_000)   # 10秒ごと
-    _gc_timer.timeout.connect(lambda: _gc.collect())
+    _gc_timer.timeout.connect(lambda: _gc_timed("定期"))
     _gc_timer.start()
     app._gc_timer = _gc_timer       # 参照保持（GC/破棄防止）
     # ─────────────────────────────────────────────────────────────────────

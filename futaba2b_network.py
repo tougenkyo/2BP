@@ -2305,7 +2305,12 @@ class FutabaFetcher:
                 else:
                     print(f'[MEM] html_len={len(html)}  res={res_count}  url={url}')
                 # 大容量スレのsoupオブジェクトはメモリを大量消費するため即時GC
-                gc.collect()
+                # （かかった時間を測る。掃除は gc.collect() と同じ）
+                try:
+                    from futaba2b_freeze import gc_collect_timed
+                    gc_collect_timed("大きなスレの読み込み後")
+                except ImportError:
+                    gc.collect()
             return thread
         except requests.RequestException as e:
             print(f'[NET] fetch_thread  RequestException: {e}')
