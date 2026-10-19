@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.539"
+APP_VER = "0.9.540"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8990,7 +8990,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
         });
         addItem2('この画像をNG登録する', function(){ if(typeof _b==='function') _b('ngImage',[imgUrl]); });
         addItem2('画像URLをコピーする', function(){
-            try{ navigator.clipboard.writeText(imgUrl); }catch(er){}
+            /* navigator.clipboard は QtWebEngine では書き込みが許されておらず、
+               黙って失敗していた。Python 側でクリップボードに入れる */
+            if (typeof _b === 'function') _b('copyText', [imgUrl]);
         });
         document.body.appendChild(menu);
         ctxFit(menu);

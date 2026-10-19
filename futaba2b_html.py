@@ -1268,7 +1268,10 @@ document.addEventListener('contextmenu', function(e) {
     });
     ctxAddItem(menu, 'この画像をNG登録する', function(){ _b('ngImage',[imgUrl]); });
     ctxAddItem(menu, '画像URLをコピーする',  function(){
-        try{navigator.clipboard.writeText(imgUrl);}catch(er){}
+        /* navigator.clipboard は QtWebEngine では書き込みが許されておらず、
+           黙って失敗していた。Python 側でクリップボードに入れる */
+        if (bridge && bridge.copyText) _b('copyText', [imgUrl]);
+        else if (bridge && bridge.copyToClipboard) _b('copyToClipboard', [imgUrl]);
     });
     document.body.appendChild(menu);
     ctxFit(menu);
