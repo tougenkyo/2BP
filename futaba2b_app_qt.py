@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.538"
+APP_VER = "0.9.539"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -16067,6 +16067,19 @@ def inject_popup_js(view, settings) -> None:
         _view=view, _settings=settings, _apply_heatmap=lambda: None))
 
 
+def _fit_size_js(el: str = "el") -> str:
+    """「画面に合わせる」の大きさを当てる JS（vw/vh=表示域、nw/nh=元の大きさは呼ぶ側で用意）。
+
+    幅を四捨五入して高さを auto にしていたので、切り上がると高さが表示域を
+    1px 足らずはみ出し、縦スクロールバーが出ていた。表示の拡大率が 125% 等だと
+    実際の表示域は innerHeight（四捨五入した値）より最大 0.5px 小さい事もある。
+    表示域から 0.5px 引いて倍率を出し、幅・高さとも切り捨てた整数で指定する
+    （縦横比のずれは 1px 未満で見た目は変わらない）。"""
+    return ("var s=Math.min((vw-0.5)/nw,(vh-0.5)/nh);"
+            f"{el}.style.width=Math.max(1,Math.floor(nw*s))+'px';"
+            f"{el}.style.height=Math.max(1,Math.floor(nh*s))+'px';")
+
+
 class ImageTabView(_MouseGestureMixin, QWidget):
     # 画像ページは QWebChannel を持たないため document.title 経由で通知する
     _MG_VIA_TITLE = True
@@ -16581,9 +16594,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             "  if(nw>0&&nh>0){"
             # 画面に合わせる＝上限なし（画面より小さい画像も拡大してフィット）。
             # この関数は fit_mode 中のみ実行されるため常にフィット倍率を使う。
-            "    var s=Math.min(vw/nw,vh/nh);"
-            "    el.style.width=Math.round(nw*s)+'px';"
-            "    el.style.height='auto';"
+            + _fit_size_js() +
             "    if(window._zoomState===undefined)window._zoomState='fit';"
             "  } else {"
             "    el.style.width='100%';el.style.height='auto';"
@@ -17019,7 +17030,6 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             # 動画は #img 用のフィットJS（doFit/jspz）の対象外で、CSSの
             # visibility:hidden のままになり何も表示されない。専用の
             # インラインスクリプトで loadedmetadata 時にフィット＋可視化する。
-            _vfit = "true" if _prev_zoom == "画面に合わせる" else "false"
             _vid_js = (
                 "(function(){"
                 "function fitV(){"
@@ -17028,8 +17038,8 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                 "  var nw=v.videoWidth||0,nh=v.videoHeight||0;"
                 "  if(nw>0&&nh>0){"
                 # 画面に合わせる: 小さい動画も拡大。それ以外は原寸
-                f"    var s={_vfit}?Math.min(vw/nw,vh/nh):1;"
-                "    v.style.width=Math.round(nw*s)+'px'; v.style.height='auto';"
+                + (_fit_size_js("v") if _prev_zoom == "画面に合わせる" else
+                   "    v.style.width=nw+'px'; v.style.height='auto';") +
                 "  } else { v.style.maxWidth='100%'; v.style.maxHeight='100vh'; }"
                 "  v.style.maxWidth='none'; v.style.maxHeight='none';"
                 "  v.style.display='block'; v.style.margin='auto';"
@@ -17124,8 +17134,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
             # 上書きする（→一瞬フィット表示→220ms後に%へ戻る、のちらつき）ため、
             # 全サイズ適用JSでこのフラグを同期し、リスナー側はフィット時のみ動作させる。
             if _prev_zoom == "画面に合わせる":
-                _size_js = ("var s=Math.min(vw/nw,vh/nh);"
-                            "el.style.width=Math.round(nw*s)+'px';el.style.height='auto';"
+                _size_js = (_fit_size_js() +
                             "el.classList.remove('actual');el.classList.remove('pannable');"
                             "window._zoomState='fit';"
                             "window._fitMode=true;")
@@ -17558,9 +17567,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                 "  var nw=el.naturalWidth||el.videoWidth||vw;"
                 "  var nh=el.naturalHeight||el.videoHeight||vh;"
                 "  if(nw>0&&nh>0){"
-                "    var s=Math.min(vw/nw,vh/nh);"
-                "    el.style.width=Math.round(nw*s)+'px';"
-                "    el.style.height='auto';"
+                + _fit_size_js() +
                 "    window._zoomState='fit';"
                 "  } else {"
                 "    el.style.width='100%';el.style.height='auto';"
@@ -17718,9 +17725,7 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                 "    var nw=el.naturalWidth||el.videoWidth||0;"
                 "    var nh=el.naturalHeight||el.videoHeight||0;"
                 "    if(nw>0&&nh>0){"
-                "      var s=Math.min(vw/nw,vh/nh);"
-                "      el.style.width=Math.round(nw*s)+'px';"
-                "      el.style.height='auto';"
+                + _fit_size_js() +
                 # 画面に合わせるモードでは拡大・縮小いずれもfit状態
                 # （小さい画像も表示領域に合わせて拡大する）
                 "      window._zoomState='fit';"
