@@ -5514,7 +5514,6 @@ class MainWindow(QMainWindow):
 
     def _open_log_view(self, url, tab_label: str):
         """ログHTMLをシンプルな WebEngineView タブで表示"""
-        from PySide6.QtWebEngineWidgets import QWebEngineView
         from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
         inner = self._active_inner()
         if not inner:
@@ -5542,9 +5541,11 @@ class MainWindow(QMainWindow):
             return dummy_page
         page.createWindow = _create_window
 
-        view = QWebEngineView(page, self)
+        # 閉じた時にページ→プロファイルの順で片付けるビュー（今まではビューだけが
+        # 消え、ページとプロファイルは終了まで残っていた）
+        from futaba2b_app_qt import _RendererWatch, _OwnPageWebView
+        view = _OwnPageWebView(page, self)
         # 表示を作る部分（レンダラー）が落ちたら、ログに書いて同じログを開き直す
-        from futaba2b_app_qt import _RendererWatch
         view._renderer_watch = _RendererWatch(
             view, page, lambda _l=tab_label[:20]: f"ログ {_l}",
             lambda _v=view: (_v.reload(), True)[1])

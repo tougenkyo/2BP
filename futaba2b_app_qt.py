@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.537"
+APP_VER = "0.9.538"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -313,6 +313,106 @@ def _retire_web_bridge(channel, bridge) -> None:
             bridge.deleteLater()
         except Exception:
             pass
+
+
+def _is_default_profile(profile) -> bool:
+    """profile が既定のプロファイル（アプリ全体で共有。消してはいけない）か。
+    Python 側の入れ物が作り直されている事があるので、本体の場所でも比べる。
+    見分けられない時は既定とみなす（消さずに残す方が安全）。"""
+    try:
+        dp = QWebEngineProfile.defaultProfile()
+        if profile is dp:
+            return True
+        from shiboken6 import getCppPointer
+        return getCppPointer(profile)[0] == getCppPointer(dp)[0]
+    except Exception:
+        return True
+
+
+def _release_web_page(view, page, profile, blank_parent=None,
+                      channel=None, bridge=None) -> None:
+    """閉じるビューのページと、そのページ専用のプロファイルを Qt の決まった順番で消す。
+
+    ページが残っているうちにプロファイルを消すと、Qt は「Release of profile
+    requested but WebEnginePage still not deleted. Expect troubles !」と書いて
+    ページの中身を無理やり壊す（Qt 自身が「この後おかしくなるかも」と言う状態）。
+    ページをプロファイルの子にしておいても防げない（親の後片付けが子より先に走る）。
+    画像タブを閉じるたびにこれが出ていて、その日に Qt の中（Chromium のスレッド）で
+    落ちた利用者がいた。スレのタブ（ThreadView.cleanup）と同じ手順にする:
+      1) ビューを空のページに差し替えて、古いページを切り離す
+      2) プロファイル・ページの親を外す（タブごと消える流れで先に消されないように）
+      3) ページを about:blank に移してから消し、消え終わってから 3 秒おいて
+         プロファイルを消す
+    終了の途中はイベントループがもう回らず待てないので、ページ→プロファイルの順に
+    そのまま消す（後回しの削除は出した順に片付く）。既定のプロファイルは消さない。"""
+    if profile is not None and _is_default_profile(profile):
+        profile = None
+    if view is not None:
+        try:
+            view.setPage(QWebEnginePage(blank_parent if blank_parent is not None else view))
+        except Exception:
+            pass
+    for obj in (profile, page):
+        if obj is not None:
+            try:
+                obj.setParent(None)
+            except Exception:
+                pass
+    _retire_web_bridge(channel, bridge)
+    # プロファイルはタイマーの関数に持たせておく（p.deleteLater を直接渡すと Python 側の
+    # 参照が先に切れて、待たずにその場で消えてしまう）
+    if page is None:
+        if profile is not None:
+            QTimer.singleShot(3000, lambda p=profile: p.deleteLater())
+        return
+    if app_is_shutting_down():
+        for obj in (page, profile):
+            if obj is not None:
+                try:
+                    obj.deleteLater()
+                except Exception:
+                    pass
+        return
+    torn = {"done": False}
+
+    def _teardown(*_a):
+        if torn["done"]:
+            return
+        torn["done"] = True
+        if profile is not None:
+            try:
+                page.destroyed.connect(
+                    lambda *a, p=profile: QTimer.singleShot(3000, lambda: p.deleteLater()))
+            except Exception:
+                QTimer.singleShot(3000, lambda p=profile: p.deleteLater())
+        try:
+            page.deleteLater()
+        except Exception:
+            pass
+    try:
+        page.loadFinished.connect(lambda _ok: _teardown())
+        page.setUrl(QUrl("about:blank"))
+        QTimer.singleShot(1500, _teardown)     # loadFinished が来ない時の保険
+    except Exception:
+        _teardown()
+
+
+class _OwnPageWebView(QWebEngineView):
+    """自分専用のプロファイル・ページを持つ簡単なビュー（ログのタブ）。
+    閉じる時（_dispose_tab_view / 板ごと閉じる時に cleanup が呼ばれる）に、
+    ページ→プロファイルの順で片付ける。今まではビューだけが消え、ページと
+    プロファイルは終了まで残っていた。"""
+
+    def cleanup(self):
+        if getattr(self, "_cleaned_up", False):
+            return
+        self._cleaned_up = True
+        try:
+            page = self.page()
+            prof = page.profile() if page is not None else None
+        except RuntimeError:
+            return
+        _release_web_page(self, page, prof, blank_parent=self)
 
 
 _gc_debounce_timer = None
@@ -13635,6 +13735,27 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 p._open_log_file(url.toLocalFile())
         event.acceptProposedAction()
 
+    def cleanup(self):
+        """板のタブを閉じる時の WebEngine の片付け（カタログのタブは単独では
+        閉じないので、板のタブごと閉じる時に呼ばれる）。
+        今までは片付けが無く、板のタブごと消える時にプロファイルがページより先に
+        消えて Qt の警告（Release of profile requested …）が出ていた。一時HTML
+        ファイルも残っていた。スレ・板の検索のタブと同じ順番で片付ける
+        （_release_web_page）。"""
+        if getattr(self, "_cleaned_up", False):
+            return
+        self._cleaned_up = True
+        if getattr(self, '_tmp_html_path', ''):
+            _cleanup_tmp(self._tmp_html_path)
+            self._tmp_html_path = ''
+        _page   = getattr(self, '_page', None)
+        _prof   = getattr(self, '_profile', None)
+        _chan   = getattr(self, '_channel', None)
+        _bridge = getattr(self, '_bridge', None)
+        self._page = self._profile = self._channel = self._bridge = None
+        _release_web_page(getattr(self, '_view', None), _page, _prof,
+                          blank_parent=self, channel=_chan, bridge=_bridge)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 板内検索ビュー（ふたばの検索モード）
@@ -17180,7 +17301,10 @@ class ImageTabView(_MouseGestureMixin, QWidget):
                 ok = self._download_media_file(_url, _path, _kind, _seq)
             except Exception:
                 ok = False
-            self._media_dl_done.emit(_seq, _url, _kind, ok, "")
+            try:
+                self._media_dl_done.emit(_seq, _url, _kind, ok, "")
+            except RuntimeError:
+                pass        # 読み込み中に画像タブが閉じられた（知らせる相手がもう無い）
         _th.Thread(target=_dl, daemon=True).start()
         return None
 
@@ -17789,14 +17913,23 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         self._show_current()
 
     def cleanup(self):
-        """タブが閉じられる時のクリーンアップ"""
+        """タブが閉じられる時（画像の窓は終了する時）のクリーンアップ。
+        画像とレス表示は、それぞれ専用のプロファイルを使うページで出している。
+        前はビューを空のページに差し替えるだけで古いページを残していたので、
+        このビューごと消える時にプロファイルがページより先に消え、閉じるたびに
+        Qt の警告（Release of profile requested …）が2つ出ていた。
+        _release_web_page でページ→プロファイルの順に消す。"""
+        if getattr(self, "_cleaned_up", False):
+            return
+        self._cleaned_up = True
         self._stop_mp4()
         # _view の WebEngine リソースを解放
         try:
-            blank = QWebEnginePage(self)
-            self._view.setPage(blank)
+            _pg = self._view.page()
+            _prof = _pg.profile() if _pg is not None else None
         except Exception:
-            pass
+            _pg = _prof = None
+        _release_web_page(self._view, _pg, _prof, blank_parent=self)
         try:
             self._view.deleteLater()
         except Exception:
@@ -17808,10 +17941,11 @@ class ImageTabView(_MouseGestureMixin, QWidget):
         except Exception:
             pass
         try:
-            blank2 = QWebEnginePage(self)
-            self._res_overlay_view.setPage(blank2)
+            _pg2 = self._res_overlay_view.page()
+            _prof2 = _pg2.profile() if _pg2 is not None else None
         except Exception:
-            pass
+            _pg2 = _prof2 = None
+        _release_web_page(self._res_overlay_view, _pg2, _prof2, blank_parent=self)
         try:
             self._res_overlay_view.deleteLater()
         except Exception:
