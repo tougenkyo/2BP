@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.540"
+APP_VER = "0.9.541"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -5176,6 +5176,8 @@ class BoardPane(QWidget):
             # カタログも自動更新登録済みなら残り時間をリセット
             if self._main and w._board:
                 self._main._ar_mgr.reset_remain_by_url(w._board.catalog_url)
+        elif isinstance(w, BoardSearchView):
+            w.reload()                 # 同じ語・同じ検索先で引き直す
 
     def _on_open_ar(self):
         """アクティブビューの自動更新ダイアログを開く"""
@@ -5481,6 +5483,9 @@ class BoardPane(QWidget):
                 _delay += 250
             elif isinstance(_w, CatalogView) and self._board:
                 QTimer.singleShot(_delay, lambda v=_w: v.load(self._board))
+                _delay += 250
+            elif isinstance(_w, BoardSearchView):
+                QTimer.singleShot(_delay, lambda v=_w: v.reload())
                 _delay += 250
 
     # まとめて閉じる時は破棄を少しずつずらす。重いスレを何枚も同時に
