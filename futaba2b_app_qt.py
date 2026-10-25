@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.541"
+APP_VER = "0.9.542"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -7664,6 +7664,12 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._prev_deleted_nos = (
                 {r.no for r in self._thread.res_list if r.is_deleted}
                 if self._thread else set())
+            # 同じく、今出しているレスの並びも控える。差分追記は「件数の差」で
+            # 足すレスを決めるので、前からあるレスが消えた・間に入るレスが
+            # 見つかった回にそのまま追記すると、新しいレスの前の方（投稿直後なら
+            # 自分のレスとその直後）が画面に入らず、以後の更新でも戻らない。
+            self._prev_res_nos = (
+                [r.no for r in self._thread.res_list] if self._thread else None)
             # 削除で本文が消えた新レスに、旧スレッドが持つ削除前の本文を引き継ぐ
             _carry_over_deleted_content(self._thread, thread)
             self._thread = thread
@@ -7855,6 +7861,18 @@ class ThreadView(_MouseGestureMixin, QWidget):
             and not _recovered_from_error
             and cur_mode in ("image", "quote")
         )
+
+        # 取得時に控えた「今出しているレスの並び」（_fetch 参照）。1回で使い切る。
+        _prev_nos = getattr(self, '_prev_res_nos', None)
+        self._prev_res_nos = None
+        if (_is_same_thread and _prev_nos is not None
+                and len(_prev_nos) >= self._known_res_count):
+            _shown = _prev_nos[:self._known_res_count]
+            if [r.no for r in thread.res_list[:len(_shown)]] != _shown:
+                # 並びが食い違う（前からあるレスが消えた・間にレスが入った）。
+                # 末尾への追記では合わないので、全体再描画に落とす。
+                print(f'[更新] No.{thread.no} 手元のレスと並びが食い違う → 描き直す')
+                _is_same_thread = False
 
         if _is_same_thread:
             self._drop_pending_scroll()  # 全体再描画しないのでpendingは不要
