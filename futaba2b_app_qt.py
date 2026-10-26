@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.542"
+APP_VER = "0.9.543"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2820,6 +2820,18 @@ class _TabItemWidget(QWidget):
             self._lbl_info.setText("  ".join(info_parts))
 
 
+def _discard_tab_item(lay, w):
+    """一覧から外した行（_TabItemWidget）を片付ける。
+    外して隠すだけでは行は消えない。行のボタンにつないだ lambda が行自身を指して
+    いて、その lambda は Qt 側（ボタンのつなぎ）が持っているので、Python の掃除からは
+    まだ使われているように見えるため。閉じたタブの数だけ、隠れた窓が残り続けていた。
+    deleteLater でボタンごと壊せば、つなぎと一緒に lambda も手放される。
+    （行のボタンを押した流れの中で呼ばれても、壊すのは後なので安全）"""
+    lay.removeWidget(w)
+    w.hide()
+    w.deleteLater()
+
+
 class TabManagePane(QWidget):
     """タブペイン: 設定セクション + 開いているタブの一覧"""
     # MainWindowへのシグナル
@@ -3015,10 +3027,7 @@ class TabManagePane(QWidget):
         for u in removed:
             entry = self._items.pop(u, None)
             if entry:
-                w = entry[0]
-                self._list_lay.removeWidget(w)
-                w.setParent(None)
-                w.hide()
+                _discard_tab_item(self._list_lay, entry[0])
 
         # ── 順序変化チェック（順序が変わった場合は全再構築） ──
         existing_order = [u for u in new_urls if u in self._items]
@@ -3029,10 +3038,7 @@ class TabManagePane(QWidget):
             # 順序が変わった場合のみ全Widget削除して再挿入
             for u in list(self._items.keys()):
                 entry = self._items.pop(u)
-                w = entry[0]
-                self._list_lay.removeWidget(w)
-                w.setParent(None)
-                w.hide()
+                _discard_tab_item(self._list_lay, entry[0])
 
         # ── 各URLを処理（追加 or 更新） ──
         even = True
@@ -3174,10 +3180,7 @@ class FavManagePane(QWidget):
         for u in [u for u in old_urls if u not in new_urls]:
             entry = self._items.pop(u, None)
             if entry:
-                w = entry[0]
-                self._list_lay.removeWidget(w)
-                w.setParent(None)
-                w.hide()
+                _discard_tab_item(self._list_lay, entry[0])
 
         # ── 順序変化チェック ──
         existing_order = [u for u in new_urls if u in self._items]
@@ -3187,10 +3190,7 @@ class FavManagePane(QWidget):
         if order_changed:
             for u in list(self._items.keys()):
                 entry = self._items.pop(u)
-                w = entry[0]
-                self._list_lay.removeWidget(w)
-                w.setParent(None)
-                w.hide()
+                _discard_tab_item(self._list_lay, entry[0])
 
         # ── 各URLを処理（追加 or 更新） ──
         even = True
