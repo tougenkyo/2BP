@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.543"
+APP_VER = "0.9.544"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -144,9 +144,9 @@ def set_app_shutting_down(flag: bool = True) -> None:
 
 
 # ── 設定の保存を少し待って1回にまとめる ──────────────────────────────────────
-# 保存は設定ファイル（1MB を超える）を丸ごと書いて、ディスクへ書き終わるまで待つ。
-# スレを開く・読み込むたびにこれをしていたので、起動時に何十枚も読み込むと
-# そのたびに画面が止まり、裏で保存している間も画面の処理が待たされていた。
+# 保存は設定ファイル（1MB を超える）を丸ごと JSON の文字にする（ディスクへ書くのは
+# v0.9.544 から裏の書き手）。スレを開く・読み込むたびにこれをしていたので、
+# 起動時に何十枚も読み込むとそのたびに画面が止まっていた。
 _save_soon_timer = None
 _save_soon_target = None
 
@@ -13380,7 +13380,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
             if e.thread_url not in opened:
                 opened.add(e.thread_url)
                 _rev_list.append(e.thread_url)
-        self._settings.save()  # save時に2000件上限でFIFO削除
+        # save時に2000件上限でFIFO削除。描画の流れなので、少し待ってまとめて保存する
+        # （開いた印はもうメモリにあるので、待つ間に重複して開くことはない）
+        save_settings_soon(self._settings)
 
         # ── 棒読みちゃん通知（notify_type=="bouyomi" な逆NGワードにマッチした場合）──
         if ng_filter is not None:
@@ -13727,7 +13729,9 @@ class CatalogView(_MouseGestureMixin, QWidget):
         for e in _live_real:
             if e.thread_url and e.res_count > 0 and e.thread_url not in rc:
                 rc[e.thread_url] = e.res_count
-        self._settings.save()
+        # カタログを描くたびに設定ファイル（1MB を超える）を書くと、そのつど画面が
+        # 待たされる（ディスクが忙しいと数秒）。少し待ってまとめて保存する
+        save_settings_soon(self._settings)
 
     def set_cxyl(self, cxyl: str):
         # cxylはBoardSettingsから直接読むため、クッキー更新のみ行い再描画

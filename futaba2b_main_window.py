@@ -6972,6 +6972,10 @@ class MainWindow(QMainWindow):
         set_app_shutting_down()
         # 少し待ってまとめる保存の予約は取り消す（この後でまとめて保存する）
         cancel_settings_save_soon()
+        # 裏で書いている設定を書き終えてから、以後の保存はその場で書く
+        # （最後の保存を裏に回さず、確実にディスクへ届けてから閉じる）
+        from futaba2b_settings import finish_background_saves
+        finish_background_saves()
         try:
             # 破棄中のビューを触らせない。計算済みハッシュは書き出しておく
             _nf = self._settings.ng_filter

@@ -43,6 +43,179 @@ def _unique_tmp(path: Path) -> Path:
     return path.with_name(f"{path.name}.{_os2.getpid()}-{_SAVE_SEQ}.tmp")
 
 
+# ── 設定ファイルの書き込みを画面の処理の外へ ─────────────────────────────────
+# 設定ファイル（1MB を超える）を書いて fsync するのは、ディスクが忙しいと数秒
+# かかる（サブPCの実ログで 3〜5.7 秒、そのあいだ画面が止まっていた）。
+# 中身を JSON の文字に固めるのは今まで通り呼んだスレッドで行い（別のスレッドが
+# 触る辞書の扱いも今と同じ）、ディスクへ書くのはロックの外で行う。画面の処理から
+# 頼まれた分は、裏の書き手（1本のスレッド）が書く。固めた順に番号を付け、先に
+# 新しい番号が書けていれば古い分は書かない（最後に残るのは一番新しい中身）。
+_WRITE_LOCK = _threading_s.Lock()   # 設定ファイルへ書くのは1度に1つ
+_SNAP_SEQ = 0          # 中身を固めた順の番号
+_WRITTEN_SEQ = 0       # ディスクへ書き終えた一番新しい番号
+_SAVE_SYNC = False     # True の間は、画面の処理からの保存もその場で書く（終了時）
+_SAVE_TLS = _threading_s.local()   # save() から _save_locked へ書き方を伝える
+
+
+def _write_settings_text(seq: int, text: str) -> None:
+    """固めた設定の文字を設定ファイルへ書く。一時ファイルへ書いて fsync してから
+    置き換える（書いている途中で落ちても本体は無事）。先に新しい番号が書けて
+    いれば書かない。"""
+    global _WRITTEN_SEQ
+    with _WRITE_LOCK:
+        if seq <= _WRITTEN_SEQ:
+            return
+        _t0 = time.perf_counter()
+        _tmp = None
+        try:
+            # 一時ファイルへ書いてから置き換える（板設定・diffサイドカーと同じ方式）。
+            # 直接 open(..., "w") すると開いた瞬間に0バイトになり、800KBを書き終える
+            # 前にプロセスが落ちると全設定を失う。save() は投稿・カタログ描画・
+            # 自動更新のフラッシュなど50箇所以上から高頻度で呼ばれるため、
+            # クラッシュと重なる可能性は無視できない。
+            _tmp = _unique_tmp(SETTINGS_FILE)
+            with open(_tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+                f.flush()
+                _os2.fsync(f.fileno())   # 置き換え前に確実にディスクへ
+            # ── .bak の更新 ───────────────────────────────────────────────
+            # 「移動」ではなく「コピー」で作る。移動にすると、この後の置き換えが
+            # 失敗した時に本体が消えてしまう（実際に WinError 32 で頻発した）。
+            # 毎回コピーすると保存のたびに 800KB の余計な書き込みが出るので、
+            # 無い時と古くなった時だけ更新する。復旧用の控えなので1世代で足りる。
+            _bak = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".bak")
+            if SETTINGS_FILE.exists():
+                try:
+                    _need_bak = True
+                    if _bak.exists():
+                        _need_bak = (time.time() - _bak.stat().st_mtime) > 600
+                    if _need_bak:
+                        import shutil as _sh
+                        _sh.copy2(SETTINGS_FILE, _bak)
+                except OSError as e:
+                    print(f"[Settings] バックアップ作成に失敗: {e}")
+            # ── 本体の置き換え ───────────────────────────────────────────
+            # 書いたばかりの .tmp をウイルス対策ソフト等が一時的に掴んでいると
+            # WinError 32 で失敗する。少し待って数回やり直す。
+            # 最後まで失敗した場合も本体には触っていないので、内容は無事。
+            _err = None
+            for _i in range(6):
+                try:
+                    _os2.replace(_tmp, SETTINGS_FILE)
+                    _err = None
+                    break
+                except OSError as e:
+                    _err = e
+                    time.sleep(0.05 * (_i + 1))
+            if _err is not None:
+                print(f"[Settings] 保存できませんでした（6回試行・本体は変更なし）: {_err}")
+                try:
+                    _tmp.unlink()
+                except OSError:
+                    pass
+            else:
+                _WRITTEN_SEQ = seq
+        except Exception as e:
+            print(f"[Settings] 保存エラー: {e}")
+            try:
+                if _tmp is not None and _tmp.exists():
+                    _tmp.unlink()
+            except (OSError, NameError, UnboundLocalError):
+                pass
+        _dt = time.perf_counter() - _t0
+        if _dt >= 1.0:
+            _where = ("画面の処理" if _threading_s.current_thread()
+                      is _threading_s.main_thread() else "裏")
+            print(f"[Settings] 設定ファイルの書き込みに {_dt:.1f} 秒かかりました（{_where}で書いた）")
+
+
+class _SettingsWriter:
+    """画面の処理から頼まれた設定の書き込みを、裏の1本のスレッドで行う。
+    書いている間に次が来たら一番新しい分だけを覚えておき、終わったらそれを
+    書く（途中の分を飛ばしても、最後に書くのは一番新しい中身なので同じ）。"""
+
+    def __init__(self):
+        self._cv = _threading_s.Condition()
+        self._pending = None      # (番号, 文字)
+        self._busy = False
+        self._thread = None
+
+    def submit(self, seq: int, text: str) -> None:
+        with self._cv:
+            if self._pending is None or seq > self._pending[0]:
+                self._pending = (seq, text)
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = _threading_s.Thread(
+                    target=self._run, name="settings_writer", daemon=True)
+                self._thread.start()
+            self._cv.notify_all()
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                while self._pending is None:
+                    self._cv.wait()
+                seq, text = self._pending
+                self._pending = None
+                self._busy = True
+            try:
+                _write_settings_text(seq, text)
+            except Exception as e:
+                print(f"[Settings] 保存エラー: {e}")
+            finally:
+                with self._cv:
+                    self._busy = False
+                    self._cv.notify_all()
+
+    def wait_idle(self, timeout: float) -> bool:
+        """頼まれた分を書き終えるまで待つ。書き終えていれば True"""
+        end = time.monotonic() + timeout
+        with self._cv:
+            while self._pending is not None or self._busy:
+                left = end - time.monotonic()
+                if left <= 0:
+                    return False
+                self._cv.wait(left)
+        return True
+
+
+_SETTINGS_WRITER = _SettingsWriter()
+
+
+def _dispatch_settings_text(text: str) -> None:
+    """固めた設定の文字に番号を付けて、書き方に合わせて渡す。
+    save() の中から: 画面の処理の分は裏の書き手へ、裏のスレッドの分はロックを
+    放してから書くよう save() へ戻す。_save_locked を直接呼んだ時は、今まで通り
+    その場で書く。"""
+    global _SNAP_SEQ
+    _SNAP_SEQ += 1
+    job = (_SNAP_SEQ, text)
+    how = getattr(_SAVE_TLS, "dispatch", None)
+    if how == "writer":
+        _SETTINGS_WRITER.submit(*job)
+    elif how == "after":
+        _SAVE_TLS.stash = job
+    else:
+        _write_settings_text(*job)
+
+
+def finish_background_saves(timeout: float = 10.0) -> bool:
+    """終了する時に呼ぶ。裏で書いている設定を書き終えるまで待ち、以後の保存は
+    画面の処理からでもその場で書く（閉じる時の最後の保存を、確実に書き終えて
+    から終わるように）。書き終えていれば True"""
+    global _SAVE_SYNC
+    _SAVE_SYNC = True
+    ok = _SETTINGS_WRITER.wait_idle(timeout)
+    if not ok:
+        print(f"[Settings] 裏で書いている設定の書き込みが {timeout:.0f} 秒で終わりませんでした")
+    return ok
+
+
+# 閉じる時の流れを通らずに終わった時も、頼まれた分は書き終えてから終わる
+import atexit as _atexit_s
+_atexit_s.register(lambda: _SETTINGS_WRITER.wait_idle(5.0))
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 類似画像NG（見た目のハッシュ）
 # ──────────────────────────────────────────────────────────────────────────────
@@ -936,6 +1109,9 @@ class AppSettings:
         return None
 
     def load(self) -> None:
+        # 裏で書きかけの設定があれば、書き終えてから読む（同じプロセスの中で
+        # 保存した直後に読み直しても、前の中身を読まないように）
+        _SETTINGS_WRITER.wait_idle(10.0)
         # 落ちた時などに残った書きかけの一時ファイルを片付ける
         try:
             _cut = time.time() - 3600
@@ -1298,12 +1474,27 @@ class AppSettings:
     # ── セーブ ──────────────────────────────────────────────────────────────
 
     def save(self) -> None:
-        # 保存は同時に走らせない（同じファイルを奪い合って失敗するため）
+        # 保存は同時に走らせない（同じファイルを奪い合って失敗するため）。
+        # ロックの中では中身を JSON の文字に固めるだけにして、ディスクへ書くのは
+        # ロックの外で行う（書いている数秒の間、ほかの保存を待たせないため）。
+        # 画面の処理からの保存は、書くのを裏の書き手に任せてすぐ戻る。
+        # 裏のスレッドからの保存は、今まで通り書き終えてから戻る。
         with _SAVE_LOCK:
-            self._save_locked()
+            _SAVE_TLS.dispatch = ("writer" if (_threading_s.current_thread()
+                                              is _threading_s.main_thread()
+                                              and not _SAVE_SYNC)
+                                  else "after")
+            _SAVE_TLS.stash = None
+            try:
+                self._save_locked()
+            finally:
+                _job = _SAVE_TLS.stash
+                _SAVE_TLS.dispatch = None
+                _SAVE_TLS.stash = None
+        if _job is not None:
+            _write_settings_text(*_job)
 
     def _save_locked(self) -> None:
-        _tmp = None
         try:
             # イテレーション中に別スレッドから変更される可能性のある辞書はコピーを取る
             _thread_read  = dict(self.thread_read_counts)
@@ -1312,14 +1503,9 @@ class AppSettings:
             _del_res      = {k: list(v) for k, v in self.del_res_nos.items() if v}
             _global_max   = dict(self.global_max_no_by_board)
             _max_saved_bb = dict(self.max_saved_by_board)
-            # 一時ファイルへ書いてから置き換える（板設定・diffサイドカーと同じ方式）。
-            # 直接 open(..., "w") すると開いた瞬間に0バイトになり、800KBを書き終える
-            # 前にプロセスが落ちると全設定を失う。save() は投稿・カタログ描画・
-            # 自動更新のフラッシュなど50箇所以上から高頻度で呼ばれるため、
-            # クラッシュと重なる可能性は無視できない。
-            _tmp = _unique_tmp(SETTINGS_FILE)
-            with open(_tmp, "w", encoding="utf-8") as f:
-                json.dump(
+            # 中身を JSON の文字に固める（今まで json.dump で書きながら作っていた
+            # 文字と同じ）。書くのは _dispatch_settings_text に任せる。
+            _text = json.dumps(
                     {
                         "app":                  self._app,
                         "favorites":            self.favorites,
@@ -1524,52 +1710,12 @@ class AppSettings:
                         "mouse_gestures": self.mouse_gestures,
                         "mouse_gestures_configured": self.mouse_gestures_configured,
                     },
-                    f, ensure_ascii=False, indent=2,
+                    ensure_ascii=False, indent=2,
                 )
-                f.flush()
-                _os2.fsync(f.fileno())   # 置き換え前に確実にディスクへ
-            # ── .bak の更新 ───────────────────────────────────────────────
-            # 「移動」ではなく「コピー」で作る。移動にすると、この後の置き換えが
-            # 失敗した時に本体が消えてしまう（実際に WinError 32 で頻発した）。
-            # 毎回コピーすると保存のたびに 800KB の余計な書き込みが出るので、
-            # 無い時と古くなった時だけ更新する。復旧用の控えなので1世代で足りる。
-            _bak = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".bak")
-            if SETTINGS_FILE.exists():
-                try:
-                    _need_bak = True
-                    if _bak.exists():
-                        _need_bak = (time.time() - _bak.stat().st_mtime) > 600
-                    if _need_bak:
-                        import shutil as _sh
-                        _sh.copy2(SETTINGS_FILE, _bak)
-                except OSError as e:
-                    print(f"[Settings] バックアップ作成に失敗: {e}")
-            # ── 本体の置き換え ───────────────────────────────────────────
-            # 書いたばかりの .tmp をウイルス対策ソフト等が一時的に掴んでいると
-            # WinError 32 で失敗する。少し待って数回やり直す。
-            # 最後まで失敗した場合も本体には触っていないので、内容は無事。
-            _err = None
-            for _i in range(6):
-                try:
-                    _os2.replace(_tmp, SETTINGS_FILE)
-                    _err = None
-                    break
-                except OSError as e:
-                    _err = e
-                    time.sleep(0.05 * (_i + 1))
-            if _err is not None:
-                print(f"[Settings] 保存できませんでした（6回試行・本体は変更なし）: {_err}")
-                try:
-                    _tmp.unlink()
-                except OSError:
-                    pass
         except Exception as e:
             print(f"[Settings] 保存エラー: {e}")
-            try:
-                if _tmp is not None and _tmp.exists():
-                    _tmp.unlink()
-            except (OSError, NameError, UnboundLocalError):
-                pass
+            return
+        _dispatch_settings_text(_text)
 
     def _dump_app_config(self) -> dict:
         """NijiAppConfig 相当の全設定を dict に変換"""
