@@ -34,7 +34,9 @@
 
 ほかに、メモリの掃除（gc.collect）にかかった時間も測る（gc_collect_timed）。
 掃除の仕方・時機は変えない。1 回で 1 秒以上かかった時はその場で、ほかは
-30 分ごとにまとめて書く。行の頭は「[GC]」。
+30 分ごとにまとめて書く。行の頭は「[GC]」。30 分ごとに、抱えている
+オブジェクトの数と増えた種類・メモリの様子も書く（掃除が日ごとに長くなる
+理由を見分けるため）。
 """
 from __future__ import annotations
 
@@ -450,54 +452,173 @@ def _page_minimized(page) -> bool:
 # （Qt の部品を画面以外のスレッドで壊さないため）。全体の掃除は使っている量が
 # 多いほど長くなり、その間は画面が止まる（利用者のサブPCで 3.4 秒の記録）。
 # 掃除の仕方を変える前に、実際に何秒かかっているかを見る。
+# サブPCでは掃除が日ごとに長くなった（1日目の平均 0.05 秒が6日目に 0.5 秒。
+# 片付けた数はほぼ0）。抱えている物が増えたのか、Windows が退避したメモリを
+# 掃除のたびに読み戻しているのかを見分けるため、次も書く。
+#   ・掃除のたびに、その間のページの読み込みの回数と、使っているメモリの増え方
+#     （退避したメモリを読み戻していれば、ここが大きくなる）
+#   ・30 分ごとに、抱えているオブジェクト（掃除で調べる物）の数と、増えた種類
+#     （数えるのは画面の処理での掃除の時だけ。掃除1回より少し長くかかる）
+#   ・30 分ごとに、確保しているメモリとパソコンの空き
 GC_TAG = "[GC]"
 GC_SLOW_SEC = 1.0           # 1 回でこれ以上かかったら、その場で書く
 GC_SUMMARY_SEC = 30 * 60    # まとめを書く間隔
 GC_NOTE_SEC = 0.2           # まとめで「長め」と数える長さ
+GC_CENSUS_TOP = 8           # 増えた種類を、多い順にいくつまで書くか
 _gc_lock = threading.Lock()
-_gc_stats: dict = {}        # どこでの掃除か → [回数, 合計秒, 最長秒, 長めの回数]
+_gc_stats: dict = {}        # どこでの掃除か → [回数, 合計秒, 最長秒, 長めの回数, ページの読み込み]
 _gc_since = time.monotonic()
+_gc_pf_since = None         # 前のまとめの時のページの読み込みの回数（プロセス全体）
+_census_due = False         # 抱えている物を数える番（画面の処理での掃除の時に数える）
+_census_prev = None         # 前に数えた時の {種類: 数}
+_census_first = None        # 最初に数えた時の {種類: 数}
+_census_total_prev = 0
+_census_total_first = 0
+_psproc = None
 
 
-def _rss_mb():
+def _mem_probe():
+    """(ページの読み込みの回数, 使っているメモリMB, 確保しているメモリMB)。
+    取れなければ None。回数・確保は取れない環境では None になる"""
+    global _psproc
     try:
-        import psutil
-        return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
+        if _psproc is None:
+            import psutil
+            _psproc = psutil.Process(os.getpid())
+        mi = _psproc.memory_info()
+        priv = getattr(mi, "private", None)
+        return (getattr(mi, "num_page_faults", None), mi.rss / 1048576,
+                priv / 1048576 if priv is not None else None)
     except Exception:
         return None
+
+
+def _mem_summary(m) -> str:
+    """30 分ごとのメモリの様子の1行（取れなければ空）"""
+    if not m:
+        return ""
+    parts = [f"使っているメモリ {m[1]:.0f}MB"]
+    if m[2] is not None:
+        parts.append(f"確保しているメモリ {m[2]:.0f}MB")
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        parts.append(f"パソコンの空き {vm.available / 2**30:.1f}GB／{vm.total / 2**30:.1f}GB")
+    except Exception:
+        pass
+    if _gc_pf_since is not None and m[0] is not None:
+        parts.append(f"この間のページの読み込み {m[0] - _gc_pf_since:,} 回")
+    return f"{GC_TAG} メモリの様子: " + "・".join(parts)
+
+
+def _type_name(t) -> str:
+    mod = getattr(t, "__module__", "") or ""
+    name = getattr(t, "__qualname__", None) or getattr(t, "__name__", "?")
+    if mod in ("builtins", ""):
+        return name
+    return f"{mod}.{name}".replace("PySide6.", "").replace("shiboken6.", "")
+
+
+def _census_lines() -> list:
+    """抱えているオブジェクト（掃除で調べる物）を種類ごとに数え、前回・最初と比べる。
+    画面の処理からだけ呼ぶ（取り出した一覧を手放す時に、そこが最後の持ち主だった
+    物が壊れる。それを画面の処理で起こすため。掃除を画面の処理に寄せたのと同じ理由）"""
+    import gc
+    import collections
+    global _census_prev, _census_first, _census_total_prev, _census_total_first
+    t0 = time.perf_counter()
+    objs = gc.get_objects()
+    total = len(objs)
+    cnt = collections.Counter(map(type, objs))
+    del objs
+    cur: dict = {}
+    for t, c in cnt.items():
+        k = _type_name(t)
+        cur[k] = cur.get(k, 0) + c
+    del cnt
+    dt = time.perf_counter() - t0
+
+    def _grown(base):
+        inc = sorted(((c - base.get(k, 0), k, c) for k, c in cur.items()), reverse=True)
+        s = "、".join(f"{k} +{d:,}（計 {c:,}）" for d, k, c in inc[:GC_CENSUS_TOP] if d > 0)
+        return s or "なし"
+
+    lines = []
+    if _census_prev is None:
+        top = sorted(((c, k) for k, c in cur.items()), reverse=True)[:GC_CENSUS_TOP]
+        lines.append(f"{GC_TAG} 抱えているオブジェクト {total:,} 個（数えるのに {dt:.2f} 秒）"
+                     "・多い種類: " + "、".join(f"{k} {c:,}" for c, k in top))
+        _census_first = cur
+        _census_total_first = total
+    else:
+        lines.append(f"{GC_TAG} 抱えているオブジェクト {total:,} 個"
+                     f"（前回より {total - _census_total_prev:+,}・最初より {total - _census_total_first:+,}"
+                     f"・数えるのに {dt:.2f} 秒）・前回より増えた種類: {_grown(_census_prev)}")
+        lines.append(f"{GC_TAG} 最初に数えた時より増えた種類: {_grown(_census_first)}")
+    _census_prev = cur
+    _census_total_prev = total
+    return lines
 
 
 def gc_collect_timed(where: str) -> int:
     """gc.collect() をして、かかった時間を測る（掃除の中身は gc.collect() と同じ）。
     where は「定期」など、どこでの掃除か（ログに出す）。戻り値も gc.collect() と同じ"""
     import gc
+    m0 = _mem_probe()
     t0 = time.perf_counter()
     n = gc.collect()
     dt = time.perf_counter() - t0
+    m1 = _mem_probe()
+    pf = (m1[0] - m0[0]) if (m0 and m1 and m0[0] is not None and m1[0] is not None) else None
     lines = []
-    global _gc_since
+    census = False
+    global _gc_since, _gc_pf_since, _census_due
     with _gc_lock:
-        st = _gc_stats.setdefault(where, [0, 0.0, 0.0, 0])
+        if _gc_pf_since is None and m0 and m0[0] is not None:
+            _gc_pf_since = m0[0]
+        st = _gc_stats.setdefault(where, [0, 0.0, 0.0, 0, 0])
         st[0] += 1
         st[1] += dt
         st[2] = max(st[2], dt)
         if dt >= GC_NOTE_SEC:
             st[3] += 1
+        if pf:
+            st[4] += pf
         now = time.monotonic()
         if now - _gc_since >= GC_SUMMARY_SEC:
             parts = [f"{w} {c} 回・平均 {tot / c:.2f} 秒・最長 {mx:.2f} 秒"
                      f"（{GC_NOTE_SEC:g} 秒以上 {nl} 回）"
-                     for w, (c, tot, mx, nl) in _gc_stats.items() if c]
+                     + (f"・ページの読み込み 平均 {pfs // c:,} 回" if pfs else "")
+                     for w, (c, tot, mx, nl, pfs) in _gc_stats.items() if c]
             if parts:
                 lines.append(f"{GC_TAG} この {int((now - _gc_since) // 60)} 分のメモリの掃除: "
                              + "／".join(parts))
+            mem = _mem_summary(m1)
+            if mem:
+                lines.append(mem)
             _gc_stats.clear()
             _gc_since = now
+            if m1 and m1[0] is not None:
+                _gc_pf_since = m1[0]
+            _census_due = True
+        if _census_due and threading.current_thread() is threading.main_thread():
+            _census_due = False
+            census = True
     if dt >= GC_SLOW_SEC:
-        mb = _rss_mb()
-        mem = f"・使っているメモリ {mb:.0f}MB" if mb is not None else ""
+        mem = ""
+        if m1:
+            mem += f"・使っているメモリ {m1[1]:.0f}MB"
+            if m0 and m1[1] - m0[1] >= 1:
+                mem += f"・掃除の間に増えた分 +{m1[1] - m0[1]:.0f}MB"
+        if pf is not None:
+            mem += f"・ページの読み込み {pf:,} 回"
         lines.insert(0, f"{GC_TAG} メモリの掃除に {dt:.1f} 秒かかりました"
                         f"（{where}・片付けた数 {n}{mem}）")
+    if census:
+        try:
+            lines.extend(_census_lines())
+        except Exception as e:
+            lines.append(f"{GC_TAG} 抱えているオブジェクトを数えられませんでした: {e}")
     for ln in lines:
         print(ln, flush=True)
     return n
