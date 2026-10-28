@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.545"
+APP_VER = "0.9.546"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2832,6 +2832,14 @@ def _discard_tab_item(lay, w):
     w.deleteLater()
 
 
+def _place_tab_item(lay, w, pos):
+    """一覧の行（_TabItemWidget）を上から pos 番目に置く（もうそこにあれば何もしない）。
+    タブの並びが変わっても、行は作り直さずに動かすだけで済ませる。"""
+    if lay.indexOf(w) != pos:
+        lay.removeWidget(w)
+        lay.insertWidget(pos, w)
+
+
 class TabManagePane(QWidget):
     """タブペイン: 設定セクション + 開いているタブの一覧"""
     # MainWindowへのシグナル
@@ -3019,37 +3027,38 @@ class TabManagePane(QWidget):
                 new_order.append((url, board_name, thread_no, title, res_count,
                                    new_count, last_update, is_expiring, is_catalog_view, ti, ii))
 
+        # 同じURLのタブが2枚ある時（ログのタブと生きたスレなど）は、最初の1枚だけを行にする。
+        # 行はURLで控えるので、同じURLの行が2つできると片方が控えから漏れ、描き直すたびに
+        # 一覧の行が1つずつ増えていた（そのタブを閉じても残った）
+        _first = {}
+        for item in new_order:
+            _first.setdefault(item[0], item)
+        new_order = list(_first.values())
         new_urls = [item[0] for item in new_order]
-        old_urls = list(self._items.keys())
 
         # ── 消えたURLのウィジェットを削除 ──
-        removed = [u for u in old_urls if u not in new_urls]
+        removed = [u for u in self._items if u not in new_urls]
         for u in removed:
             entry = self._items.pop(u, None)
             if entry:
                 _discard_tab_item(self._list_lay, entry[0])
 
-        # ── 順序変化チェック（順序が変わった場合は全再構築） ──
-        existing_order = [u for u in new_urls if u in self._items]
-        old_order_filtered = [u for u in old_urls if u in self._items]
-        order_changed = existing_order != old_order_filtered
-
-        if order_changed:
-            # 順序が変わった場合のみ全Widget削除して再挿入
-            for u in list(self._items.keys()):
-                entry = self._items.pop(u)
-                _discard_tab_item(self._list_lay, entry[0])
-
         # ── 各URLを処理（追加 or 更新） ──
+        # 並びが変わっても行は作り直さず、今ある行を pos 番目へ動かす。
+        # v0.9.545 までは、控え(_items)の並びとタブの並びが違うと全部の行を作り直していた。
+        # 控えは新しいURLを末尾に足すので、後ろに別の板のタブがある板でスレを開くたびに
+        # 並びが違って見え、57 行なら 1 回 150ms 以上かけて作り直していた
+        # （v0.9.542 までは作り直す前の行が残り、メモリの掃除が日ごとに遅くなっていた）
         even = True
         for pos, (url, board_name, thread_no, title, res_count,
                    new_count, last_update, is_expiring, is_catalog, ti, ii) in enumerate(new_order):
             bg = _TM.ui("panel_bg", "#2e2e2e") if even else _TM.ui("window_bg", "#262626")
             even = not even
 
-            if url in self._items and not order_changed:
-                # 既存Widget: データのみ更新（色が変わらない行は設定し直さない）
+            if url in self._items:
+                # 既存Widget: 置き場所を合わせ、データのみ更新（色が変わらない行は設定し直さない）
                 w, _ti, _ii = self._items[url]
+                _place_tab_item(self._list_lay, w, pos)
                 w.update_data(title, res_count, new_count, last_update, is_expiring)
                 _restyle(w,
                     f"background:{bg}; border-bottom:1px solid {_TM.ui('panel_border','#525252')}; color:{_TM.ui('text_primary','#ddd')};")
@@ -3069,6 +3078,8 @@ class TabManagePane(QWidget):
                     self._on_item_click(u, bpi, ii2, e))
                 self._list_lay.insertWidget(pos, w)
                 self._items[url] = (w, ti, ii)
+        # 控えもタブの順に並べ直しておく
+        self._items = {u: self._items[u] for u in new_urls}
 
     def _on_item_click(self, url, outer_idx, inner_idx, event):
         if self._chk_sync.isChecked():
@@ -3173,34 +3184,30 @@ class FavManagePane(QWidget):
                 new_order.append((url, board_name, thread_no, title, res_count,
                                    new_count, last_update, is_expiring, is_catalog_view, ti, ii))
 
+        # 同じURLのタブは最初の1枚だけを行にする（TabManagePane.refresh と同じ）
+        _first = {}
+        for item in new_order:
+            _first.setdefault(item[0], item)
+        new_order = list(_first.values())
         new_urls = [item[0] for item in new_order]
-        old_urls = list(self._items.keys())
 
         # ── 消えたURLのウィジェットを削除 ──
-        for u in [u for u in old_urls if u not in new_urls]:
+        for u in [u for u in self._items if u not in new_urls]:
             entry = self._items.pop(u, None)
             if entry:
                 _discard_tab_item(self._list_lay, entry[0])
 
-        # ── 順序変化チェック ──
-        existing_order = [u for u in new_urls if u in self._items]
-        old_order_filtered = [u for u in old_urls if u in self._items]
-        order_changed = existing_order != old_order_filtered
-
-        if order_changed:
-            for u in list(self._items.keys()):
-                entry = self._items.pop(u)
-                _discard_tab_item(self._list_lay, entry[0])
-
         # ── 各URLを処理（追加 or 更新） ──
+        # 並びが変わっても行は作り直さず、今ある行を動かす（TabManagePane.refresh と同じ）
         even = True
         for pos, (url, board_name, thread_no, title, res_count,
                    new_count, last_update, is_expiring, is_catalog, ti, ii) in enumerate(new_order):
             bg = _TM.ui("panel_bg", "#2e2e2e") if even else _TM.ui("window_bg", "#262626")
             even = not even
 
-            if url in self._items and not order_changed:
+            if url in self._items:
                 w, _ti, _ii = self._items[url]
+                _place_tab_item(self._list_lay, w, pos)
                 w.update_data(title, res_count, new_count, last_update, is_expiring)
                 _restyle(w,
                     f"background:{bg}; border-bottom:1px solid {_TM.ui('panel_border','#525252')}; color:{_TM.ui('text_primary','#ddd')};")
@@ -3219,6 +3226,8 @@ class FavManagePane(QWidget):
                     self._on_item_click(u, bpi, ii2, e))
                 self._list_lay.insertWidget(pos, w)
                 self._items[url] = (w, ti, ii)
+        # 控えもタブの順に並べ直しておく
+        self._items = {u: self._items[u] for u in new_urls}
 
     def _on_item_click(self, url, outer_idx, inner_idx, event):
         self.tab_select_requested.emit(url)
