@@ -3197,9 +3197,20 @@ class MainWindow(QMainWindow):
 
         ページ内のJSで拾うとタブが切り替わった瞬間に「右ボタン押下中」の情報が
         新しいページへ引き継がれず、1回しか動かない。アプリ全体のイベント
-        フィルタなら押下状態はQt側が持つので、押しっぱなしのまま何回でも送れる。"""
+        フィルタなら押下状態はQt側が持つので、押しっぱなしのまま何回でも送れる。
+        マウスの横のボタン（戻る・進む）を 2BP 自身が描くページに渡さないのもここ。"""
         try:
             _t = ev.type()
+            # マウスの「戻る」「進む」ボタン（横のボタン）は、スレ・カタログ・板内検索・
+            # 画像の表示に渡さない。どれも描き直すたびに一時ファイルを作り直して前の
+            # ファイルを消すので、Chromium が履歴を戻ると消えたファイルを読みに行って
+            # エラーページになり、スレはその後の更新で新着を足せなくなっていた
+            if (_t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+                       QEvent.Type.MouseButtonDblClick)
+                    and ev.button() in (Qt.MouseButton.BackButton,
+                                        Qt.MouseButton.ForwardButton)
+                    and self._in_own_view(obj)):
+                return True
             if (_t == QEvent.Type.Wheel
                     and (ev.buttons() & Qt.MouseButton.RightButton)
                     and isinstance(obj, QWidget) and self.isAncestorOf(obj)):
@@ -3238,6 +3249,18 @@ class MainWindow(QMainWindow):
         except (AttributeError, RuntimeError, SystemError):
             pass
         return super().eventFilter(obj, ev)
+
+    @staticmethod
+    def _in_own_view(obj) -> bool:
+        """obj が、2BP 自身が描くページ（スレ・カタログ・板内検索・画像）の中か。
+        画像の窓（ImageWindow）の中の画像タブも含む。ログのタブ（一般のHTML）は、
+        リンクで移った先から戻るのに使えるので含めない"""
+        w = obj if isinstance(obj, QWidget) else None
+        while w is not None:
+            if isinstance(w, (ThreadView, CatalogView, BoardSearchView, ImageTabView)):
+                return True
+            w = w.parentWidget()
+        return False
 
     def _wheel_to_hovered_view(self, ev) -> bool:
         """返信ウインドウにフォーカスがある時、カーソルの下のスレ/カタログを

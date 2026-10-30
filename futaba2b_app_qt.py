@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.546"
+APP_VER = "0.9.547"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -533,6 +533,7 @@ class _RendererWatch(QObject):
         self._recover_fn = recover_fn
         self._on_crash_fn = on_crash_fn
         self._times: list = []
+        self.last_crash = 0.0    # 最後に落ちた時刻（time.monotonic）。普通の終わり方は数えない
         # 最後に見えていた位置。落ちたと知らせが来た時には page.scrollPosition() は
         # もう 0 に戻っているので、動くたびに控えておく（落ちた時は 0 が来ない）
         self.last_scroll_y = 0.0
@@ -557,6 +558,7 @@ class _RendererWatch(QObject):
         S = QWebEnginePage.RenderProcessTerminationStatus
         if status == S.NormalTerminationStatus:
             return              # 閉じた時などの普通の終わり方
+        self.last_crash = time.monotonic()
         how = {S.AbnormalTerminationStatus: "異常終了しました",
                S.CrashedTerminationStatus: "落ちました",
                S.KilledTerminationStatus: "止められました"}.get(status, f"終わりました（{status}）")
@@ -6465,6 +6467,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._fetch_inflight_no = None  # フルGET実行中のスレNo（重複起動スキップ用）
         self._reload_pending = False    # 実行中フェッチに重なった更新要求の保留フラグ
         self._tmp_html_path: str = ""  # 大容量HTML用の一時ファイルパス
+        # 今出しているはずの一時ファイル（ページが別の物に入れ替わっていないかの目印）。
+        # 一時ファイルを使わない表示（取得失敗の表示）の間は空
+        self._page_file: str = ""
+        self._replaced_times: list = []  # ページの入れ替わりに気づいて描き直した時刻
         self._thread_ready.connect(self._show)
         self._reload_again.connect(self._on_reload_again)
         self._read_counts_changed.connect(self._save_read_counts_soon)
@@ -6700,6 +6706,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._sc_extract.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         # スクロール位置復元用
         self._view.loadFinished.connect(self._on_load_finished_scroll)
+        # 読み込みが始まった時（ページが入れ替わる前）にも、見えていた位置を控える。
+        # 別のページに入れ替わった後は位置が 0 になるので、描き直す時にここで控えた位置へ戻す
+        self._view.loadStarted.connect(self._note_scroll_for_recover)
         # マウスジェスチャー認識JSを読込完了ごとに注入（設定OFFなら待機のみ）
         self._view.loadFinished.connect(lambda _: self.inject_mouse_gesture_js())
         self._view.loadFinished.connect(lambda _: QTimer.singleShot(50, self._inject_popup_js))
@@ -7432,14 +7441,16 @@ class ThreadView(_MouseGestureMixin, QWidget):
         save_settings_soon(self._settings)
 
     def _note_scroll_for_recover(self):
-        """レンダラーが落ちたその場で、最後に見えていた位置を控える（落ちた後は JS で聞けない）"""
+        """最後に見えていた位置を控える。レンダラーが落ちたその場と、読み込みが始まった時
+        （ページが入れ替わる前）に呼ぶ（落ちた・入れ替わった後は JS で聞けない）"""
         try:
             self._crash_scroll_y = max(0, int(self._renderer_watch.last_scroll_y))
         except Exception:
             self._crash_scroll_y = 0
 
-    def _recover_after_renderer_crash(self):
-        """レンダラーが落ちた後に、手元のスレから描き直す（取り直さない）。
+    def _recover_after_renderer_crash(self, why: str = 'レンダラーが落ちたので読み直し'):
+        """レンダラーが落ちた後（ページが別の物に入れ替わった後も）に、手元のスレから
+        描き直す（取り直さない）。
         ページが生きている前提の省略（中身だけ入れ替える・出来上がりが同じなら
         読み込まない）を通らないよう、ページを丸ごと読み込み直す。
         まだ一度も表示できていなければ False（次の更新で表示される）"""
@@ -7451,9 +7462,60 @@ class ThreadView(_MouseGestureMixin, QWidget):
         if cur_mode in ("image", "quote"):
             self._set_view_mode(cur_mode)
         else:
-            self._redraw_why = 'レンダラーが落ちたので読み直し'
+            self._redraw_why = why
             self._redraw_ng_impl(getattr(self, "_crash_scroll_y", 0))
         return True
+
+    def _page_replaced(self) -> bool:
+        """表示が、最後に書いた一時ファイルとは別のページに入れ替わっているか。
+        Chromium が履歴を戻ると（マウスの戻るボタンなど）、描き直す時に消した前の
+        一時ファイルを読みに行ってエラーページになる。新着を足す関数はスレのページの
+        中にあるので、そのままだと更新しても新着が出なかった（v0.9.546 まで）"""
+        f = getattr(self, "_page_file", "")
+        page = getattr(self, "_page", None)
+        if not f or page is None or not self._is_alive():
+            return False
+        try:
+            u = page.url()
+        except RuntimeError:
+            return False
+        if not u.isLocalFile():
+            return True
+        _n = lambda p: _os.path.normcase(_os.path.abspath(p))
+        return _n(u.toLocalFile()) != _n(f)
+
+    def _redraw_replaced_page(self):
+        """入れ替わったページを、手元のスレから描き直す（読み込み終わりの少し後に呼ぶ）。
+        続けて入れ替わる時は、描き直しを繰り返さないよう止める（レンダラーが落ちた時と同じ）"""
+        if app_is_shutting_down() or not self._page_replaced():
+            return              # 閉じた・待っている間に描き直された
+        # 読み込みの途中でレンダラーが落ちると、表示は前の（もう消した）一時ファイルに
+        # 戻った形になり、入れ替わったように見える。読み直しはレンダラーの見張りがする
+        # （続けて落ちる時に止める仕組みも見張りの方にある）ので、ここでは描き直さない
+        if time.monotonic() - self._renderer_watch.last_crash < 5.0:
+            return
+        try:
+            u = self._page.url()
+        except (AttributeError, RuntimeError):
+            return
+        _u = u.toString()
+        if len(_u) > 120:
+            _u = _u[:117] + "…"
+        if u.isLocalFile() and not _os.path.exists(u.toLocalFile()):
+            _u += "・もう無いファイルなのでエラーページ"
+        head = (f"[表示] スレ No.{self._thread_no} の表示が別のページ"
+                f"（{_u}）に入れ替わっていました")
+        now = time.monotonic()
+        self._replaced_times = [t for t in self._replaced_times
+                                if now - t < _RendererWatch.RETRY_SEC] + [now]
+        if len(self._replaced_times) > _RendererWatch.RETRY_MAX:
+            print(head + "。続けて入れ替わるので、描き直しを止めました"
+                         "（タブを開き直してください）", flush=True)
+            return
+        print(head + "。手元のスレから描き直します", flush=True)
+        if self._recover_after_renderer_crash('ページが入れ替わっていたので読み直し') is False:
+            print(f"[表示] スレ No.{self._thread_no} はまだ表示できていないので、"
+                  "次の更新で表示します", flush=True)
 
     def _on_subdir_checked(self, path: str, has: bool):
         """保存先を裏で調べ終えた → 画像モードの選択バーの「▼」を合わせる"""
@@ -8370,6 +8432,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         tmp.write(html)
         tmp.close()
         self._tmp_html_path = tmp.name
+        self._page_file = tmp.name
         # 読み込み完了まで、位置合わせの予約を他の経路に捨てさせない
         self._load_pending = True
         self._view.load(QUrl.fromLocalFile(tmp.name))
@@ -8412,6 +8475,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             f"<div class='err-banner'>⚠ {board_name}  {err}</div>"
             f"</body></html>"
         )
+        self._page_file = ""     # 一時ファイルを使わない表示（入れ替わりの見張りの対象外）
         self._view.setHtml(html, QUrl("about:blank"))
         self._lbl_count.setText(code)
         self.thread_error.emit(err)
@@ -9351,6 +9415,14 @@ class ThreadView(_MouseGestureMixin, QWidget):
 
     def _on_load_finished_scroll(self, _ok: bool):
         """ページ読込完了後にスクロール位置を復元"""
+        # 書いた一時ファイルとは別のページになっていたら（履歴を戻って、消した前の
+        # ファイルを読もうとしたエラーページ等）、手元のスレから描き直す。
+        # 読み込み終わりに積まれる後処理（50ms 後に引用ポップアップの仕組みを入れる等）が
+        # 入れ替わったページの上で済んでから読み込む（先に読み込むと新しいページに二重に入る）
+        if self._page_replaced():
+            self._thread_page_live = False   # 中身の入れ替え（モード切替など）はできない
+            QTimer.singleShot(300, self._redraw_replaced_page)
+            return
         # スレッドページのDOMがロード完了 → モード切替をDOM入替で行える
         self._thread_page_live = True
         self._restore_bands()   # 読み込み直しで消えた赤帯を貼り直す
