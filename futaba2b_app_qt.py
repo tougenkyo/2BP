@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.547"
+APP_VER = "0.9.548"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1923,6 +1923,63 @@ _QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
                 ".qt-row.new-res{border-left:4px solid #cc1105;padding-left:4px;}"
                 ".qt-row.self-res{border-left:4px solid #1a6fd4;padding-left:4px;}"
                 ".del-done{color:#cc1105;font-weight:bold;font-size:8pt;}")
+
+
+def _quote_tree_links(res_list: list) -> tuple:
+    """引用モードのツリーの親子を決める。戻り値は (res_map, children, parent_of)。
+
+    親になれるのは自分より前のレスだけ。後ろのレスを引用することはできないし、
+    親は必ず自分より前になるので、どのレスも親を辿れば親の無いレスに着き、必ず描かれる。
+    v0.9.547 までは文字の引用の元をスレ全体から探していて、元が見つからない引用
+    （元のレスが消えた・元がスレの外など）に、それをさらに引用した後ろのレスが親として
+    当たっていた。そこから親が循環すると、親の無いレスから辿れないので、そのレスと
+    返信がまとめて描かれなかった（自分のレスと次のレスが出ない、再取得でも直らない）"""
+    res_map = {r.no: r for r in res_list}
+    children = {r.no: [] for r in res_list}
+    parent_of = {}
+    _pos = {r.no: i for i, r in enumerate(res_list)}
+    # 画像ファイル名引用 ( >1234567890.png 等 ) → その画像を投稿したレスを親に。
+    # サーバ割当ファイル名（画像URLのbasename）で照合する。
+    _qt_img_re = re.compile(
+        r"^>+(\d{10,}\.(?:jpe?g|png|gif|webp|bmp|mp4|webm))\s*$", re.IGNORECASE)
+    _img_src_by_name = {}
+    for _r in res_list:
+        if _r.image_url:
+            _fn = _r.image_url.rsplit("/", 1)[-1].split("?")[0].lower()
+            if _fn:
+                _img_src_by_name.setdefault(_fn, _r.no)
+    for i, res in enumerate(res_list):
+        txt = (res.comment_text or "").strip()
+        quoted = set()
+        for line in txt.split("\n"):
+            line = line.strip()
+            if not line.startswith(">"):
+                continue
+            # 画像ファイル名引用を先に判定（>数字.ext は数字引用に誤判定されるため）
+            mi = _qt_img_re.match(line)
+            if mi:
+                _pno = _img_src_by_name.get(mi.group(1).lower())
+                if _pno is not None and _pos[_pno] < i:
+                    quoted.add(_pno)
+                continue
+            m = re.match(r">+(No\.)?(\d+)", line)
+            if m:
+                qno = int(m.group(2))
+                if qno in res_map and _pos[qno] < i:
+                    quoted.add(qno)
+            else:
+                q = line.lstrip(">").strip()
+                if len(q) >= 2:
+                    for cand in res_list[:i]:
+                        if cand.no != res.no and q in (cand.comment_text or ""):
+                            quoted.add(cand.no)
+                            break
+        if quoted:
+            par = max(quoted, key=lambda n: res_map[n].res_idx)
+            parent_of[res.no] = par
+            children[par].append(res.no)
+    return res_map, children, parent_of
+
 
 def _video_ph_svg(ext: str) -> str:
     """動画のサムネ代わりの絵。実体は futaba2b_html 側（返信モードと共用）"""
@@ -9990,50 +10047,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return
 
         # --- 親子関係を構築 ---
-        res_map = {r.no: r for r in res_list}
-        children = {r.no: [] for r in res_list}
-        parent_of = {}
-
-        # 画像ファイル名引用 ( >1234567890.png 等 ) → その画像を投稿したレスを親に。
-        # サーバ割当ファイル名（画像URLのbasename）で照合する。
-        _qt_img_re = _re.compile(
-            r"^>+(\d{10,}\.(?:jpe?g|png|gif|webp|bmp|mp4|webm))\s*$", _re.IGNORECASE)
-        _img_src_by_name = {}
-        for _r in res_list:
-            if _r.image_url:
-                _fn = _r.image_url.rsplit("/", 1)[-1].split("?")[0].lower()
-                if _fn:
-                    _img_src_by_name.setdefault(_fn, _r.no)
-        for res in res_list:
-            txt = (res.comment_text or "").strip()
-            quoted = set()
-            for line in txt.split("\n"):
-                line = line.strip()
-                if not line.startswith(">"):
-                    continue
-                # 画像ファイル名引用を先に判定（>数字.ext は数字引用に誤判定されるため）
-                mi = _qt_img_re.match(line)
-                if mi:
-                    _pno = _img_src_by_name.get(mi.group(1).lower())
-                    if _pno is not None and _pno != res.no:
-                        quoted.add(_pno)
-                    continue
-                m = _re.match(r">+(No\.)?(\d+)", line)
-                if m:
-                    qno = int(m.group(2))
-                    if qno in res_map and qno != res.no:
-                        quoted.add(qno)
-                else:
-                    q = line.lstrip(">").strip()
-                    if len(q) >= 2:
-                        for cand in res_list:
-                            if cand.no != res.no and q in (cand.comment_text or ""):
-                                quoted.add(cand.no)
-                                break
-            if quoted:
-                par = max(quoted, key=lambda n: res_map[n].res_idx if n in res_map else 0)
-                parent_of[res.no] = par
-                children[par].append(res.no)
+        res_map, children, parent_of = _quote_tree_links(res_list)
 
         # --- HTML生成 ---
         def _esc(s): return (s or "").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
@@ -10164,50 +10178,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         res_list = self._thread.res_list
         if not res_list: return
 
-        # --- 親子関係を構築（_render_quote_mode と同じロジック） ---
-        res_map = {r.no: r for r in res_list}
-        children = {r.no: [] for r in res_list}
-        parent_of = {}
-        # 画像ファイル名引用 ( >1234567890.png 等 ) → その画像を投稿したレスを親に。
-        # サーバ割当ファイル名（画像URLのbasename）で照合する。
-        _qt_img_re = _re.compile(
-            r"^>+(\d{10,}\.(?:jpe?g|png|gif|webp|bmp|mp4|webm))\s*$", _re.IGNORECASE)
-        _img_src_by_name = {}
-        for _r in res_list:
-            if _r.image_url:
-                _fn = _r.image_url.rsplit("/", 1)[-1].split("?")[0].lower()
-                if _fn:
-                    _img_src_by_name.setdefault(_fn, _r.no)
-        for res in res_list:
-            txt = (res.comment_text or "").strip()
-            quoted = set()
-            for line in txt.split("\n"):
-                line = line.strip()
-                if not line.startswith(">"):
-                    continue
-                # 画像ファイル名引用を先に判定（>数字.ext は数字引用に誤判定されるため）
-                mi = _qt_img_re.match(line)
-                if mi:
-                    _pno = _img_src_by_name.get(mi.group(1).lower())
-                    if _pno is not None and _pno != res.no:
-                        quoted.add(_pno)
-                    continue
-                m = _re.match(r">+(No\.)?(\d+)", line)
-                if m:
-                    qno = int(m.group(2))
-                    if qno in res_map and qno != res.no:
-                        quoted.add(qno)
-                else:
-                    q = line.lstrip(">").strip()
-                    if len(q) >= 2:
-                        for cand in res_list:
-                            if cand.no != res.no and q in (cand.comment_text or ""):
-                                quoted.add(cand.no)
-                                break
-            if quoted:
-                par = max(quoted, key=lambda n: res_map[n].res_idx if n in res_map else 0)
-                parent_of[res.no] = par
-                children[par].append(res.no)
+        # --- 親子関係を構築 ---
+        res_map, children, parent_of = _quote_tree_links(res_list)
 
         def _esc(s): return (s or "").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         def _short(res):
