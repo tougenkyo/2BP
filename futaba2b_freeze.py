@@ -37,6 +37,9 @@
 30 分ごとにまとめて書く。行の頭は「[GC]」。30 分ごとに、抱えている
 オブジェクトの数と増えた種類・メモリの様子も書く（掃除が日ごとに長くなる
 理由を見分けるため）。
+
+もう1つ、Python 3.14 で None・True・False の参照カウントのずれを見張って戻す
+（singleton_refcount_check）。これだけは記録ではなく手当て。行の頭は「[参照カウント]」。
 """
 from __future__ import annotations
 
@@ -622,3 +625,85 @@ def gc_collect_timed(where: str) -> int:
     for ln in lines:
         print(ln, flush=True)
     return n
+
+
+# ── None・True・False の参照カウントのずれを戻す ─────────────────────────────
+# Python 3.14 と PySide6 の組み合わせで要る手当て（ほかの版の Python では何もしない）。
+#
+# None・True・False は「不死」で、Python 本体は参照を数えず、メモリの数（下位 32 ビット）を
+# 決まった値 0xC0000000 のままにしておく。PySide6 の配布物は古い Python の形でビルド
+# されていて、不死を知らずにこの数をじかに増やす（戻り値なしのメソッドを呼ぶたびに
+# None が +1、シグナルの emit で True が +1 など）。本体は減らさないので、ずれがたまる。
+# サブ機の None は平均で毎秒 2000 回前後増えていて（ログからの逆算）、ちょうど 2^30 回
+# （約 10.7 億回）で一周して数が 0 に戻ると、本体は不死と見なさなくなる。3.14 の本体は
+# if の分かれ道で None・True・False を不死の印まで含めて比べるので、`if x is None:` や
+# `if flag:` が逆に分かれる（「__init__() should return None, not 'NoneType'」など）。
+# スレッドも作れなくなり、自動更新と自動保存が止まって、再起動するまで直らない
+# （サブ機で起動から 5.7〜7 日で起きた）。本体の不具合報告は python/cpython#158401。
+#
+# 10 秒ごとに見て、ずれが大きくなったら元の値へ戻す。不死の物の数は多少違っても害がない。
+# 一周した後に戻しても、その後に作るスレッドなどは普通に動く。
+SC_TAG = "[参照カウント]"
+SC_BASE = 0xC0000000            # 不死の物の決まった値（本体の _Py_IMMORTAL_INITIAL_REFCNT）
+SC_LIMIT = 1 << 28              # これだけずれたら戻す（一周するのは 1 << 30）
+_sc_items: list = []            # [名前, メモリの数, 戻した分の合計, 前のまとめの時のずれの合計]
+_sc_since = 0.0                 # 前のまとめの時刻
+
+
+def _sc_drift(value: int) -> int:
+    """メモリの数（32 ビット）を、決まった値からのずれ（負もある）にする"""
+    return (value - SC_BASE + 0x80000000) % 0x100000000 - 0x80000000
+
+
+def singleton_refcount_setup() -> bool:
+    """見張りの用意。対象の Python でなければ何もせず False を返す。
+    メモリの形が思っている通りの時だけ見張る（違う形のメモリは書き換えない）"""
+    global _sc_since
+    _sc_items.clear()
+    if sys.version_info < (3, 14):
+        return False
+    try:
+        import ctypes
+        items = []
+        for name, obj in (("None", None), ("True", True), ("False", False)):
+            cell = ctypes.c_uint32.from_address(id(obj))
+            drift = _sc_drift(cell.value)
+            if cell.value != sys.getrefcount(obj) or abs(drift) >= SC_LIMIT:
+                print(f"{SC_TAG} この Python では見張りません（{name} のメモリの数 "
+                      f"{cell.value:#x}・getrefcount {sys.getrefcount(obj):#x}）", flush=True)
+                return False
+            items.append([name, cell, 0, drift])
+    except Exception as e:
+        print(f"{SC_TAG} この Python では見張りません: {e}", flush=True)
+        return False
+    _sc_items.extend(items)
+    _sc_since = time.monotonic()
+    print(f"{SC_TAG} None・True・False のずれの見張りを始めました", flush=True)
+    return True
+
+
+def singleton_refcount_check() -> None:
+    """ずれの大きい物を元の値へ戻す。30 分ごとに、どれだけずれたかも書く。
+    もし一周した後に呼ばれても直せるよう、先に戻してから書く（一周した後は print の
+    途中で失敗する事がある）"""
+    global _sc_since
+    fixed = []
+    for it in _sc_items:
+        d = _sc_drift(it[1].value)
+        if abs(d) >= SC_LIMIT:
+            it[1].value = SC_BASE
+            it[2] += d
+            fixed.append(f"{it[0]} {d:+,}")
+    if fixed:
+        print(f"{SC_TAG} ずれが大きくなったので元の値へ戻しました: " + "、".join(fixed), flush=True)
+    now = time.monotonic()
+    dt = now - _sc_since
+    if dt >= GC_SUMMARY_SEC:
+        parts = []
+        for it in _sc_items:
+            total = it[2] + _sc_drift(it[1].value)
+            parts.append(f"{it[0]} {total - it[3]:+,}（毎秒 {(total - it[3]) / dt:+,.1f}"
+                         f"・見張りを始めてから {total:+,}）")
+            it[3] = total
+        print(f"{SC_TAG} この {int(dt // 60)} 分のずれ: " + "、".join(parts), flush=True)
+        _sc_since = now
