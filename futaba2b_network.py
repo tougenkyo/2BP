@@ -106,14 +106,54 @@ _RES_ID_RE    = re.compile(r"ID:(\S+)")
 _RES_IP_RE    = re.compile(r"IP:(\S+)")
 
 
-def _ip_from_json_id(raw_id) -> str:
-    """mode=json の id 欄から IP（「IP:」の後ろ）を取り出す。IP でなければ空文字。
+# 前の版（〜v0.9.550）は、mode=json の id の欄（「ID:xxxxxxxx」「IP:…」）を接頭辞ごと
+# id_str に入れていた。そのレスを保存ログへ書き足すと、日時欄が「… ID:ID:xxxxxxxx」
+# 「… ID:IP:…」になる。読む時に余分な「ID:」を落とす。
+_DUP_IDIP_RE  = re.compile(r"ID:(?=I[DP]:)")
 
-    ip表示のスレでは、IP は ip の欄ではなく、id の欄に
-    「IP:192.0.*(example.ne.jp)」の形で入ってくる（自動更新で保存された差分で確認）。
-    htm を読んだ時の ip_str と同じ形（「IP:」の後ろだけ）にそろえる。"""
-    m = _RES_IP_RE.match(str(raw_id or "").strip())
-    return m.group(1) if m else ""
+
+def _split_idip(text) -> tuple:
+    """日時欄の文字から (整えた文字, id_str, ip_str) を取り出す。
+
+    htm の日時欄は「26/07/19(日)08:25:24 ID:xxxxxxxx」「… IP:192.0.*(example.ne.jp)」
+    の形で、ID / IP は日時の後ろに付く（無いレスは日時だけ）。id_str / ip_str は
+    接頭辞（ID: / IP:）を外した中身。htm と mode=json で読み方が食い違わないよう、
+    どちらもここを通す。"""
+    text = _DUP_IDIP_RE.sub("", str(text or ""))
+    id_m = _RES_ID_RE.search(text)
+    ip_m = _RES_IP_RE.search(text)
+    return text, (id_m.group(1) if id_m else ""), (ip_m.group(1) if ip_m else "")
+
+
+def _json_idip(now: str, raw_id, raw_ip="") -> tuple:
+    """mode=json の now（日時）と id の欄から (datetime_str, id_str, ip_str) を作る。
+
+    id の欄には、htm で日時の後ろに出るのと同じ文字（「ID:xxxxxxxx」か
+    「IP:192.0.*(example.ne.jp)」。無いレスは空）がそのまま入ってくる（自動更新で
+    保存された差分で確認。ip という欄には入ってこない）。htm の日時欄と同じ
+    「日時＋空白＋id」の形にして、htm と同じ読み方をする。
+
+    以前は id の欄をそのまま id_str に入れていたため、自動更新で届いたレスだけ
+    画面に「ID:ID:xxxxxxxx」と出て、同じ ID の数にも入らず、その ID を NG にしても
+    htm で読んだ同じ ID のレスに当たらなかった。"""
+    raw = str(raw_id or "").strip()
+    ip0 = str(raw_ip or "")
+    if not raw:
+        return now, "", ip0
+    dts, id_str, ip_str = _split_idip(f"{now} {raw}".strip())
+    if not id_str and not ip_str:
+        # ID: も IP: も付いていない知らない形は、今まで通り id として持つ
+        return now, raw, ip0
+    return dts, id_str, (ip_str or ip0)
+
+
+def _fix_saved_res_idip(res) -> None:
+    """前の版（〜v0.9.550）が保存した差分（.diff.json）のレスを、今の形に直す。
+    id_str が「ID:xxxxxxxx」「IP:…」のままで、日時にはそれが付いていない。"""
+    raw = str(getattr(res, "id_str", "") or "")
+    if raw.startswith(("ID:", "IP:")):
+        res.datetime_str, res.id_str, res.ip_str = _json_idip(
+            str(res.datetime_str or ""), raw, getattr(res, "ip_str", ""))
 
 
 from futaba2b_const import UA, BBSMENU_URL, FUTABA_ERROR_PATTERNS, SEC_CH_UA, SEC_CH_UA_MOBILE, SEC_CH_UA_PLATFORM
@@ -1329,10 +1369,8 @@ class FutabaFetcher:
                         continue
                     _r = ResData(**{kk: vv for kk, vv in d.items()
                                     if kk in fields})
-                    # 前の版で保存した差分は ip_str が空（IP は id_str の方に
-                    # 「IP:…」で入っている）。NGワードの「IP/Host」が効くよう補う
-                    if not _r.ip_str:
-                        _r.ip_str = _ip_from_json_id(_r.id_str)
+                    # 前の版で保存した差分は id_str が「ID:…」「IP:…」のまま
+                    _fix_saved_res_idip(_r)
                     added.append(_r)
                 except Exception:
                     continue
@@ -2658,10 +2696,7 @@ class FutabaFetcher:
             if m3: sod=int(m3.group(1))
 
         # ID/IP (cnwテキスト内)
-        id_m = _RES_ID_RE.search(dts)
-        id_str = id_m.group(1) if id_m else ""
-        ip_m = _RES_IP_RE.search(dts)
-        ip_str = ip_m.group(1) if ip_m else ""
+        dts, id_str, ip_str = _split_idip(dts)
 
         return ResData(no=rno,name=name,trip=trip,email=email,datetime_str=dts,subject="",
             comment_html=ch,comment_text=ct,image_url=iu,thumb_url=tu,
@@ -2760,10 +2795,7 @@ class FutabaFetcher:
                     fn = a.get_text(strip=True)
                     if fn: iname = fn
                     break
-        id_m = _RES_ID_RE.search(dts)
-        id_str = id_m.group(1) if id_m else ""
-        ip_m = _RES_IP_RE.search(dts)
-        ip_str = ip_m.group(1) if ip_m else ""
+        dts, id_str, ip_str = _split_idip(dts)
         return ResData(no=rno,name=name,trip=trip,email=email,datetime_str=dts,subject="",
             comment_html=ch,comment_text=ct,image_url=iu,thumb_url=tu,
             image_name=iname,image_size=isz,thumb_w=tw,thumb_h=th,
@@ -2879,12 +2911,15 @@ class FutabaFetcher:
             # now にはHTMLと同じ <!--AnimationGIF--> が入っている事がある。
             # そのまま渡すと日時の後ろに注釈の文字がそのまま出るので取り除く。
             _now_raw = str(rd.get("now", "") or "")
+            # id の欄（「ID:…」「IP:…」）は htm の日時欄と同じ形にして読む
+            _dts, _id_str, _ip_str = _json_idip(
+                _clean_datetime_str(_now_raw), rd.get("id", ""), rd.get("ip", ""))
             res = ResData(
                 no=rno,
                 name=rd.get("name", ""),
                 trip="",
                 email=rd.get("email", ""),
-                datetime_str=_clean_datetime_str(_now_raw),
+                datetime_str=_dts,
                 is_anime_gif=(_ANIME_GIF_MARK in _now_raw),
                 subject=rd.get("sub", ""),
                 comment_html=com_html,
@@ -2901,12 +2936,8 @@ class FutabaFetcher:
                 is_op=False,
                 res_idx=rsc,
                 file_size_bytes=rd.get("fsize", 0),
-                id_str=rd.get("id", ""),
-                # IP は ip の欄ではなく、id の欄に「IP:…」の形で入ってくる。
-                # ip_str が空のままだと、自動更新で届いたレスにだけ NGワードの
-                # 「IP/Host」が効かない。id_str は今まで通り（表示は変えない）
-                ip_str=(str(rd.get("ip", "") or "")
-                        or _ip_from_json_id(rd.get("id", ""))),
+                id_str=_id_str,
+                ip_str=_ip_str,
                 # 感情欄（無念など）。差分APIには入っていないので空にする。
                 # ResData の既定値は "無念" で、そのままだと感情欄が無い板
                 # （img板等）でも自動更新で足したレスにだけ「無念」が出る。
