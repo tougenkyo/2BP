@@ -105,6 +105,17 @@ _FSIZE_RE     = re.compile(r"[\-\(](\d+)\s*B")
 _RES_ID_RE    = re.compile(r"ID:(\S+)")
 _RES_IP_RE    = re.compile(r"IP:(\S+)")
 
+
+def _ip_from_json_id(raw_id) -> str:
+    """mode=json の id 欄から IP（「IP:」の後ろ）を取り出す。IP でなければ空文字。
+
+    ip表示のスレでは、IP は ip の欄ではなく、id の欄に
+    「IP:192.0.*(example.ne.jp)」の形で入ってくる（自動更新で保存された差分で確認）。
+    htm を読んだ時の ip_str と同じ形（「IP:」の後ろだけ）にそろえる。"""
+    m = _RES_IP_RE.match(str(raw_id or "").strip())
+    return m.group(1) if m else ""
+
+
 from futaba2b_const import UA, BBSMENU_URL, FUTABA_ERROR_PATTERNS, SEC_CH_UA, SEC_CH_UA_MOBILE, SEC_CH_UA_PLATFORM
 from futaba2b_models import (
     BoardCategory, BoardInfo, CatalogEntry, ResData, ThreadData,
@@ -1316,8 +1327,13 @@ class FutabaFetcher:
                 try:
                     if int(k) in existing:
                         continue
-                    added.append(ResData(**{kk: vv for kk, vv in d.items()
-                                            if kk in fields}))
+                    _r = ResData(**{kk: vv for kk, vv in d.items()
+                                    if kk in fields})
+                    # 前の版で保存した差分は ip_str が空（IP は id_str の方に
+                    # 「IP:…」で入っている）。NGワードの「IP/Host」が効くよう補う
+                    if not _r.ip_str:
+                        _r.ip_str = _ip_from_json_id(_r.id_str)
+                    added.append(_r)
                 except Exception:
                     continue
             added.sort(key=lambda r: r.no)
@@ -2886,7 +2902,11 @@ class FutabaFetcher:
                 res_idx=rsc,
                 file_size_bytes=rd.get("fsize", 0),
                 id_str=rd.get("id", ""),
-                ip_str=rd.get("ip", ""),
+                # IP は ip の欄ではなく、id の欄に「IP:…」の形で入ってくる。
+                # ip_str が空のままだと、自動更新で届いたレスにだけ NGワードの
+                # 「IP/Host」が効かない。id_str は今まで通り（表示は変えない）
+                ip_str=(str(rd.get("ip", "") or "")
+                        or _ip_from_json_id(rd.get("id", ""))),
                 # 感情欄（無念など）。差分APIには入っていないので空にする。
                 # ResData の既定値は "無念" で、そのままだと感情欄が無い板
                 # （img板等）でも自動更新で足したレスにだけ「無念」が出る。

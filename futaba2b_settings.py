@@ -2035,6 +2035,10 @@ class NgFilter:
         subject = res.subject if hasattr(res, "subject") else ""
         mail    = res.email or ""
         id_str  = res.id_str or ""
+        # 適用範囲「IP/Host」: ip表示のスレで日時の後ろに出る「IP:」の中身
+        # （例: 192.0.*(example.ne.jp)。IP の頭とホスト名の両方が入っている）。
+        # 以前は範囲(scope[5])を作るだけでここで見ておらず、チェックしても効かなかった
+        ip_str  = getattr(res, "ip_str", "") or ""
         for rxp, pat, ng_type, scope in self._flat_words:
             targets = []
             if scope[0] and body:    targets.append(body)
@@ -2044,6 +2048,7 @@ class NgFilter:
             if scope[2] and subject: targets.append(subject)
             if scope[3] and mail:    targets.append(mail)
             if scope[4] and id_str:  targets.append(id_str)
+            if scope[5] and ip_str:  targets.append(ip_str)
             if not targets:
                 continue
             matched = any(bool(rxp.search(t)) if rxp else pat.lower() in t.lower()
@@ -2078,6 +2083,7 @@ class NgFilter:
         subject = res.subject if hasattr(res, "subject") else ""
         mail    = res.email or ""
         id_str  = res.id_str or ""
+        ip_str  = getattr(res, "ip_str", "") or ""   # 適用範囲「IP/Host」（classify_res と同じ）
         out: list[str] = []
         for rxp, pat, ng_type, scope in self._flat_words:
             if ng_type != "ng":
@@ -2090,6 +2096,7 @@ class NgFilter:
             if scope[2] and subject: targets.append(subject)
             if scope[3] and mail:    targets.append(mail)
             if scope[4] and id_str:  targets.append(id_str)
+            if scope[5] and ip_str:  targets.append(ip_str)
             if not targets:
                 continue
             if any(bool(rxp.search(t)) if rxp else pat.lower() in t.lower()
