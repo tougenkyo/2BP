@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.558"
+APP_VER = "0.9.559"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -8734,6 +8734,19 @@ class ThreadView(_MouseGestureMixin, QWidget):
         while (P.length) { var x = P.pop(); if (x && x.parentNode) x.parentNode.removeChild(x); }
     }
     function schedH() { clearTimeout(T.h); T.h = setTimeout(rmAll, 200); }
+    /* depth が d より深いポップアップを閉じる予約（親のポップアップへ戻った時）。
+       少し待つのは、子へ戻ってきた時に取り消すため（_trimCancel） */
+    function trimAbove(d) {
+        T.t = 0;
+        while (P.length && parseInt((P[P.length-1].dataset || {}).depth || '0') > d) {
+            var x = P.pop(); if (x && x.parentNode) x.parentNode.removeChild(x);
+        }
+    }
+    function schedTrim(d) { clearTimeout(T.t); T.td = d; T.t = setTimeout(function() { trimAbove(d); }, 250); }
+    function _trimCancel(q) {
+        if (!T.t) return;
+        if (parseInt((q.dataset || {}).depth || '0') > T.td) { clearTimeout(T.t); T.t = 0; }
+    }
 
     /* ポップアップをカーソルに少し被る位置に配置 */
     function posit(p, x, y) {
@@ -8817,6 +8830,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         /* fromEl が ._rp 内なら親ポップアップを保持して子ポップアップを追加 */
         var parentPop = (fromEl && fromEl.closest) ? fromEl.closest('._rp') : null;
         var newDepth  = parentPop ? (parseInt(parentPop.dataset.depth || '0') + 1) : 0;
+        /* 新しく出すポップアップを、親へ戻った時の閉じる予約で消さない */
+        clearTimeout(T.t); T.t = 0;
         /* newDepth 以上の既存ポップアップを削除（同 depth は置き換え） */
         while (P.length > 0 && parseInt((P[P.length-1].dataset || {}).depth || '0') >= newDepth) {
             var old = P.pop();
@@ -8826,8 +8841,19 @@ class ThreadView(_MouseGestureMixin, QWidget):
         p.dataset.depth = String(newDepth);
         hookC(p);
         hookQuoteInd(p);
-        p.addEventListener('mouseover', function() { clearTimeout(T.h); });
-        p.addEventListener('mouseout',  function(e) { if (!inP(e.relatedTarget) && !_inSel(e.relatedTarget)) schedH(); });
+        p.addEventListener('mouseover', function() { clearTimeout(T.h); _trimCancel(p); });
+        p.addEventListener('mouseout',  function(e) {
+            var rel = e.relatedTarget;
+            if (!inP(rel) && !_inSel(rel)) { schedH(); return; }
+            /* 子のポップアップから親（大本）のポップアップへ戻った時は、子を閉じる。
+               以前はポップアップの外へ出た時しか閉じず、親へ戻っても子が残り、
+               大本を消すまで2番目以降が消えなかった */
+            var rp = (rel && rel.closest) ? rel.closest('._rp') : null;
+            if (rp && rp !== p) {
+                var dTo = parseInt((rp.dataset || {}).depth || '0');
+                if (dTo < parseInt((p.dataset || {}).depth || '0')) schedTrim(dTo);
+            }
+        });
         /* ドラッグ（テキスト選択）判定: mousedown位置を記録し、click時に移動量で判別 */
         p.addEventListener('mousedown', function(e) {
             p._downX = e.clientX; p._downY = e.clientY;
