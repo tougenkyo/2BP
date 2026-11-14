@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.557"
+APP_VER = "0.9.558"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -14079,7 +14079,7 @@ class CatalogView(_MouseGestureMixin, QWidget):
 # 板内検索ビュー（ふたばの検索モード）
 # ══════════════════════════════════════════════════════════════════════════════
 
-class BoardSearchView(QWidget):
+class BoardSearchView(_MouseGestureMixin, QWidget):
     """板の右上の検索窓と同じ検索（mode=search）の結果を出すタブ。
 
     ふたばの検索はレス単位で返り、板の全部は走査せず途中で止まる。
@@ -14201,6 +14201,10 @@ class BoardSearchView(QWidget):
         self._bridge.res_del_requested.connect(self._on_search_del_res)
         self._del_result.connect(self._on_search_del_result)
         self._result_ready.connect(self._on_result)
+        # マウスジェスチャー（スレ・カタログと同じ）。以前はこのタブだけ仕組みを
+        # 入れておらず、検索結果の上では右ドラッグが効かなかった
+        self._bridge.mouse_gesture.connect(self._on_mouse_gesture)
+        self._view.loadFinished.connect(lambda _: self.inject_mouse_gesture_js())
 
         _self_ref = _wr.ref(self)
         self.destroyed.connect(
