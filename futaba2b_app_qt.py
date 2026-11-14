@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.555"
+APP_VER = "0.9.556"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1929,6 +1929,7 @@ _QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
 # 乗った・離れたことを Python へ知らせるだけ。拡大の窓は Python 側（カタログと同じ作り）。
 # 返信・画像・引用モードとレスのポップアップで共通。_inject_popup_js から毎回入れ直すので、
 # 前に付けたリスナーは外してから付ける（重ねて付くと知らせが二重になる）。
+# 本文中のうｐろだの直リン画像（img.ul-thumb。data-full は無く src が元の画像）も対象。
 # 拡大しないもの: 動画、ぼかしが掛かっている画像（中身を伏せている）、NGで透明・非表示の
 # レス、画像モードでセルのホバーにレスの内容を出す設定の時のセル（data-popup-no 付きの .gt）。
 _THREAD_HOVER_ZOOM_JS = r"""(function(){
@@ -1949,7 +1950,9 @@ _THREAD_HOVER_ZOOM_JS = r"""(function(){
     function urlOf(t) {
         if (!t || t.tagName !== 'IMG') return '';
         var u = t.getAttribute('data-full') || '';
-        if (!u) return '';
+        /* うｐろだの直リン画像（あぷ・あぷ小など）はサムネが無く、src が元の画像 */
+        if (!u && t.classList.contains('ul-thumb')) u = t.getAttribute('src') || '';
+        if (!u || /^data:/i.test(u)) return '';
         if (/\.(mp4|webm|mov|avi|mkv)(\?|#|$)/i.test(u)) return '';
         if (t.classList.contains('gv-ph') || (t.closest && t.closest('.video-thumb'))) return '';
         if (t.closest && t.closest('.ng-image,.ng-hidden')) return '';
