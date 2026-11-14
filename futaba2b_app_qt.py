@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.552"
+APP_VER = "0.9.553"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -7767,6 +7767,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
                 for r in thread.res_list:
                     if r.no in _sd_map:
                         r.sodane = _sd_map[r.no]
+                # 控えにも残す（スレが落ちた後に開き直した時に古い数へ戻らないよう）
+                self._fetcher.save_sodane_to_cache(thread.url or "", _sd_map)
             except Exception as e:
                 import traceback as _tb
                 print(f"[SD] diff error: {e}\n{_tb.format_exc()}")
@@ -11123,10 +11125,13 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return   # 保存ログのオフライン表示では送信しない
         if not self._board:
             return
+        _url = (self._thread.url if self._thread else "") or ""
         def _do():
             cnt = self._fetcher.post_sodane(self._board, no)
             if cnt >= 0:
                 self._sodane_signal.emit(no, cnt)
+                # 開き直した時に控えの古い数へ戻らないよう、控えにも残す
+                self._fetcher.save_sodane_to_cache(_url, {no: cnt})
         threading.Thread(target=_do, daemon=True).start()
 
     def _apply_sodane_js(self, no: int, cnt: int):
@@ -14710,6 +14715,9 @@ class AutoRefreshManager(QObject):
                             if r.no in _m:
                                 r.sodane = _m[r.no]
                         _th._sd_update = _m
+                    # 控えにも残す。残さないと、スレが落ちた後に開き直す・再起動した時に
+                    # 控えの htm（最後にフルGETした時点）の古い数に戻る
+                    self._fetcher.save_sodane_to_cache(entry.url, _m)
                     return _m
 
                 # スレ落ち検知（dielong が 1972年以前 = エポック付近）

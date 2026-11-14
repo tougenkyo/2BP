@@ -557,6 +557,9 @@ class FutabaFetcher:
         self._prefetch_seen: set[str] = set()   # 先読み済み/投入済みURL（重複投入防止）
         self._prefetch_pool = None              # 本画像先読み用の小プール（遅延生成）
         self._prefetch_cancel: dict = {}        # group(スレURL)→Event（タブ閉じ時の一括中断）
+        import threading as _threading
+        self._sd_lock = _threading.Lock()       # そうだね数の控え（.sd.json）の読み書き
+        self._sd_saved: dict = {}               # スレURL→最後に控えたそうだね数 {No: 数}
         # CURL と同一のヘッダーセット (Edge 148)
         self.session.headers.update({
             "User-Agent":          UA,
@@ -1350,6 +1353,89 @@ class FutabaFetcher:
             self._diff_sidecar_path(url).unlink(missing_ok=True)
         except OSError:
             pass
+        # フルGETした htm には今のそうだね数が入っているので、そうだね数の控えも要らない
+        self._clear_sodane_sidecar(url)
+
+    # ── そうだね数の控え ─────────────────────────────────────────────────────
+    # 自動更新は差分（mode=json）だけを読み、届いたそうだね数は表示中のスレにしか
+    # 入れていなかった。スレが落ちた後に開き直す・再起動すると、控えの htm（最後に
+    # フルGETできた時点）から組み立て直すので、その後に付いたそうだね数が消えて
+    # いた（自動保存のログはモデルの数を書き戻すので正しい）。差分で届いた数を
+    # ここに残し、控えから組み立てる時に大きい方を使う。
+    # 差分の控え（.diff.json）はレス数の集計にもキーを数えて使うので、混ぜずに別に置く。
+
+    def _sd_sidecar_path(self, url: str) -> Path:
+        p = self._cache_path(url)
+        return p.with_name(p.name + ".sd.json")
+
+    def save_sodane_to_cache(self, url: str, sd: dict) -> None:
+        """差分などで届いたそうだね数（{レス番号: 数}）を控えに残す（裏のスレッドから呼ぶ）。
+        前に残した数より増えた時だけ書く。控えの htm が無いスレには残さない。"""
+        if not url or not sd:
+            return
+        import json, os
+        try:
+            with self._sd_lock:
+                saved = self._sd_saved.get(url)
+                p = self._sd_sidecar_path(url)
+                if saved is None:
+                    saved = {}
+                    if p.exists():
+                        try:
+                            saved = {int(k): int(v) for k, v in
+                                     json.loads(p.read_text(encoding="utf-8")).items()}
+                        except Exception:
+                            saved = {}
+                changed = False
+                merged = dict(saved)
+                for k, v in sd.items():
+                    try:
+                        no, cnt = int(k), int(v)
+                    except (TypeError, ValueError):
+                        continue
+                    if cnt > merged.get(no, 0):
+                        merged[no] = cnt
+                        changed = True
+                self._sd_saved[url] = merged
+                if not changed:
+                    return
+                if not self._cache_path(url).exists():
+                    return
+                tmp = p.with_name(p.name + ".tmp")
+                tmp.write_text(json.dumps({str(k): v for k, v in merged.items()}),
+                               encoding="utf-8")
+                os.replace(tmp, p)
+        except Exception as e:
+            print(f"[Cache] そうだね数の控えの保存エラー: {e}")
+
+    def _clear_sodane_sidecar(self, url: str) -> None:
+        with self._sd_lock:
+            self._sd_saved.pop(url, None)
+            try:
+                self._sd_sidecar_path(url).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _apply_sodane_sidecar(self, url: str, thread) -> None:
+        """控えから組み立てたスレに、残しておいたそうだね数を入れる（大きい方を使う）。"""
+        import json
+        try:
+            p = self._sd_sidecar_path(url)
+            if not p.exists():
+                return
+            sd = {int(k): int(v) for k, v in
+                  json.loads(p.read_text(encoding="utf-8")).items()}
+        except Exception as e:
+            print(f"[Cache] そうだね数の控えの読込エラー: {e}")
+            return
+        n = 0
+        for r in thread.res_list:
+            cnt = sd.get(r.no, 0)
+            if cnt > (r.sodane or 0):
+                r.sodane = cnt
+                n += 1
+        if n:
+            print(f"[Cache] そうだね数の控えから {n}件を戻した")
 
     def _merge_diff_sidecar(self, url: str, thread) -> None:
         """キャッシュフォールバック表示時にサイドカーのレスをマージする。"""
@@ -2321,6 +2407,7 @@ class FutabaFetcher:
                 if cached:
                     thread = self._parse_thread(cached, board, no, url)
                     self._merge_diff_sidecar(url, thread)   # diff由来の末尾レス補完
+                    self._apply_sodane_sidecar(url, thread)  # その後に届いたそうだね数
                     thread.is_cached    = True
                     thread.last_updated = now_str
                     thread.error        = f"{r.status_code} {r.reason}  (キャッシュ表示)"
@@ -2372,6 +2459,7 @@ class FutabaFetcher:
             if cached:
                 thread = self._parse_thread(cached, board, no, url)
                 self._merge_diff_sidecar(url, thread)   # diff由来の末尾レス補完
+                self._apply_sodane_sidecar(url, thread)  # その後に届いたそうだね数
                 thread.is_cached    = True
                 thread.last_updated = now_str
                 thread.error        = f"接続エラー (キャッシュ表示): {e}"
