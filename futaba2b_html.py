@@ -2017,7 +2017,9 @@ def _apply_uploaders(text: str, uploaders: list,
 # 画像/動画ファイル名引用パターン: >1234567890.jpg など
 # ── レス毎ホットパス用の事前コンパイル済みパターン ──────────────────────────
 _QT_NO_RE     = re.compile(r"^>+(No\.)?(\d+)\s*$")
-_QT_ID_RE     = re.compile(r"^>+ID:([A-Za-z0-9+/]{4,})\s*$")
+# ふたばの ID は英数字と「.」「/」（保存済みスレで「.」入りは 16%）。以前は「.」が
+# 無く、「.」入りの ID の >ID: 引用はホバーのポップアップもクリックの抽出も効かなかった
+_QT_ID_RE     = re.compile(r"^>+ID:([A-Za-z0-9+/.]{4,})\s*$")
 _A_NO_RE      = re.compile(r"No\.(\d+)")
 _A_GTGT_RE    = re.compile(r">>(\d+)$")
 _A_RES_RE     = re.compile(r"RES\s+(\d+)")
