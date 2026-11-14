@@ -5900,6 +5900,25 @@ class AppSettingsDialog(QDialog):
         self._id_warn_count = _spin(1, 9999, " 件", width=90,
             tip="同一IDの書き込み数がこの件数以上のレスはIDを赤く表示します（基本5）")
         tf.addRow("ID件数で赤字にする閾値:", self._id_warn_count)
+        # スレの画像のオンマウス拡大（カタログの「オンマウスでサムネイル画像を拡大表示する」のスレ版）
+        self._th_hover_zoom = QCheckBox("オンマウスで画像を拡大表示する")
+        self._th_hover_zoom.setToolTip(
+            "スレの画像にカーソルを合わせると、元の画像を 2BP の窓に収まる大きさで表示します。\n"
+            "返信・画像・引用モードとレスのポップアップの画像で使えます。\n"
+            "動画、ぼかし中の画像、NGで透明にした画像は拡大しません。\n"
+            "画像モードで「サムネイルをホバーでレスの内容を表示する」がONの時は、\n"
+            "画像モードのセルではレスの内容の方を出します。\n"
+            "画像は先読みしたものを使い、無ければその時に読み込みます。")
+        tf.addRow(self._th_hover_zoom)
+        _thz_lay = QHBoxLayout(); _thz_lay.setContentsMargins(20, 0, 0, 0)
+        self._th_hover_zoom_delay = _spin(0, 3000, " ms", width=90, step=50,
+            tip="スレの画像のオンマウス拡大が出るまでの待ち時間。\n"
+                "0 = 即時。カーソルが通り過ぎただけで出るのを防げます。")
+        _thz_lay.addWidget(QLabel("表示までの待ち時間:"))
+        _thz_lay.addWidget(self._th_hover_zoom_delay)
+        _thz_lay.addWidget(QLabel("（0=即時）"))
+        _thz_lay.addStretch()
+        tf.addRow(_thz_lay)
 
         # スレオープン時の表示モード
         _open_mode_items = ["返信", "画像", "引用"]
@@ -6892,6 +6911,8 @@ class AppSettingsDialog(QDialog):
         self._thread_open_bg_mode.setCurrentIndex(getattr(s, 'thread_open_bg_mode', 0))
         self._image_display_mode.setCurrentIndex(getattr(s, 'image_display_mode', 0))
         self._image_mode_hover_popup.setChecked(getattr(s, 'image_mode_hover_popup', True))
+        self._th_hover_zoom.setChecked(getattr(s, "thread_hover_zoom", False))
+        self._th_hover_zoom_delay.setValue(getattr(s, "thread_hover_zoom_delay_ms", 300))
         self._cat_hover_zoom.setChecked(getattr(s, "catalog_hover_zoom", False))
         self._cat_hover_delay.setValue(getattr(s, "catalog_hover_delay_ms", 300))
         self._cat_hover_comment.setChecked(getattr(s, "catalog_hover_comment", False))
@@ -7086,6 +7107,8 @@ class AppSettingsDialog(QDialog):
         s.thread_open_bg_mode     = self._thread_open_bg_mode.currentIndex()
         s.image_display_mode      = self._image_display_mode.currentIndex()
         s.image_mode_hover_popup  = self._image_mode_hover_popup.isChecked()
+        s.thread_hover_zoom       = self._th_hover_zoom.isChecked()
+        s.thread_hover_zoom_delay_ms = self._th_hover_zoom_delay.value()
         s.catalog_hover_zoom      = self._cat_hover_zoom.isChecked()
         s.catalog_hover_delay_ms  = self._cat_hover_delay.value()
         s.catalog_hover_comment   = self._cat_hover_comment.isChecked()

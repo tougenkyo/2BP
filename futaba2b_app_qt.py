@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.553"
+APP_VER = "0.9.554"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -1923,6 +1923,67 @@ _QT_MODE_CSS = (".qt-sep{border-top:1px solid #aaa;margin:6px 0;}"
                 ".qt-row.new-res{border-left:4px solid #cc1105;padding-left:4px;}"
                 ".qt-row.self-res{border-left:4px solid #1a6fd4;padding-left:4px;}"
                 ".del-done{color:#cc1105;font-weight:bold;font-size:8pt;}")
+
+
+# スレの画像のオンマウス拡大（ページ側）。画像（data-full を持つ img）にカーソルが
+# 乗った・離れたことを Python へ知らせるだけ。拡大の窓は Python 側（カタログと同じ作り）。
+# 返信・画像・引用モードとレスのポップアップで共通。_inject_popup_js から毎回入れ直すので、
+# 前に付けたリスナーは外してから付ける（重ねて付くと知らせが二重になる）。
+# 拡大しないもの: 動画、ぼかしが掛かっている画像（中身を伏せている）、NGで透明・非表示の
+# レス、画像モードでセルのホバーにレスの内容を出す設定の時のセル（data-popup-no 付きの .gt）。
+_THREAD_HOVER_ZOOM_JS = r"""(function(){
+    var W = window;
+    if (W._hzOver) {
+        document.removeEventListener('mouseover', W._hzOver, true);
+        document.removeEventListener('mouseout', W._hzOut, true);
+        document.removeEventListener('mousedown', W._hzLeave, true);
+        document.removeEventListener('wheel', W._hzLeave, true);
+        document.removeEventListener('keydown', W._hzLeave, true);
+        window.removeEventListener('scroll', W._hzLeave, true);
+        window.removeEventListener('blur', W._hzLeave, true);
+    }
+    var cur = null;
+    function send(m, a) {
+        if (typeof bridge !== 'undefined' && bridge && bridge[m]) bridge[m].apply(bridge, a || []);
+    }
+    function urlOf(t) {
+        if (!t || t.tagName !== 'IMG') return '';
+        var u = t.getAttribute('data-full') || '';
+        if (!u) return '';
+        if (/\.(mp4|webm|mov|avi|mkv)(\?|#|$)/i.test(u)) return '';
+        if (t.classList.contains('gv-ph') || (t.closest && t.closest('.video-thumb'))) return '';
+        if (t.closest && t.closest('.ng-image,.ng-hidden')) return '';
+        if (t.closest && t.closest('.gt[data-popup-no]')) return '';
+        try {
+            var cs = getComputedStyle(t);
+            if ((cs.filter || '').indexOf('blur') >= 0) return '';
+            if (parseFloat(cs.opacity || '1') < 0.2) return '';
+        } catch (e) {}
+        return u;
+    }
+    W._hzLeave = function() { if (cur) { cur = null; send('imgHoverLeave'); } };
+    W._hzOver = function(e) {
+        var t = e.target;
+        if (t === cur) return;
+        var u = urlOf(t);
+        if (!u) return;
+        cur = t;
+        send('imgHoverEnter', [u]);
+    };
+    W._hzOut = function(e) {
+        if (!cur || e.target !== cur) return;
+        if (e.relatedTarget === cur) return;
+        cur = null;
+        send('imgHoverLeave');
+    };
+    document.addEventListener('mouseover', W._hzOver, true);
+    document.addEventListener('mouseout', W._hzOut, true);
+    document.addEventListener('mousedown', W._hzLeave, true);
+    document.addEventListener('wheel', W._hzLeave, true);
+    document.addEventListener('keydown', W._hzLeave, true);
+    window.addEventListener('scroll', W._hzLeave, true);
+    window.addEventListener('blur', W._hzLeave, true);
+})();"""
 
 
 def _quote_tree_links(res_list: list) -> tuple:
@@ -6475,6 +6536,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
     _read_counts_changed = Signal()     # 既読の数を覚えた → 少し待って保存（BG→UI）
     _subdir_checked   = Signal(str, bool)  # 保存先にサブフォルダがあるかを調べ終えた（BG→UI）
     _sodane_signal    = Signal(int, int) # (no, count) そうだね更新
+    _hz_ready         = Signal(object, int)  # (縮めた QImage, 世代) 画像のオンマウス拡大（BG→UI）
     status_info       = Signal(object)  # ステータスバー更新用
     _del_result       = Signal(bool, str)  # 削除結果
     thread_loaded         = Signal(int, int)   # (thread_no, new_count) 未読バッジ用
@@ -6733,6 +6795,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._bridge.play_video_requested.connect(self._play_video)
         self._bridge.quote_text_requested.connect(self._quote_text_selection)
         self._bridge.ng_text_requested.connect(self._on_ng_text)
+        # 画像のオンマウス拡大
+        self._bridge.img_hover_enter.connect(self._on_img_hover_enter)
+        self._bridge.img_hover_leave.connect(self._on_img_hover_leave)
+        self._hz_ready.connect(self._show_img_hover)
         self._bridge.extract_text_requested.connect(self._on_extract_text)
         self._bridge.extract_clear_requested.connect(self._clear_extract_field)
         self._bridge.copy_text_requested.connect(self._on_copy_text)
@@ -9215,6 +9281,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
         js = f"window._delHideDefault = {_dh};\n" + js
         if not _safe_run_js(self._view, js):
             return          # タブ破棄後の遅延実行 → 以降の処理も行わない
+        # 画像のオンマウス拡大の知らせ（設定OFFでも入れておき、知らせを受けた側で見る。
+        # 設定を変えた時にページを読み直さなくても効くようにするため）
+        _safe_run_js(self._view, _THREAD_HOVER_ZOOM_JS)
         # ヒートマップは position:fixed の独立オーバーレイなので、全描画・モード
         # 切替のたびにbodyが作り直される → ここ（描画完了フック）で再適用する。
         self._apply_heatmap()
@@ -10850,10 +10919,147 @@ class ThreadView(_MouseGestureMixin, QWidget):
             return defaults
 
     def hideEvent(self, event):
-        """裏へ回った直後は、描いた絵を手放させない（切替のちらつき対策）"""
+        """裏へ回った直後は、描いた絵を手放させない（切替のちらつき対策）。
+        画像のオンマウス拡大もここで閉じる（隠れたページからは「離れた」が来ない）。"""
         super().hideEvent(event)
+        try:
+            self._on_img_hover_leave()
+        except (RuntimeError, AttributeError):
+            pass                # 終了の途中で窓が先に消えている
         keep_page_awake(self, getattr(self, "_page", None))
         snap_view_later(self)   # 戻ってきた時に被せる絵を控える
+
+    # ── 画像のオンマウス拡大（カタログの拡大のスレ版） ─────────────────────
+    # ページ側（_THREAD_HOVER_ZOOM_JS）が画像に乗った・離れたを知らせてくる。
+    # 待ち時間のあと、本画像（先読みしてあれば手元の控え）を裏のスレッドで読んで、
+    # 2BP の窓に収まる大きさに縮めてから、カーソルの近くに出す。
+    # 窓はクリックを通す（WindowTransparentForInput）ので、下のページの操作は邪魔しない。
+
+    def _hz_popup_widget(self):
+        p = getattr(self, "_hz_popup", None)
+        if p is None:
+            p = QLabel(self, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+                       | Qt.WindowType.WindowTransparentForInput
+                       | Qt.WindowType.WindowDoesNotAcceptFocus)
+            p.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            p.setStyleSheet("QLabel{background:#FFFFEE;border:2px solid #800000;padding:2px;}")
+            p.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._hz_popup = p
+        return p
+
+    def _on_img_hover_enter(self, url: str):
+        """画像にカーソルが乗った。設定の待ち時間のあとに出す（別の画像へ移ったら予約し直す）"""
+        s = self._settings
+        self._hz_seq = getattr(self, "_hz_seq", 0) + 1
+        _t = getattr(self, "_hz_timer", None)
+        if _t is not None:
+            _t.stop()
+        self._hz_hide_popup()
+        if not getattr(s, "thread_hover_zoom", False) or not url:
+            self._hz_hovering = False
+            return
+        if not self.isVisible():
+            self._hz_hovering = False
+            return
+        self._hz_hovering = True
+        self._hz_pending = (url, self._hz_seq)
+        try:
+            _delay = int(getattr(s, "thread_hover_zoom_delay_ms", 300) or 0)
+        except (TypeError, ValueError):
+            _delay = 300
+        _delay = max(0, min(3000, _delay))
+        if _delay <= 0:
+            self._fire_img_hover()
+            return
+        if _t is None:
+            _t = QTimer(self)
+            _t.setSingleShot(True)
+            _t.timeout.connect(self._fire_img_hover)
+            self._hz_timer = _t
+        _t.start(_delay)
+
+    def _hz_max_size(self):
+        """拡大の窓の大きさの上限＝2BP の窓に収まる大きさ"""
+        try:
+            r = self.window().frameGeometry()
+            return max(100, r.width() - 40), max(100, r.height() - 40)
+        except Exception:
+            return 800, 600
+
+    def _fire_img_hover(self):
+        """待ち時間が来た → 本画像を裏のスレッドで読んで縮める"""
+        _p = getattr(self, "_hz_pending", None)
+        if not _p or not getattr(self, "_hz_hovering", False):
+            return
+        url, seq = _p
+        if seq != getattr(self, "_hz_seq", 0) or not self.isVisible():
+            return
+        mw, mh = self._hz_max_size()
+        fetcher = self._fetcher
+
+        def _load(_u=url, _s=seq, _mw=mw, _mh=mh):
+            try:
+                data = fetcher.fetch_image_bytes(_u)
+                if not data or _s != getattr(self, "_hz_seq", 0):
+                    return          # 読めない・待っている間に別の画像へ移った
+                from PySide6.QtGui import QImage
+                img = QImage.fromData(data)
+                if img.isNull():
+                    return
+                if img.width() > _mw or img.height() > _mh:
+                    img = img.scaled(_mw, _mh, Qt.AspectRatioMode.KeepAspectRatio,
+                                     Qt.TransformationMode.SmoothTransformation)
+                if _s != getattr(self, "_hz_seq", 0):
+                    return
+                self._hz_ready.emit(img, _s)
+            except Exception as e:
+                print(f"[拡大] 画像を読めない: {e}  url={_u}")
+        threading.Thread(target=_load, daemon=True).start()
+
+    def _show_img_hover(self, img, seq: int):
+        """裏のスレッドで縮めた画像を出す（画面の処理の側）"""
+        if seq != getattr(self, "_hz_seq", 0) or not getattr(self, "_hz_hovering", False):
+            return
+        if not self.isVisible() or not getattr(self._settings, "thread_hover_zoom", False):
+            return
+        # 別のアプリへ移った時は、ページ側の blur の知らせで閉じる（_THREAD_HOVER_ZOOM_JS）
+        from PySide6.QtGui import QPixmap, QCursor
+        p = self._hz_popup_widget()
+        p.setPixmap(QPixmap.fromImage(img))
+        p.adjustSize()
+        w, h = p.width(), p.height()
+        c = QCursor.pos()
+        try:
+            r = self.window().frameGeometry()
+        except RuntimeError:
+            return
+        # カーソルの右下に出す。はみ出すなら左・上へ回し、最後に窓の中へ収める
+        x = c.x() + 16
+        if x + w > r.right():
+            x = c.x() - 16 - w
+        y = c.y() + 16
+        if y + h > r.bottom():
+            y = c.y() - 16 - h
+        x = max(r.left(), min(x, r.right() - w))
+        y = max(r.top(), min(y, r.bottom() - h))
+        p.move(x, y)
+        p.show()
+        p.raise_()
+
+    def _hz_hide_popup(self):
+        p = getattr(self, "_hz_popup", None)
+        if p is not None:
+            p.hide()
+            p.clear()
+
+    def _on_img_hover_leave(self):
+        """画像から離れた・押した・スクロールした → 閉じる（読み込み中の分も捨てる）"""
+        self._hz_hovering = False
+        self._hz_seq = getattr(self, "_hz_seq", 0) + 1
+        _t = getattr(self, "_hz_timer", None)
+        if _t is not None:
+            _t.stop()
+        self._hz_hide_popup()
 
     def showEvent(self, event):
         """このスレタブがアクティブ化されたら、保留していたそうだね/返信通知を表示する。"""

@@ -47,11 +47,23 @@ class ThreadBridge(QObject):
     browse_save_selected_requested = Signal(str, list)  # 一括保存「…」フォルダ選択 (start_folder, urls)
     subfolder_save_requested       = Signal(str, list)  # 一括保存「▼」サブフォルダメニュー (folder, urls)
     gal_save_close_changed         = Signal(bool)       # 一括保存「保存後に閉じる」チェック変更
+    img_hover_enter       = Signal(str)          # スレの画像にカーソルが乗った（本画像URL）
+    img_hover_leave       = Signal()             # 画像から離れた・押した・スクロールした
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
     # ─ JS から呼ばれるスロット ─────────────────────────────────────────────
+
+    @Slot(str)
+    def imgHoverEnter(self, url: str):
+        """スレの画像のオンマウス拡大: 画像にカーソルが乗った"""
+        self.img_hover_enter.emit(url)
+
+    @Slot()
+    def imgHoverLeave(self):
+        """スレの画像のオンマウス拡大: 画像から離れた"""
+        self.img_hover_leave.emit()
 
     @Slot(int)
     def quoteNo(self, no: int):

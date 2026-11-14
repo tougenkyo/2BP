@@ -834,6 +834,9 @@ class AppSettings:
         self.thread_open_bg_mode: int = 0  # バックグラウンドで開く
         self.image_display_mode:  int = 0  # 画像表示モード (0=タブ, 1=ウインドウ, 2=外部ブラウザ, 3=隣タブ)
         self.image_mode_hover_popup: bool = True  # 画像モードでサムネ画像ホバーもレス内容ポップアップ(連番は常時ON)
+        # スレの画像のオンマウス拡大（カタログの拡大のスレ版）。元の画像を窓に収まる大きさで出す
+        self.thread_hover_zoom: bool = False
+        self.thread_hover_zoom_delay_ms: int = 300   # 出るまでの待ち時間(ms)。0=即時
         self.image_window_geometry: list | None = None  # 画像ウインドウの位置・サイズ [x,y,w,h]
         self.auto_close_dead_tab:    bool = False  # スレ落ち時にタブを自動で閉じる
         self.auto_close_full_tab:    bool = False  # 1000レス到達時にタブを自動で閉じる
@@ -1391,6 +1394,12 @@ class AppSettings:
                 elif raw.get("image_next_tab", False):
                     self.image_display_mode = 3
             self.image_mode_hover_popup = bool(raw.get("image_mode_hover_popup", True))
+            self.thread_hover_zoom = bool(raw.get("thread_hover_zoom", False))
+            try:
+                self.thread_hover_zoom_delay_ms = int(raw.get("thread_hover_zoom_delay_ms", 300))
+            except (TypeError, ValueError):
+                self.thread_hover_zoom_delay_ms = 300
+            self.thread_hover_zoom_delay_ms = min(3000, max(0, self.thread_hover_zoom_delay_ms))
             self.image_open_actual_size = bool(raw.get("image_open_actual_size", False))
             self.image_window_geometry = raw.get("image_window_geometry", None)
             self.auto_close_dead_tab    = raw.get("auto_close_dead_tab",    False)
@@ -1636,6 +1645,8 @@ class AppSettings:
                         "thread_open_bg_mode": self.thread_open_bg_mode,
                         "image_display_mode":  self.image_display_mode,
                         "image_mode_hover_popup": self.image_mode_hover_popup,
+                        "thread_hover_zoom":      self.thread_hover_zoom,
+                        "thread_hover_zoom_delay_ms": self.thread_hover_zoom_delay_ms,
                         "image_open_actual_size": self.image_open_actual_size,
                         "image_window_geometry": self.image_window_geometry,
                         "auto_close_dead_tab":    self.auto_close_dead_tab,
