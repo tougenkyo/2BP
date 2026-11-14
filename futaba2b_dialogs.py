@@ -5900,6 +5900,12 @@ class AppSettingsDialog(QDialog):
         self._id_warn_count = _spin(1, 9999, " 件", width=90,
             tip="同一IDの書き込み数がこの件数以上のレスはIDを赤く表示します（基本5）")
         tf.addRow("ID件数で赤字にする閾値:", self._id_warn_count)
+        self._show_deleted_default = QCheckBox("削除されたレスを最初から表示する")
+        self._show_deleted_default.setToolTip(
+            "スレを開いた時から、削除されたレスを表示します（ツールバーの［削除:隠す］の状態で始まります）。\n"
+            "ボタンで隠すこともできます。開いているタブは、開き直すか再起動すると効きます。\n"
+            "「delしたレスを非表示にする」などで自分で隠したレスは、これとは別です（隠れたまま）。")
+        tf.addRow(self._show_deleted_default)
         # スレの画像のオンマウス拡大（カタログの「オンマウスでサムネイル画像を拡大表示する」のスレ版）
         self._th_hover_zoom = QCheckBox("オンマウスで画像を拡大表示する")
         self._th_hover_zoom.setToolTip(
@@ -6912,6 +6918,7 @@ class AppSettingsDialog(QDialog):
         self._image_display_mode.setCurrentIndex(getattr(s, 'image_display_mode', 0))
         self._image_mode_hover_popup.setChecked(getattr(s, 'image_mode_hover_popup', True))
         self._th_hover_zoom.setChecked(getattr(s, "thread_hover_zoom", False))
+        self._show_deleted_default.setChecked(getattr(s, "show_deleted_default", False))
         self._th_hover_zoom_delay.setValue(getattr(s, "thread_hover_zoom_delay_ms", 300))
         self._cat_hover_zoom.setChecked(getattr(s, "catalog_hover_zoom", False))
         self._cat_hover_delay.setValue(getattr(s, "catalog_hover_delay_ms", 300))
@@ -7108,6 +7115,7 @@ class AppSettingsDialog(QDialog):
         s.image_display_mode      = self._image_display_mode.currentIndex()
         s.image_mode_hover_popup  = self._image_mode_hover_popup.isChecked()
         s.thread_hover_zoom       = self._th_hover_zoom.isChecked()
+        s.show_deleted_default    = self._show_deleted_default.isChecked()
         s.thread_hover_zoom_delay_ms = self._th_hover_zoom_delay.value()
         s.catalog_hover_zoom      = self._cat_hover_zoom.isChecked()
         s.catalog_hover_delay_ms  = self._cat_hover_delay.value()

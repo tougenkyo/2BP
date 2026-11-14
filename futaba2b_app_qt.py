@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.554"
+APP_VER = "0.9.555"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -6636,7 +6636,8 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._prev_deleted_nos: set = set()
         self._manual_reload   = False  # 手動/スクロール更新か（新着なしトースト用）
         self._ng_enabled = True          # NG:使う/わない トグル
-        self._del_showing = False        # 削除:見る/隠す 状態
+        # 削除:見る/隠す 状態。設定「削除されたレスを最初から表示する」なら見る側で始める
+        self._del_showing = self._del_showing_default()
         self._is_dead   = False     # True=404/スレ落ち確定（リロード不可）
         self._first_load_done = False  # 初回読み込み（最初の表示）が完了したか
         self._is_log    = False     # True=保存ログのオフライン表示（更新/投稿/そうだね無効）
@@ -7454,6 +7455,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
             finally:
                 self._local_redraw = False
         self._capture_scroll_anchor(_go)
+
+    def _del_showing_default(self) -> bool:
+        """削除されたレスを最初から表示するか（設定）。タブを開いた時の「削除:見る/隠す」"""
+        return bool(getattr(self._settings, "show_deleted_default", False))
 
     def _on_del_toggle(self):
         """削除:見る/隠す トグル"""
@@ -8340,7 +8345,9 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._del_btn_action.setVisible(True)
         else:
             self._del_btn_action.setVisible(False)
-            self._del_showing = False
+            # 削除レスが無い間は最初の状態に戻す（既定で表示する設定なら見る側。
+            # 戻さないと、後から削除されたレスが設定に関わらず隠れる）
+            self._del_showing = self._del_showing_default()
         # 手元のモデルから描き直しただけの時は「読み込めた」ことにしない。
         # ここを通すと、落ちたスレでも自動更新への自動登録が走ってしまう。
         if not getattr(self, "_local_redraw", False):
@@ -15270,6 +15277,8 @@ class AutoRefreshManager(QObject):
             html, _ = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                       ng_filter=_ng, ng_settings=self._settings,
                                       del_nos=_del_nos,
+                                      # 「削除:見る」の状態を作り直しでも保つ
+                                      show_deleted=getattr(view, '_del_showing', False),
                                       scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
                                       footer_html=view._thread_footer_html(thread),
                                       my_nos=self._get_my_nos_for_view(view, thread),
@@ -15437,6 +15446,8 @@ class AutoRefreshManager(QObject):
         html, _ = thread_to_html(thread, user_css=_ucss, uploaders=_ul,
                                   ng_filter=_ng, ng_settings=self._settings,
                                   del_nos=_del_nos,
+                                  # 「削除:見る」の状態を作り直しでも保つ
+                                  show_deleted=getattr(view, '_del_showing', False),
                                   scroll_bottom_count=getattr(self._settings,'scroll_bottom_count',5),
                                   footer_html=view._thread_footer_html(thread),
                                   my_nos=self._get_my_nos_for_view(view, thread), id_warn_count=getattr(self._settings,'id_warn_count',5),

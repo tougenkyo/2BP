@@ -837,6 +837,8 @@ class AppSettings:
         # スレの画像のオンマウス拡大（カタログの拡大のスレ版）。元の画像を窓に収まる大きさで出す
         self.thread_hover_zoom: bool = False
         self.thread_hover_zoom_delay_ms: int = 300   # 出るまでの待ち時間(ms)。0=即時
+        # 削除されたレスを最初から表示する（スレを開いた時の「削除:見る/隠す」を見る側にする）
+        self.show_deleted_default: bool = False
         self.image_window_geometry: list | None = None  # 画像ウインドウの位置・サイズ [x,y,w,h]
         self.auto_close_dead_tab:    bool = False  # スレ落ち時にタブを自動で閉じる
         self.auto_close_full_tab:    bool = False  # 1000レス到達時にタブを自動で閉じる
@@ -1395,6 +1397,7 @@ class AppSettings:
                     self.image_display_mode = 3
             self.image_mode_hover_popup = bool(raw.get("image_mode_hover_popup", True))
             self.thread_hover_zoom = bool(raw.get("thread_hover_zoom", False))
+            self.show_deleted_default = bool(raw.get("show_deleted_default", False))
             try:
                 self.thread_hover_zoom_delay_ms = int(raw.get("thread_hover_zoom_delay_ms", 300))
             except (TypeError, ValueError):
@@ -1646,6 +1649,7 @@ class AppSettings:
                         "image_display_mode":  self.image_display_mode,
                         "image_mode_hover_popup": self.image_mode_hover_popup,
                         "thread_hover_zoom":      self.thread_hover_zoom,
+                        "show_deleted_default":   self.show_deleted_default,
                         "thread_hover_zoom_delay_ms": self.thread_hover_zoom_delay_ms,
                         "image_open_actual_size": self.image_open_actual_size,
                         "image_window_geometry": self.image_window_geometry,
