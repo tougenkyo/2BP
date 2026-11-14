@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.556"
+APP_VER = "0.9.557"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -10988,10 +10988,23 @@ class ThreadView(_MouseGestureMixin, QWidget):
             self._hz_timer = _t
         _t.start(_delay)
 
-    def _hz_max_size(self):
-        """拡大の窓の大きさの上限＝2BP の窓に収まる大きさ"""
+    def _hz_area(self):
+        """拡大の窓を出してよい範囲＝2BP の窓のうち、画面に見えている所"""
+        r = self.window().frameGeometry()
         try:
-            r = self.window().frameGeometry()
+            scr = self.window().screen() or QApplication.primaryScreen()
+            a = scr.availableGeometry()
+            inter = r.intersected(a)
+            if inter.width() > 100 and inter.height() > 100:
+                r = inter
+        except Exception:
+            pass
+        return r
+
+    def _hz_max_size(self):
+        """拡大の窓の大きさの上限＝出してよい範囲に収まる大きさ（枠のぶんを引く）"""
+        try:
+            r = self._hz_area()
             return max(100, r.width() - 40), max(100, r.height() - 40)
         except Exception:
             return 800, 600
@@ -11036,11 +11049,13 @@ class ThreadView(_MouseGestureMixin, QWidget):
         from PySide6.QtGui import QPixmap, QCursor
         p = self._hz_popup_widget()
         p.setPixmap(QPixmap.fromImage(img))
-        p.adjustSize()
+        # adjustSize() は窓（トップレベル）の大きさを画面の 2/3 までに抑えるので、
+        # 縦長の画像だと窓が画像より小さくなり、上下が切れていた。画像＋枠の大きさにする
+        p.resize(p.sizeHint())
         w, h = p.width(), p.height()
         c = QCursor.pos()
         try:
-            r = self.window().frameGeometry()
+            r = self._hz_area()
         except RuntimeError:
             return
         # カーソルの右下に出す。はみ出すなら左・上へ回し、最後に窓の中へ収める
