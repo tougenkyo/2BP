@@ -1768,16 +1768,7 @@ function _rebuildQuoteIndicators() {
         // 最後のレスの .comment innerHTML をダンプ（デバッグ用）
     });
     if (typeof _markRepliesToSelf === 'function') _markRepliesToSelf(quotedBy);
-    // 既存インジケータを一度クリアして再挿入
-    document.querySelectorAll('.quote-ind').forEach(function(el) { el.remove(); });
-    var inserted = 0;
-    document.querySelectorAll('.res').forEach(function(el) {
-        var m = (el.id || '').match(/^r(\\d+)$/);
-        if (!m) return;
-        var no = parseInt(m[1]);
-        var qs = quotedBy[no];
-        var header = el.querySelector('.header');
-        if (!header) return;
+    function _mkInd(qs) {
         var btn = document.createElement('span');
         if (qs && qs.length) {
             btn.className = 'quote-ind';
@@ -1791,7 +1782,37 @@ function _rebuildQuoteIndicators() {
             btn.className = 'quote-ind no-quote';
             btn.textContent = '…';
         }
-        header.insertBefore(btn, header.firstChild);
+        return btn;
+    }
+    // 引用ポップアップ(._rp)・抽出パネル(_extract_panel)の中は、レスの写し（id 無し）。
+    // 以前はページ中の ▼ を全部消してから、id のあるレスにだけ付け直していたので、
+    // 表示中のポップアップ・抽出パネルの ▼ が更新のたびに消えていた。
+    // 写しの ▼ は消さずに、そのレスの番号の新しい値へ差し替える（下）。
+    var COPY = '._rp, #_extract_panel';
+    // 既存インジケータを一度クリアして再挿入（写しの中のものは除く）
+    document.querySelectorAll('.quote-ind').forEach(function(el) {
+        if (!el.closest(COPY)) el.remove();
+    });
+    var inserted = 0;
+    document.querySelectorAll('.res').forEach(function(el) {
+        var m = (el.id || '').match(/^r(\\d+)$/);
+        if (!m) return;
+        if (el.closest(COPY)) return;
+        var no = parseInt(m[1]);
+        var header = el.querySelector('.header');
+        if (!header) return;
+        header.insertBefore(_mkInd(quotedBy[no]), header.firstChild);
+    });
+    // 写しの ▼ を差し替える。番号は見出しの「No.」のリンク(#rNNN)から取る。
+    // 新しい要素はリスナー無しなので、呼び出し側の _hookPopupQuoteInd(document) で付く
+    document.querySelectorAll(COPY).forEach(function(box) {
+        box.querySelectorAll('.quote-ind').forEach(function(old) {
+            var hd = old.parentNode;
+            var a = hd && hd.querySelector ? hd.querySelector('a.no[href^="#r"]') : null;
+            var mm = a ? (a.getAttribute('href') || '').match(/#r(\\d+)/) : null;
+            if (!mm) return;
+            hd.replaceChild(_mkInd(quotedBy[parseInt(mm[1])]), old);
+        });
     });
 }
 
