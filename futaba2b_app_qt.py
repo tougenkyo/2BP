@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.560"
+APP_VER = "0.9.561"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -11560,6 +11560,10 @@ class ThreadView(_MouseGestureMixin, QWidget):
         self._mark_del_res(no)
         if hide:
             self._hide_res_after_del(no)
+        else:
+            # 隠さない時は「del済」をその場で付ける。以前は印を覚えるだけで画面は
+            # 描き直さず、スレを開き直すまで付かなかった
+            self._show_del_done_mark(no)
         self._settings.save()
         # 送信は待ち行列に任せる（間隔を空けて送り、断られたら送り直す）
         _q = find_del_queue(self)
@@ -11615,6 +11619,33 @@ class ThreadView(_MouseGestureMixin, QWidget):
         lst = self._settings.del_res_nos.setdefault(thread_url, [])
         if no not in lst:
             lst.append(no)
+
+    def _show_del_done_mark(self, no: int):
+        """No.の右の「del済」を、今の画面にその場で付ける（描き直さない）。
+        返信モード（本体・隠しプール・引用ポップアップ・抽出パネルの写し）は「No.」の
+        リンクの後ろ、引用モードはツリー行の「No.」の後ろ、画像モードはセルの左上。
+        描き直した時は del_res_nos から同じ印が付く（render_res / 各モードの描画）。"""
+        try:
+            n = int(no)
+        except (TypeError, ValueError):
+            return
+        # 返信モードの HTML（_last_html）は作り直させる（モードを戻した時に印が消えないよう）
+        self._last_html_dirty = True
+        _safe_run_js(getattr(self, "_view", None), (
+            "(function(){var n=%d;"
+            "function mk(t){var s=document.createElement('span');s.className='del-done';"
+            "s.textContent='del済';return s;}"
+            "document.querySelectorAll('a.no[href=\"#r'+n+'\"]').forEach(function(a){"
+            "  var x=a.nextElementSibling;if(x&&x.classList.contains('del-done'))return;"
+            "  a.parentNode.insertBefore(mk(),a.nextSibling);});"
+            "document.querySelectorAll('a.qt-no[href=\"#r'+n+'\"]').forEach(function(a){"
+            "  var row=a.closest('.qt-row');if(!row||row.querySelector('.del-done'))return;"
+            "  var s=mk();a.parentNode.insertBefore(s,a.nextSibling);"
+            "  a.parentNode.insertBefore(document.createTextNode(' '),s);});"
+            "document.querySelectorAll('.gi[data-res-no=\"'+n+'\"]').forEach(function(g){"
+            "  if(g.querySelector('.gi-del'))return;var d=document.createElement('div');"
+            "  d.className='gi-del';d.textContent='del済';g.insertBefore(d,g.firstChild);});"
+            "})();") % n)
 
     def _unmark_del_res(self, no: int):
         """del済の印を外す（削除依頼ではなかったレス用）。"""
@@ -11690,12 +11721,19 @@ class ThreadView(_MouseGestureMixin, QWidget):
         """削除済みレスのDOMをページリロードなしで書き換える"""
         if not self._board or not self._thread_no:
             return
+        # 落ちたスレは取り直しても 404 で、控えから全体を描き直すだけになる。
+        # それで先頭へ戻っていた（スレ落ちの赤帯が出ている間は位置を控えずに
+        # 描き直すため）。サーバー側で消えることも無いので取りに行かない
+        if self._is_dead:
+            return
         import threading as _thr
         board = self._board; no = self._thread_no
         def _do():
             from futaba2b_network import FutabaFetcher as _FF
             thread = self._fetcher.fetch_thread(board, no)
-            if thread:
+            # 取れなかった時（控えから組み立てたもの）は流さない。流すと控えで
+            # 全体を描き直すだけで、新しく分かることは無い（位置も先頭へ戻る）
+            if thread and not thread.error:
                 self._thread_ready.emit(thread)
         _thr.Thread(target=_do, daemon=True).start()
 
