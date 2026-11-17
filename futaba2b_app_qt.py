@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.561"
+APP_VER = "0.9.562"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2174,6 +2174,36 @@ _MINIMAL_BRIDGE_JS = (
     "function _b(method,args){if(bridge&&bridge[method])bridge[method].apply(bridge,args||[]);}"
     "</script>"
 )
+_QRC_QWC_TAG = '<script src="qrc:///qtwebchannel/qwebchannel.js"></script>'
+_qwc_inline_cache = None
+
+
+def _minimal_bridge_js() -> str:
+    """_MINIMAL_BRIDGE_JS の qwebchannel.js を中身の埋め込みに差し替えたもの。
+    エラーページは setHtml(about:blank) で出すが、環境（PySide6 の版）によっては
+    about:blank から qrc: を読めず QWebChannel が無いままになる。すると軌跡（右下の矢印）は
+    出るのに 2BP へ通知が届かず、ジェスチャーが何もしない（v0.9.562）。
+    スレ本文・手書きと同じく中身を埋め込んで、読み込みに頼らないようにする。"""
+    global _qwc_inline_cache
+    if _qwc_inline_cache is None:
+        js = ""
+        try:
+            from PySide6.QtCore import QFile, QIODevice
+            f = QFile(":/qtwebchannel/qwebchannel.js")
+            if f.open(QIODevice.OpenModeFlag.ReadOnly):
+                js = bytes(f.readAll()).decode("utf-8", errors="replace")
+                f.close()
+        except Exception:
+            js = ""
+        if js:
+            # </script> が中に有っても途中で切れないようにする
+            js = js.replace("</script", "<\\/script")
+            _qwc_inline_cache = _MINIMAL_BRIDGE_JS.replace(
+                _QRC_QWC_TAG, f"<script>\n{js}\n</script>", 1)
+        else:
+            print("[ERRPAGE] WARNING: qwebchannel.js not found in qrc")
+            _qwc_inline_cache = _MINIMAL_BRIDGE_JS
+    return _qwc_inline_cache
 
 
 def _json_com_to_text(com: str) -> str:
@@ -8594,7 +8624,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
         _usr_e = f"<style>{_ucss_e}</style>" if _ucss_e else ""
         html = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            + _MINIMAL_BRIDGE_JS +
+            + _minimal_bridge_js() +
             f"<style>{THREAD_CSS}"
             ".err-banner{"
             "  background:#cc0000;color:#fff;font-size:10pt;font-weight:bold;"
