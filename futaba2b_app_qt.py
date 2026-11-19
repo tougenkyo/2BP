@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.562"
+APP_VER = "0.9.563"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -2611,6 +2611,24 @@ def _my_nos_for(settings, thread) -> set:
         return set()
     url = getattr(thread, "url", "") if thread else ""
     return set(getattr(settings, "my_post_nos", {}).get(url, []))
+
+
+def _unmark_own_new(settings, thread) -> None:
+    """自分が書き込んだレスを新着（is_new）から外す。青帯の設定に関係なく外す。
+
+    外さないと、青帯の設定がOFFの時は自分のレスが他人の新着と同じ赤帯になり、
+    投稿後に末尾へ飛んでも（既読にしない作りのため）タブが水色のまま残っていた。
+    新着の数（フッター・タブ）・仕切り線の位置も、自分のレスを数えない（v0.9.563）。"""
+    if not thread or not getattr(thread, "res_list", None):
+        return
+    url = getattr(thread, "url", "") or ""
+    own = getattr(settings, "my_post_nos", {}).get(url) or ()
+    if not own:
+        return
+    own = set(own)
+    for r in thread.res_list:
+        if r.is_new and r.no in own:
+            r.is_new = False
 
 
 # ── 返信通知の引用判定（_check_self_res_notifications で使う） ──────────────
@@ -7913,6 +7931,7 @@ class ThreadView(_MouseGestureMixin, QWidget):
             _base = self._known_res_count if self._known_res_count > 0                     else self._settings.thread_read_counts.get(thread.url, 0)
             for i, r in enumerate(thread.res_list):
                 r.is_new = (i >= _base)
+            _unmark_own_new(self._settings, thread)
             if thread.res_list:
                 self._last_valid_thread = thread   # スレ落ち保存用に有効なスレを保持
                 self._settings.thread_read_counts[thread.url] = len(thread.res_list)
@@ -15370,6 +15389,7 @@ class AutoRefreshManager(QObject):
         _base = view._known_res_count if view._known_res_count > 0                 else self._settings.thread_read_counts.get(thread.url, 0)
         for i, r in enumerate(thread.res_list):
             r.is_new = (i >= _base)
+        _unmark_own_new(self._settings, thread)
         # フッター（レス数/受信/最終更新/version）用の受信数を確定。
         # _update_view 内の thread_to_html 群は footer_html を渡さないと
         # フッター無しHTMLになり、返信モードでそれを _last_html 経由で
