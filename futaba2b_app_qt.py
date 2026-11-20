@@ -124,7 +124,7 @@ def _play_ng_se() -> None:
     _th.Thread(target=_play, daemon=True).start()
 
 
-APP_VER = "0.9.563"
+APP_VER = "0.9.564"
 
 # ── アプリ終了中フラグ ───────────────────────────────────────────────────────
 # 終了処理(closeEvent)で立てる。自動更新など「バックグラウンドスレッド起点で
@@ -12148,6 +12148,123 @@ class _FindBar(QWidget):
         if page:
             page.findText("")   # ハイライト解除
 
+class _ToolbarFit(QObject):
+    """カタログのツールバーが狭くなった時の振る舞い（v0.9.564）。
+
+    窓を小さくしたり左右カタログで幅を詰めたりすると、収まらないボタンは
+    右から消えていく（Qt の QToolBar がそうする）。そこで、
+      ・ボタンが消えるより先に検索欄を縮める（SEARCH_MAX→SEARCH_MIN）
+      ・それでも収まらない時は、右端の「»」から消えたボタンを選べるようにする
+    Qt 標準の「»」は暗い地でほとんど見えず、主窓の外にあるツールバーでは
+    押しても開かないので使わない（大きさ0にして押しても何もしない）。"""
+
+    SEARCH_MAX = 260
+    SEARCH_MIN = 90
+
+    def __init__(self, box, tb, search, spacer, more_btn, ask_search):
+        super().__init__(box)
+        self._box, self._tb, self._search = box, tb, search
+        self._spacer, self._more = spacer, more_btn
+        self._ask_search = ask_search
+        self._pending = False
+        for b in tb.findChildren(QToolButton):
+            if b.objectName() == "qt_toolbar_ext_button":
+                try:
+                    b.clicked.disconnect()
+                except Exception:
+                    pass
+                b.setFixedSize(0, 0)
+        m = QMenu(more_btn)
+        m.aboutToShow.connect(self._fill_menu)
+        more_btn.setMenu(m)
+        more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        more_btn.hide()
+        box.installEventFilter(self)
+        tb.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        # LayoutRequest: カウントダウンの文字が変わる等で中の幅が変わった時
+        if ev.type() in (QEvent.Type.Resize, QEvent.Type.LayoutRequest, QEvent.Type.Show):
+            self.schedule()
+        return False
+
+    def schedule(self):
+        if not self._pending:
+            self._pending = True
+            QTimer.singleShot(0, self._fit)
+
+    def _widgets(self):
+        tb = self._tb
+        return [w for w in (tb.widgetForAction(a) for a in tb.actions()) if w is not None]
+
+    def _fixed_width(self) -> int:
+        """検索欄と伸び縮みする隙間を除いた、ツールバーの中身の幅"""
+        tb = self._tb
+        ws = self._widgets()
+        lay = tb.layout()
+        sp = lay.spacing() if lay else 0
+        cm, lm = tb.contentsMargins(), (lay.contentsMargins() if lay else None)
+        w = sum(x.sizeHint().width() for x in ws if x is not self._search and x is not self._spacer)
+        w += sp * max(0, len(ws) - 1)
+        w += cm.left() + cm.right() + ((lm.left() + lm.right()) if lm else 0)
+        return w + 6   # 枠・丸めのぶんの余裕
+
+    def _hidden(self):
+        return [w for w in self._widgets() if not w.isVisibleTo(self._tb)
+                and w is not self._spacer]
+
+    def _fit(self):
+        self._pending = False
+        try:
+            W = self._box.width()
+            if W <= 0:
+                return
+            base = self._fixed_width()
+            more_w = self._more.sizeHint().width() + 2
+            over = base + self.SEARCH_MIN > W
+            avail = W - base - (more_w if over else 0)
+            sw = max(self.SEARCH_MIN, min(self.SEARCH_MAX, avail))
+            if self._search.width() != sw or self._search.minimumWidth() != sw:
+                self._search.setFixedWidth(sw)
+            if self._more.isVisibleTo(self._box) != over:
+                self._more.setVisible(over)
+            # 見積もりが外れて Qt が実際にボタンを隠したのに「»」が出ていない、を残さない
+            QTimer.singleShot(0, self._verify)
+        except RuntimeError:
+            pass        # 閉じた後に遅れて来た
+
+    def _verify(self):
+        try:
+            if self._hidden() and not self._more.isVisibleTo(self._box):
+                self._more.setVisible(True)
+        except RuntimeError:
+            pass
+
+    def _fill_menu(self):
+        m = self._more.menu()
+        m.clear()
+        for w in self._widgets():
+            if w.isVisibleTo(self._tb):
+                continue
+            if w is self._spacer or (isinstance(w, QLabel) and "/" in w.text()):
+                if m.actions() and not m.actions()[-1].isSeparator():
+                    m.addSeparator()
+                continue
+            if isinstance(w, QPushButton):
+                act = m.addAction(w.text())
+                if w.isCheckable():
+                    act.setCheckable(True)
+                    act.setChecked(w.isChecked())
+                act.setEnabled(w.isEnabled())
+                act.setToolTip(w.toolTip())
+                act.triggered.connect(lambda _=False, b=w: b.click())
+            elif isinstance(w, QLineEdit):
+                act = m.addAction("検索欄…")
+                act.triggered.connect(self._ask_search)
+        if m.actions() and m.actions()[-1].isSeparator():
+            m.removeAction(m.actions()[-1])
+
+
 class CatalogView(_MouseGestureMixin, QWidget):
     thread_open    = Signal(str)
     thread_open_bg = Signal(str)   # バックグラウンドで開く
@@ -12258,7 +12375,26 @@ class CatalogView(_MouseGestureMixin, QWidget):
             tb.addWidget(b)
         self._sort_grp.buttons()[0].setChecked(True)
         self._sort_grp.idClicked.connect(self._on_server_sort_changed)
-        lay.addWidget(tb)
+        # 狭くなった時: 先に検索欄を縮め、収まらないボタンは右端の「»」から選べるように
+        _tb_box = QWidget(); _tb_box.setObjectName("catTbBox")
+        _tb_box.setStyleSheet(
+            f"#catTbBox{{background:{_TM.ui('toolbar_bg', '#2d2d2d')};}}")
+        _tb_box.setMaximumHeight(28)
+        _bl = QHBoxLayout(_tb_box); _bl.setContentsMargins(0, 0, 0, 0); _bl.setSpacing(0)
+        _bl.addWidget(tb, 1)
+        self._tb_more = QToolButton(); self._tb_more.setText("»")
+        self._tb_more.setToolTip("入りきらないボタン")
+        self._tb_more.setFixedSize(22, 22)
+        self._tb_more.setStyleSheet(
+            "QToolButton{font-weight:bold;font-size:11pt;padding:0;"
+            f"color:{_TM.ui('btn_fg', '#ccc')};background:{_TM.ui('btn_bg', '#3a3a3a')};"
+            f"border:1px solid {_TM.ui('btn_border', '#555')};border-radius:3px;}}"
+            f"QToolButton:hover{{background:{_TM.ui('btn_hover_bg', '#4a4a4a')};}}"
+            "QToolButton::menu-indicator{image:none;width:0;}")
+        _bl.addWidget(self._tb_more, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._tb_fit = _ToolbarFit(_tb_box, tb, self._search, spacer, self._tb_more,
+                                   self._ask_search_text)
+        lay.addWidget(_tb_box)
 
         # off-the-record: ディスクキャッシュなし
         self._profile = QWebEngineProfile(self)
@@ -13906,6 +14042,14 @@ class CatalogView(_MouseGestureMixin, QWidget):
                 self._reload_timer.start(max(10000, ms))
             else:
                 self._reload_timer.stop()
+
+    def _ask_search_text(self):
+        """検索欄がツールバーに入りきらない時に「»」から使う入力欄（v0.9.564）"""
+        t, ok = QInputDialog.getText(self, "検索", "カタログの検索（正規表現）:",
+                                     QLineEdit.EchoMode.Normal, self._search.text())
+        if ok:
+            self._search.setText(t)
+            self._re_render()
 
     def _save_view_state(self):
         """現在の UI 状態をボード別に保存する"""
